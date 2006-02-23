@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE article PUBLIC "-//OASIS//DTD DocBook XML V4.2//EN"
+"http://www.oasis-open.org/docbook/xml/4.2/docbookx.dtd">
+<article id="usefull_links">
+  <!-- $Id$ -->
+
+  <articleinfo>
+    <title>Useful Links</title>
+
+    <author>
+      <firstname>Tom</firstname>
+
+      <surname>Eastep</surname>
+    </author>
+
+    <pubdate>2005-09-16</pubdate>
+
+    <copyright>
+      <year>2003-2005</year>
+
+      <holder>Thomas M. Eastep</holder>
+    </copyright>
+
+    <legalnotice>
+      <para>Permission is granted to copy, distribute and/or modify this
+      document under the terms of the GNU Free Documentation License, Version
+      1.2 or any later version published by the Free Software Foundation; with
+      no Invariant Sections, with no Front-Cover, and with no Back-Cover
+      Texts. A copy of the license is included in the section entitled
+      <quote><ulink url="GnuCopyright.htm">GNU Free Documentation
+      License</ulink></quote>.</para>
+    </legalnotice>
+  </articleinfo>
+
+  <informaltable frame="none" pgwide="0">
+    <tgroup align="left" cols="1">
+      <tbody valign="middle">
+        <row rowsep="0" valign="middle">
+          <entry align="left">NetFilter Site: <ulink
+          url="http://www.netfilter.org/">http://www.netfilter.org/</ulink></entry>
+        </row>
+
+        <row rowsep="0" valign="middle">
+          <entry align="left">Linux Advanced Routing and Traffic Control
+          Howto: <ulink
+          url="http://lartc.org/">http://lartc.org/</ulink></entry>
+        </row>
+
+        <row rowsep="0" valign="middle">
+          <entry align="left">Iproute Downloads: <ulink
+          url="http://developer.osdl.org/dev/iproute2/download/">http://developer.osdl.org/dev/iproute2/download/</ulink></entry>
+        </row>
+
+        <row rowsep="0" valign="middle">
+          <entry align="left">LEAF Site: <ulink
+          url="http://leaf-project.org/">http://leaf-project.org/</ulink></entry>
+        </row>
+
+        <row rowsep="0" valign="middle">
+          <entry align="left">Bering LEAF Distribution: <ulink
+          url="http://leaf.sourceforge.net/doc/guide/">http://leaf.sourceforge.net/doc/guide/</ulink></entry>
+        </row>
+
+        <row rowsep="0" valign="middle">
+          <entry>Iptables Tutorial: <ulink
+          url="http://iptables-tutorial.frozentux.net/">http://iptables-tutorial.frozentux.net/</ulink></entry>
+        </row>
+
+        <row rowsep="0" valign="middle">
+          <entry>Debian apt-get sources for Shorewall: <ulink
+          url="http://idea.sec.dico.unimi.it/~lorenzo/index.html#Debian">http://idea.sec.dico.unimi.it/~lorenzo/index.html#Debian</ulink></entry>
+        </row>
+
+        <row rowsep="0" valign="middle">
+          <entry>About the Shorewall Author: <ulink
+          url="http://www.shorewall.net/shoreline.htm">http://www.shorewall.net/shoreline.htm</ulink></entry>
+        </row>
+
+        <row rowsep="0" valign="middle">
+          <entry>Tom's 2005 LinuxFest NW Presentation: <ulink
+          url="http://www.shorewall.net/LinuxFest.pdf">http://www.shorewall.net/LinuxFest.pdf</ulink></entry>
+        </row>
+      </tbody>
+    </tgroup>
+  </informaltable>
+</article>

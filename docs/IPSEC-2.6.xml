@@ -1,0 +1,854 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE article PUBLIC "-//OASIS//DTD DocBook XML V4.2//EN"
+"http://www.oasis-open.org/docbook/xml/4.2/docbookx.dtd">
+<article id="IPSEC">
+  <!--$Id$-->
+
+  <articleinfo>
+    <title>IPSEC using Linux Kernel 2.6</title>
+
+    <authorgroup>
+      <author>
+        <firstname>Tom</firstname>
+
+        <surname>Eastep</surname>
+      </author>
+    </authorgroup>
+
+    <pubdate>2005-09-30</pubdate>
+
+    <copyright>
+      <year>2004</year>
+
+      <year>2005</year>
+
+      <holder>Thomas M. Eastep</holder>
+    </copyright>
+
+    <legalnotice>
+      <para>Permission is granted to copy, distribute and/or modify this
+      document under the terms of the GNU Free Documentation License, Version
+      1.2 or any later version published by the Free Software Foundation; with
+      no Invariant Sections, with no Front-Cover, and with no Back-Cover
+      Texts. A copy of the license is included in the section entitled
+      <quote><ulink url="GnuCopyright.htm">GNU Free Documentation
+      License</ulink></quote>.</para>
+    </legalnotice>
+  </articleinfo>
+
+  <caution>
+    <para><emphasis role="bold">This article applies to Shorewall 3.0 and
+    later. If you are running a version of Shorewall earlier than Shorewall
+    3.0.0 then please see the documentation for that
+    release.</emphasis></para>
+  </caution>
+
+  <important>
+    <para>The information in this article is only applicable if you plan to
+    have IPSEC end-points on the same system where Shorewall is used.</para>
+  </important>
+
+  <warning>
+    <para>To use the features described in this article, your kernel and
+    iptables must include the Netfilter+ipsec patches and policy match
+    support. The Netfilter patches are available from Netfilter
+    Patch-O-Matic-NG and are also included in some commercial distributions
+    (most notably <trademark>SUSE</trademark> 9.1 through 9.3).</para>
+  </warning>
+
+  <important>
+    <para>You must have <emphasis role="bold">BOTH</emphasis> the
+    Netfilter+ipsec patches and the policy match patch. <emphasis
+    role="bold">One without the other will not work</emphasis>.</para>
+
+    <para>Here's a combination of components that I know works:</para>
+
+    <orderedlist>
+      <listitem>
+        <para>Kernel 2.6.11 from kernel.org. Patched with:</para>
+
+        <itemizedlist>
+          <listitem>
+            <para>The five patches in <ulink
+            url="http://shorewall.net/pub/shorewall/contrib/IPSEC/2.6.11">http://shorewall.net/pub/shorewall/contrib/IPSEC/2.6.11</ulink></para>
+          </listitem>
+
+          <listitem>
+            <para>The "policy match" extension from the Patch-o-matic-ng CVS
+            snapshot from 2005-May-04 (be sure to NOT try to apply the
+            ipsec-NN patches from patch-o-matic-ng).</para>
+          </listitem>
+        </itemizedlist>
+      </listitem>
+
+      <listitem>
+        <para>iptables 1.3.1 patched with the "policy match" extension from
+        the Patch-o-matic-ng CVS snapshot from 2005-May-04.</para>
+      </listitem>
+
+      <listitem>
+        <para>ipsec-tools 0.5.2 compiled from source. I've also had success
+        with:</para>
+
+        <itemizedlist>
+          <listitem>
+            <para>ipsec-tools 0.5.2 and racoon 0.5.2 from Debian
+            Sarge/testing</para>
+          </listitem>
+
+          <listitem>
+            <para>The ipsec-tools 0.5 rpm from SUSE 9.3.</para>
+          </listitem>
+        </itemizedlist>
+      </listitem>
+    </orderedlist>
+  </important>
+
+  <warning>
+    <para>As of this writing, the Netfilter+ipsec and policy match support are
+    broken when used with a bridge device. The problem has been reported to
+    the responsible Netfilter developer who has confirmed the problem.</para>
+  </warning>
+
+  <section>
+    <title>Shorewall 3.0 and Kernel 2.6 IPSEC</title>
+
+    <para>This is <emphasis role="bold">not</emphasis> a HOWTO for Kernel 2.6
+    IPSEC -- for that, please see <ulink
+    url="http://www.ipsec-howto.org/">http://www.ipsec-howto.org/</ulink>.</para>
+
+    <para>The 2.6 Linux Kernel introduces new facilities for defining
+    encrypted communication between hosts in a network. The network
+    administrator defines a set of <firstterm>Security Policies</firstterm>
+    which are stored in the kernel as a <firstterm>Security Policy
+    Database</firstterm> (SPD). Security policies determine which traffic is
+    subject to encryption. <firstterm>Security Associations</firstterm> are
+    created between pairs of hosts in the network (one SA for traffic in each
+    direction); these SAs define how traffic is to be encrypted. Outgoing
+    traffic that is to be encrypted according to the contents of the SPD
+    requires an appropriate SA to exist. SAs may be created manually using
+    <command>setkey</command>(8) but most often, they are created by a
+    cooperative process involving the ISAKMP protocol and daemons such
+    as<command> racoon</command> or <command>isakmpd</command>. Incoming
+    traffic is verified against the SPD to ensure that no unencrypted traffic
+    is accepted in violation of the administrator's policies.</para>
+
+    <para>There are three ways in which IPSEC traffic can interact with
+    Shorewall policies and rules:</para>
+
+    <orderedlist>
+      <listitem>
+        <para>Traffic that is encrypted on the firewall system. The traffic
+        passes through Netfilter twice -- first as unencrypted then
+        encrypted.</para>
+      </listitem>
+
+      <listitem>
+        <para>Traffic that is decrypted on the firewall system. The traffic
+        passes through Netfilter twice -- first as encrypted then as
+        unencrypted.</para>
+      </listitem>
+
+      <listitem>
+        <para>Encrypted traffic that is passed through the firewall system.
+        The traffic passes through Netfilter once.</para>
+      </listitem>
+    </orderedlist>
+
+    <para>In cases 1 and 2, the encrypted traffic is handled by entries in
+    <filename>/etc/shorewall/tunnels</filename> (don't be mislead by the name
+    of the file -- <emphasis>transport mode</emphasis> encrypted traffic is
+    also handled by entries in that file). The unencrypted traffic is handled
+    by normal rules and policies.</para>
+
+    <para>Under the 2.4 Linux Kernel, the association of unencrypted traffic
+    and zones was made easy by the presense of IPSEC pseudo-interfaces with
+    names of the form <filename class="devicefile">ipsecn</filename> (e.g.
+    <filename class="devicefile">ipsec0</filename>). Outgoing unencrypted
+    traffic (case 1.) was send through an <filename
+    class="devicefile">ipsecn</filename> device while incoming unencrypted
+    traffic (case 2) arrived from an <filename
+    class="devicefile">ipsecn</filename> device. The 2.6 kernel-based
+    implementation does away with these pseudo-interfaces. Outgoing traffic
+    that is going to be encrypted and incoming traffic that has been decrypted
+    must be matched against policies in the SPD and/or the appropriate
+    SA.</para>
+
+    <para>Shorewall provides support for policy matching in three ways:</para>
+
+    <orderedlist>
+      <listitem>
+        <para>In <filename>/etc/shorewall/masq</filename>, traffic that will
+        later be encrypted is exempted from MASQUERADE/SNAT using existing
+        entries. If you want to MASQUERADE/SNAT outgoing traffic that will
+        later be encrypted, you must include the appropriate indication in the
+        new IPSEC column in that file.</para>
+      </listitem>
+
+      <listitem>
+        <para>The<filename> </filename><ulink
+        url="Documentation.htm#Zones"><filename>/etc/shorewall/zones</filename></ulink>
+        file allows you to associate zones with traffic that will be encrypted
+        or that has been decrypted.</para>
+      </listitem>
+
+      <listitem>
+        <para>A new option (<emphasis role="bold">ipsec</emphasis>) has been
+        provided for entries in <filename>/etc/shorewall/hosts</filename>.
+        When an entry has this option specified, traffic to/from the hosts
+        described in the entry is assumed to be encrypted.</para>
+      </listitem>
+    </orderedlist>
+
+    <para>In summary, Shorewall provides the facilities to replace the use of
+    ipsec pseudo-interfaces in zone and MASQUERADE/SNAT definition.</para>
+
+    <para>There are two cases to consider:</para>
+
+    <orderedlist>
+      <listitem>
+        <para>Encrypted communication is used to/from all hosts in a
+        zone.</para>
+
+        <para>The value <emphasis role="bold">ipsec</emphasis> is placed in
+        the TYPE column of the <filename>/etc/shorewall/zones</filename> entry
+        for the zone.</para>
+      </listitem>
+
+      <listitem>
+        <para>By default, encrypted communication is not used to communicate
+        with the hosts in a zone.</para>
+
+        <para>The value <emphasis role="bold">ipv4</emphasis> is placed in the
+        TYPE column of the <filename>/etc/shorewall/zones</filename> entry for
+        the zone and the new <emphasis role="bold">ipsec</emphasis> option is
+        specified in <filename>/etc/shorewall/hosts</filename> for any hosts
+        requiring secure communication.</para>
+      </listitem>
+    </orderedlist>
+
+    <note>
+      <para>For simple zones such as are shown in the following examples, the
+      two techniques are equivalent and are used interchangably.</para>
+    </note>
+
+    <note>
+      <para>It is redundent to have <emphasis role="bold">ipsec</emphasis> in
+      the TYPE column of the <filename>/etc/shorewall/zones</filename> entry
+      for a zone and to also have the <emphasis role="bold">ipsec</emphasis>
+      option in <filename>/etc/shorewall/hosts</filename> entries for that
+      zone.</para>
+    </note>
+
+    <para>Finally, the OPTIONS, IN OPTIONS and OUT OPTIONS columns in
+    /etc/shorewall/zones can be used to match the zone to a particular (set
+    of) SA(s) used to encrypt and decrypt traffic to/from the zone and the
+    security policies that select which traffic to encrypt/decrypt.</para>
+
+    <para>This article assumes the use of ipsec-tools (<ulink
+    url="http://ipsec-tools.sourceforge.net">http://ipsec-tools.sourceforge.net</ulink>).
+    As of this writing, I recommend that you run at least version 0.5.2.
+    Debian users, please note that there are separate Debian packages for
+    ipsec-tools and racoon although the ipsec-tools project releases them as a
+    single package.</para>
+
+    <para>For more information on IPSEC, Kernel 2.6 and Shorewall see <ulink
+    url="LinuxFest.pdf">my presentation on the subject given at LinuxFest NW
+    2005</ulink>. Be warned though that the presentation is based on Shorewall
+    2.2 and there are some differences in the details of how IPSEC is
+    configured.</para>
+  </section>
+
+  <section>
+    <title>IPSec Gateway on the Firewall System</title>
+
+    <para>Suppose that we have the following sutuation:</para>
+
+    <graphic fileref="images/TwoNets1.png" />
+
+    <para>We want systems in the 192.168.1.0/24 sub-network to be able to
+    communicate with systems in the 10.0.0.0/8 network. We assume that on both
+    systems A and B, eth0 is the internet interface.</para>
+
+    <para>To make this work, we need to do two things:</para>
+
+    <orderedlist numeration="loweralpha">
+      <listitem>
+        <para>Open the firewall so that the IPSEC tunnel can be established
+        (allow the ESP and AH protocols and UDP Port 500).</para>
+      </listitem>
+
+      <listitem>
+        <para>Allow traffic through the tunnel.</para>
+      </listitem>
+    </orderedlist>
+
+    <para>Opening the firewall for the IPSEC tunnel is accomplished by adding
+    an entry to the <filename>/etc/shorewall/tunnels</filename> file.</para>
+
+    <para>In <filename>/etc/shorewall/tunnels</filename> on system A, we need
+    the following</para>
+
+    <blockquote>
+      <para><filename>/etc/shorewall/tunnels</filename> — System A:</para>
+
+      <programlisting>#TYPE         ZONE        GATEWAY             GATEWAY ZONE
+ipsec         net         134.28.54.2
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+
+      <para><filename>/etc/shorewall/tunnels</filename> — System B:</para>
+
+      <programlisting>#TYPE         ZONE        GATEWAY             GATEWAY ZONE
+ipsec         net         206.162.148.9
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+    </blockquote>
+
+    <note>
+      <para>If either of the endpoints is behind a NAT gateway then the
+      tunnels file entry on the <emphasis role="bold">other</emphasis>
+      endpoint should specify a tunnel type of ipsecnat rather than ipsec and
+      the GATEWAY address should specify the external address of the NAT
+      gateway.</para>
+    </note>
+
+    <para>You need to define a zone for the remote subnet or include it in
+    your local zone. In this example, we'll assume that you have created a
+    zone called <quote>vpn</quote> to represent the remote subnet.</para>
+
+    <blockquote>
+      <para><filename>/etc/shorewall/zones</filename> — Systems A and
+      B:</para>
+
+      <programlisting>#ZONE          TYPE             OPTIONS             IN           OUT
+#                                                   OPTIONS      OPTIONS
+vpn            ipv4
+net            ipv4
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+    </blockquote>
+
+    <para>Remember the assumption that both systems A and B have eth0 as their
+    internet interface.</para>
+
+    <para>You must define the vpn zone using the
+    <filename>/etc/shorewall/hosts</filename> file. The hosts file entries
+    below assume that you want the remote gateway to be part of the vpn zone —
+    If you don't wish the remote gateway included, simply omit it's IP address
+    from the HOSTS column.</para>
+
+    <blockquote>
+      <para>/etc/shorewall/hosts — System A</para>
+
+      <programlisting>#ZONE             HOSTS                                OPTIONS
+vpn               eth0:10.0.0.0/8,134.28.54.2        <emphasis role="bold">  ipsec</emphasis>
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+
+      <para>/etc/shorewall/hosts — System B</para>
+
+      <programlisting>#ZONE             HOSTS                                OPTIONS
+vpn               eth0:192.168.1.0/24,206.162.148.9    <emphasis role="bold">ipsec</emphasis>
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+    </blockquote>
+
+    <para>Assuming that you want to give each local network free access to the
+    remote network and vice versa, you would need the following
+    <filename>/etc/shorewall/policy</filename> entries on each system:</para>
+
+    <blockquote>
+      <programlisting>#SOURCE          DESTINATION            POLICY          LEVEL       BURST:LIMIT
+loc              vpn                    ACCEPT
+vpn              loc                    ACCEPT</programlisting>
+    </blockquote>
+
+    <para>Once you have these entries in place, restart Shorewall (type
+    shorewall restart); you are now ready to configure IPSEC.</para>
+
+    <para>For full encrypted connectivity in this configuration (between the
+    subnets, between each subnet and the opposite gateway, and between the
+    gateways), you will need eight policies in
+    <filename>/etc/racoon/setkey.conf</filename>. For example, on gateway
+    A:</para>
+
+    <blockquote>
+      <programlisting># First of all flush the SPD and SAD databases
+spdflush;
+flush;
+
+# Add some SPD rules
+
+spdadd 192.168.1.0/24   10.0.0.0/8       any -P out ipsec esp/tunnel/206.162.148.9-134.28.54.2/require;
+spdadd 192.168.1.0/24   134.28.54.2/32   any -P out ipsec esp/tunnel/206.162.148.9-134.28.54.2/require;
+spdadd 206.162.148.9/32 134.28.54.2/32   any -P out ipsec esp/tunnel/206.162.148.9-134.28.54.2/require;
+spdadd 206.162.148.9/32 10.0.0.0/8       any -P out ipsec esp/tunnel/206.162.148.9-134.28.54.2/require;
+spdadd 10.0.0.0/8       192.168.1.0/24   any -P in  ipsec esp/tunnel/134.28.54.2-206.162.148.9/require;
+spdadd 10.0.0.0/8       206.162.148.9/32 any -P in  ipsec esp/tunnel/134.28.54.2-206.162.148.9/require;
+spdadd 134.28.54.2/32   192.168.1.0/24   any -P in  ipsec esp/tunnel/134.28.54.2-206.162.148.9/require;
+spdadd 134.28.54.2/32   206.162.148.9/32 any -P in  ipsec esp/tunnel/134.28.54.2-206.162.148.9/require;</programlisting>
+    </blockquote>
+
+    <para>The <filename>setkey.conf</filename> file on gateway B would be
+    similar.</para>
+
+    <para>A sample <filename>/etc/racoon/racoon.conf</filename> file using
+    X.509 certificates might look like:</para>
+
+    <blockquote>
+      <programlisting>path certificates "/etc/certs" ;
+
+listen 
+{
+        isakmp 206.162.148.9;
+}
+
+remote 134.28.54.2
+{
+        exchange_mode main ;
+        certificate_type x509 "GatewayA.pem" "GatewayA_key.pem" ;
+        verify_cert on;
+        my_identifier asn1dn ;
+        peers_identifier asn1dn ;
+        verify_identifier on ;
+        lifetime time 24 hour ;
+        proposal {
+                encryption_algorithm blowfish;
+                hash_algorithm sha1;
+                authentication_method rsasig ;
+                dh_group 2 ;
+        }
+}
+
+sainfo address 192.168.1.0/24 any address 10.0.0.0/8 any
+{
+        pfs_group 2;
+        lifetime time 12 hour ;
+        encryption_algorithm blowfish ;
+        authentication_algorithm hmac_sha1, hmac_md5 ;
+        compression_algorithm deflate ;
+}
+
+sainfo address 206.162.148.9/32 any address 10.0.0.0/8 any
+{
+        pfs_group 2;
+        lifetime time 12 hour ;
+        encryption_algorithm blowfish ;
+        authentication_algorithm hmac_sha1, hmac_md5 ;
+        compression_algorithm deflate ;
+}
+
+sainfo address 206.162.148.9/32 any address 134.28.54.2/32 any
+{
+        pfs_group 2;
+        lifetime time 12 hour ;
+        encryption_algorithm blowfish ;
+        authentication_algorithm hmac_sha1, hmac_md5 ;
+        compression_algorithm deflate ;
+}
+
+sainfo address 192.168.1.0/24 any address 134.28.54.2/32 any
+{
+        pfs_group 2;
+        lifetime time 12 hour ;
+        encryption_algorithm blowfish ;
+        authentication_algorithm hmac_sha1, hmac_md5 ;
+        compression_algorithm deflate ;
+}</programlisting>
+
+      <warning>
+        <para>If you have hosts that access the internet through an IPSEC
+        tunnel, then it is a good idea to set the MSS value for traffic from
+        those hosts explicitly in the
+        <filename>/etc/shorewall/zones</filename> file. For example, if hosts
+        in the <emphasis role="bold">sec</emphasis> zone access the internet
+        through an ESP tunnel then the following entry would be
+        appropriate:</para>
+
+        <programlisting>#ZONE   TYPE    OPTIONS                 IN                      OUT
+#                                       OPTIONS                 OPTIONS
+sec     ipsec   mode=tunnel             <emphasis role="bold">mss=1400</emphasis></programlisting>
+
+        <para>Note that CLAMPMSS=Yes in <filename>shorewall.conf</filename>
+        isn't effective with the 2.6 native IPSEC implementation because there
+        is no separate ipsec device with a lower mtu as there was under the
+        2.4 and earlier kernels.</para>
+      </warning>
+    </blockquote>
+  </section>
+
+  <section>
+    <title>Mobile System (Road Warrior)</title>
+
+    <para>Suppose that you have a laptop system (B) that you take with you
+    when you travel and you want to be able to establish a secure connection
+    back to your local network.</para>
+
+    <graphic fileref="images/Mobile.png" />
+
+    <example>
+      <title>Road Warrior VPN</title>
+
+      <para>You need to define a zone for the laptop or include it in your
+      local zone. In this example, we'll assume that you have created a zone
+      called <quote>vpn</quote> to represent the remote host.</para>
+
+      <blockquote>
+        <para>/etc/shorewall/zones — System A</para>
+
+        <programlisting>#ZONE          TYPE             OPTIONS             IN           OUT
+#                                                   OPTIONS      OPTIONS
+vpn            ipsec
+net            ipv4
+loc            ipv4
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+      </blockquote>
+
+      <para>In this instance, the mobile system (B) has IP address 134.28.54.2
+      but that cannot be determined in advance. In the
+      <filename>/etc/shorewall/tunnels</filename> file on system A, the
+      following entry should be made:<blockquote>
+          <programlisting>#TYPE         ZONE        GATEWAY             GATEWAY ZONE
+ipsec         net         0.0.0.0/0           vpn
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+        </blockquote></para>
+
+      <para><note>
+          <para>the GATEWAY ZONE column contains the name of the zone
+          corresponding to peer subnetworks. This indicates that the gateway
+          system itself comprises the peer subnetwork; in other words, the
+          remote gateway is a standalone system.</para>
+        </note></para>
+
+      <para>The VPN zone is defined using the /etc/shorewall/hosts
+      file:</para>
+
+      <blockquote>
+        <para>/etc/shorewall/hosts — System A:</para>
+
+        <programlisting>#ZONE             HOSTS                  OPTIONS
+vpn               eth0:0.0.0.0/0
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+      </blockquote>
+
+      <para>You will need to configure your <quote>through the tunnel</quote>
+      policy as shown under the first example above.</para>
+
+      <para>On the laptop:</para>
+
+      <blockquote>
+        <para>/etc/shorewall/zones - System B:</para>
+
+        <programlisting>#ZONE          TYPE             OPTIONS             IN           OUT
+#                                                   OPTIONS      OPTIONS
+vpn            ipsec
+net            ipv4
+loc            ipv4
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+
+        <para>/etc/shorewall/tunnels - System B:</para>
+
+        <programlisting>#TYPE         ZONE        GATEWAY             GATEWAY ZONE
+ipsec         net         206.162.148.9       vpn
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+
+        <para>/etc/shorewall/hosts - System B:</para>
+
+        <programlisting>#ZONE             HOSTS                  OPTIONS
+vpn               eth0:0.0.0.0/0
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+      </blockquote>
+
+      <para>On system A, here are the IPSEC files:</para>
+
+      <blockquote>
+        <para>/etc/racoon/racoon.conf - System A:</para>
+
+        <programlisting>path certificate "/etc/certs" ;
+ 
+listen
+{
+        isakmp 206.162.148.9;
+}
+ 
+remote <emphasis role="bold">anonymous</emphasis>
+{
+        exchange_mode main ;
+        <emphasis role="bold">generate_policy on</emphasis> ;
+        <emphasis role="bold">passive on</emphasis> ;
+        certificate_type x509 "GatewayA.pem" "GatewayA_key.pem" ;
+        verify_cert on;
+        my_identifier asn1dn ;
+        peers_identifier asn1dn ;
+        verify_identifier on ;
+        lifetime time 24 hour ;
+        proposal {
+                encryption_algorithm blowfish ;
+                hash_algorithm sha1;
+                authentication_method rsasig ;
+                dh_group 2 ;
+        }
+}
+ 
+sainfo <emphasis role="bold">anonymous</emphasis>
+{
+        pfs_group 2;
+        lifetime time 12 hour ;
+        encryption_algorithm blowfish ;
+        authentication_algorithm hmac_sha1, hmac_md5 ;
+        compression_algorithm deflate ;
+}</programlisting>
+
+        <para>/etc/racoon/setkey.conf - System A:</para>
+
+        <programlisting>flush;
+spdflush;</programlisting>
+      </blockquote>
+
+      <para>If system A is running kernel 2.6.10 or later then it must also be
+      running ipsec-tools (racoon) 0.5rc1 or later.</para>
+
+      <para>On the mobile system (system B), it is not possible to create a
+      static IPSEC configuration because the IP address of the laptop's
+      internet connection isn't static. I have created an 'ipsecvpn' script
+      and included in the tarball and in the RPM's documentation directory;
+      this script can be used to start and stop the connection.</para>
+
+      <para>The ipsecvpn script has some variable assignments at the top -- in
+      the above case, these would be as follows:</para>
+
+      <blockquote>
+        <programlisting>#
+# External Interface
+#
+INTERFACE=eth0
+#
+# Remote IPSEC Gateway
+#
+GATEWAY=206.162.148.9
+#
+# Networks behind the remote gateway
+#
+NETWORKS="192.168.1.0/24"
+#
+# Directory where X.509 certificates are stored.
+#
+CERTS=/etc/certs
+#
+# Certificate to be used for this connection. The cert
+# directory must contain:
+#
+#     ${CERT}.pem     - the certificate
+#     ${CERT}_key.pem - the certificates's key
+#
+CERT=roadwarrior
+#
+#     The setkey binary
+#
+SETKEY=/usr/sbin/setkey
+#
+#     The racoon binary
+#
+RACOON=/usr/sbin/racoon</programlisting>
+      </blockquote>
+
+      <para>The ipsecvpn script can be installed in /etc/init.d/ but it is
+      probably best installed in /usr/local/sbin and run manually:</para>
+
+      <blockquote>
+        <para><command>ipsecvpn start </command># Starts the tunnel</para>
+
+        <para><command>ipsecvpn stop</command> # Stops the tunnel</para>
+      </blockquote>
+    </example>
+
+    <warning>
+      <para>Although the ipsecvpn script allows you to specify multiple remote
+      NETWORKS as a space-separated list, SAs are created on the gateway only
+      during ISAKMP negotiation. So in practice, only the first remote network
+      accessed will be accessible from the roadwarrior.</para>
+    </warning>
+  </section>
+
+  <section>
+    <title>Transport Mode</title>
+
+    <para>In today's wireless world, it is often the case that individual
+    hosts in a network need to establish secure connections with the other
+    hosts in that network. In that case, IPSEC transport mode is an
+    appropriate solution.</para>
+
+    <para><graphic fileref="images/TransportMode.png" />Here's an example
+    using the ipsec-tools package. The files shown are from host
+    192.168.20.10; the configuration of the other nodes is similar.</para>
+
+    <blockquote>
+      <para><filename>/etc/racoon/racoon.conf</filename>:</para>
+
+      <programlisting>path pre_shared_key "/etc/racoon/psk.txt" ;
+
+remote anonymous
+{
+        exchange_mode main ;
+        my_identifier address ;
+        lifetime time 24 hour ;
+        proposal {
+                encryption_algorithm blowfish ;
+                hash_algorithm sha1;
+                authentication_method pre_shared_key ;
+                dh_group 2 ;
+        }
+}
+
+sainfo anonymous
+{
+        pfs_group 2;
+        lifetime time 12 hour ;
+        encryption_algorithm blowfish ;
+        authentication_algorithm hmac_sha1, hmac_md5 ;
+        compression_algorithm deflate ;
+}
+</programlisting>
+
+      <para><filename>/etc/racoon/setkey.conf</filename>:</para>
+
+      <programlisting># First of all flush the SPD database
+spdflush;
+
+# Add some SPD rules
+
+spdadd 192.168.20.10/32 192.168.20.20/32 any -P out ipsec esp/transport/192.168.20.10-192.168.20.20/require;
+spdadd 192.168.20.20/32 192.168.20.10/32 any -P in  ipsec esp/transport/192.168.20.20-192.168.20.10/require;
+spdadd 192.168.20.10/32 192.168.20.30/32 any -P out ipsec esp/transport/192.168.20.10-192.168.20.30/require;
+spdadd 192.168.20.30/32 192.168.20.10/32 any -P in  ipsec esp/transport/192.168.20.30-192.168.20.10/require;
+spdadd 192.168.20.10/32 192.168.20.40/32 any -P out ipsec esp/transport/192.168.20.10-192.168.20.40/require;
+spdadd 192.168.20.40/32 192.168.20.10/32 any -P in  ipsec esp/transport/192.168.20.40-192.168.20.10/require;
+</programlisting>
+
+      <para>/etc/racoon/psk.txt:</para>
+
+      <programlisting>192.168.20.20             &lt;key for 192.168.20.10&lt;-&gt;192.168.20.20&gt;
+192.168.20.30             &lt;key for 192.168.20.10&lt;-&gt;192.168.20.30&gt;
+192.168.20.40             &lt;key for 192.168.20.10&lt;-&gt;192.168.20.40&gt;</programlisting>
+
+      <para>Note that the <emphasis role="bold">same key</emphasis>must be
+      used in both directions.</para>
+    </blockquote>
+
+    <para>Shorewall configuration goes as follows:</para>
+
+    <blockquote>
+      <para><filename>/etc/shorewall/interfaces</filename>:</para>
+
+      <programlisting>#ZONE   INTERFACE       BROADCAST       OPTIONS
+net     eth0            detect          routefilter,dhcp,tcpflags
+#LAST LINE -- ADD YOUR ENTRIES BEFORE THIS ONE -- DO NOT REMOVE</programlisting>
+
+      <para>/etc/shorewall/tunnels:</para>
+
+      <programlisting>#TYPE          ZONE             GATEWAY         GATEWAY
+#                                               ZONE
+ipsec:noah     net              192.168.20.0/24 loc</programlisting>
+
+      <para>/etc/shorewall/zones:</para>
+
+      <programlisting>#ZONE          TYPE             OPTIONS             IN           OUT
+#                                                   OPTIONS      OPTIONS
+loc            ipsec            mode=transport
+net            ipv4</programlisting>
+
+      <para><filename>/etc/shorewall/hosts</filename>:</para>
+
+      <programlisting>#ZONE           HOST(S)                         OPTIONS
+loc             eth0:192.168.20.0/24  
+#LAST LINE -- ADD YOUR ENTRIES BEFORE THIS LINE -- DO NOT REMOVE</programlisting>
+
+      <para>It is worth noting that although <emphasis>loc</emphasis> is a
+      sub-zone of <emphasis>net</emphasis>, because <emphasis>loc</emphasis>
+      is an IPSEC-only zone it does not need to be defined before
+      <emphasis>net</emphasis> in
+      <emphasis>/etc/shorewall/zones</emphasis>.</para>
+
+      <para><filename>/etc/shorewall/policy</filename>:</para>
+
+      <programlisting>#SOURCE         DEST            POLICY          LOG LEVEL       LIMIT:BURST
+$FW             all             ACCEPT
+loc             $FW             ACCEPT
+net             loc             NONE
+loc             net             NONE
+net             all             DROP            info
+# The FOLLOWING POLICY MUST BE LAST
+all             all             REJECT          info
+#LAST LINE -- ADD YOUR ENTRIES ABOVE THIS LINE -- DO NOT REMOVE</programlisting>
+
+      <para>Since there are no cases where net&lt;-&gt;loc traffic should
+      occur, NONE policies are used.</para>
+    </blockquote>
+  </section>
+
+  <section>
+    <title>IPSEC and <trademark>Windows</trademark> XP</title>
+
+    <para>I have successfully configured my work laptop to use IPSEC with
+    X.509 certificates for wireless IP communication when it is undocked at
+    home. I looked at dozens of sites and the one I found most helpful was
+    <ulink
+    url="http://ipsec.math.ucla.edu/services/ipsec-windows.html">http://ipsec.math.ucla.edu/services/ipsec-windows.html</ulink>.
+    The instructions on that site are directed to students at UCLA but they
+    worked fine for me (once I followed them very carefully).</para>
+
+    <warning>
+      <para>The instructions found on the UCLA site are complex and do not
+      include any information on the generation of X.509 certificates. There
+      are lots of sites however that can tell you how to generate
+      certificates, including <ulink
+      url="http://www.ipsec-howto.org/">http://www.ipsec-howto.org/</ulink>.</para>
+
+      <para>One piece of information that may not be so easy to find is "How
+      do I generate a PKCS#12 certificate to import into Windows?". Here's the
+      openssl command that I used:</para>
+
+      <programlisting><command>openssl pkcs12 -export -in eastepnc6000.pem -inkey eastepnc6000_key.pem -out eastepnc6000.pfx -name "IPSEC Cert for Home Wireless"</command> </programlisting>
+
+      <para>I was prompted for a password to associate with the certificate.
+      This password is entered on the Windows system during import.</para>
+
+      <para>In the above command:</para>
+
+      <itemizedlist>
+        <listitem>
+          <para><filename>eastepnc6000.pem</filename> was the laptop's
+          certificate in PEM format.</para>
+        </listitem>
+
+        <listitem>
+          <para><filename>eastepnc6000_key.pem</filename> was the laptop's
+          private key (actually, it's the original signing request which
+          includes the private key).</para>
+        </listitem>
+
+        <listitem>
+          <para><filename>eastepnc6000.pfx</filename> is the PKCS#12 output
+          file.</para>
+        </listitem>
+
+        <listitem>
+          <para>"IPSEC Cert for Home Wireless" is the friendly name for the
+          certificate.</para>
+        </listitem>
+      </itemizedlist>
+
+      <para>I started to write an article about how to do this, complete with
+      graphics captured from my laptop. I gave up. I had captured 12 images
+      and hadn't really started yet. The Windows interface for configuring
+      IPSEC is the worst GUI that I have ever used. What can be displayed on
+      one split Emacs screen (racoon.conf plus setkey.conf) takes 20+
+      different dialog boxes on Windows XP!!!</para>
+    </warning>
+  </section>
+
+  <section>
+    <title>Source of Additional Samples</title>
+
+    <para>Be sure to check out the <filename
+    class="directory">src/racoon/samples</filename> subdirectory in the
+    ipsec-tools source tree. It has a wide variety of sample racoon
+    configuration files.</para>
+  </section>
+</article>

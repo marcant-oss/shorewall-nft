@@ -1,0 +1,719 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE article PUBLIC "-//OASIS//DTD DocBook XML V4.2//EN"
+"http://www.oasis-open.org/docbook/xml/4.2/docbookx.dtd">
+<article>
+  <!--$Id$-->
+
+  <articleinfo>
+    <title>Traffic Shaping/Control</title>
+
+    <authorgroup>
+      <author>
+        <firstname>Tom</firstname>
+
+        <surname>Eastep</surname>
+      </author>
+
+      <author>
+        <firstname>Arne</firstname>
+
+        <surname>Bernin</surname>
+      </author>
+    </authorgroup>
+
+    <pubdate>2006-01-04</pubdate>
+
+    <copyright>
+      <year>2001-2006</year>
+
+      <holder>Thomas M. Eastep</holder>
+    </copyright>
+
+    <copyright>
+      <year>2005</year>
+
+      <holder>Arne Bernin &amp; Thomas M. Eastep</holder>
+    </copyright>
+
+    <legalnotice>
+      <para>Permission is granted to copy, distribute and/or modify this
+      document under the terms of the GNU Free Documentation License, Version
+      1.2 or any later version published by the Free Software Foundation; with
+      no Invariant Sections, with no Front-Cover, and with no Back-Cover
+      Texts. A copy of the license is included in the section entitled
+      <quote><ulink url="GnuCopyright.htm">GNU Free Documentation
+      License</ulink></quote>.</para>
+    </legalnotice>
+  </articleinfo>
+
+  <section>
+    <title>Introduction</title>
+
+    <para>Starting with Version 2.5.5, Shorewall has builtin support for
+    traffic shaping and control. Before this version, the support was quite
+    limited. You were able to use your own tcstart script (and you still are),
+    but besides the tcrules file it was not possible to define classes or
+    queueing discplines inside the Shorewall config files.</para>
+
+    <para>The support for traffic shaping and control still does not cover all
+    options available (and especially all algorithms that can be used to queue
+    traffic) in the Linux kernel but it should fit most needs. If you are
+    using your own script for traffic control and you still want to use it in
+    the future, you will find information on how to do this, <link
+    linkend="owntcstart"> later in this document</link>. But for this to work,
+    you will also need to enable traffic shaping in the kernel and Shorewall
+    as covered by the next sections.</para>
+  </section>
+
+  <section>
+    <title>Linux traffic shaping and control</title>
+
+    <para>This section gives a brief introduction of how controlling traffic
+    with the linux kernel works. Although this might be enough for configuring
+    it in the Shorewall configuration files, it still might be a good idea to
+    take a deeper look into the <ulink url="http://lartc.org/howto/">Linux
+    Advanced Routing and Shaping HOWTO</ulink>. At the time of writing this,
+    the current version is 1.0.0.</para>
+
+    <para>Since kernel 2.2 Linux has extensive support for controlling
+    traffic. You can define different algorithms that are used to queue the
+    traffic before it leaves an interface. The standard one is called pfifo
+    and is (as the name suggests) of the type First In First out. This means,
+    that it does not shape anything, if you have a connection that eats up all
+    your bandwidth, this qeueing algorithm will not stop it from doing
+    so.</para>
+
+    <para>For Shorewall traffic shaping we use two algorithms, one is called
+    HTB (Hierarchical Token Bucket) and SFQ (Stochastic Fairness Queuing). SFQ
+    is easy to explain: it just tries to track your connections (tcp or udp
+    streams) and balances the traffic between them. This normally works well.
+    HTB allows you to define a set of classes, and you can put the traffic you
+    want into these classes. You can define minimum and maximum bandwitdh
+    settings for those classes and order them hierachically (the less
+    priorized classes only get bandwitdth if the more important have what they
+    need). Shorewall builtin traffic shaping allows you to define these
+    classes (and their bandwidth limits), and it uses SFQ inside these classes
+    to make sure, that different data streams are handled equally.</para>
+
+    <para>You can only shape outgoing traffic. The reason for this is simple,
+    the packets were already received by your network card before you can
+    decide what to do with them. So the only choice would be to drop them
+    which normally makes no sense (since you received the packet already, it
+    went through the possible bottleneck (the incoming connection). The next
+    possible bottleneck might come if the packet leaves on another interface,
+    so this will be the place where queuing might occur. So, defining queues
+    for incoming packets is not very useful, you just want to have it
+    forwarded to the outgoing interface as fast as possible.</para>
+
+    <para>There is one exception, though. Limiting incoming traffic to a value
+    a bit slower than your actual line speed will avoid queueing on the other
+    end of that connection. This is mostly useful if you don't have access to
+    traffic control on the other side and if this other side has a faster
+    network connection than you do (the line speed between the systems is the
+    bottleneck, e.g. a DSL or Cable Modem connection to your provider's
+    router, the router itself is normally connected to a much faster
+    backbone). So, if you drop packets that are coming in too fast, the
+    underlying protocol might recognize this and slow down the connection. TCP
+    has a builtin mechanism for this, UDP has not (but the protocol over UDP
+    might recognize it , if there is any).</para>
+
+    <para>The reason why queing is bad in these cases is, that you might have
+    packets which need to be priorized over others, e.g. VoIP or ssh. For this
+    type of connections it is important that packets arrive in a certain
+    amount of time. For others like http downloads, it does not really matter
+    if it takes a few seconds more.</para>
+
+    <para>If you have a large queue on the other side and the router there
+    does not care about QoS or the QoS bits are not set properly, your
+    important packets will go into the same queue as your less timecritical
+    download packets which will result in a large delay.</para>
+
+    <para>You shape and control outgoing traffic by assigning the traffic to
+    <firstterm>classes</firstterm>. Each class is associated with exactly one
+    network interface and has a number of attributes:</para>
+
+    <orderedlist>
+      <listitem>
+        <para>PRIORITY - Used to give preference to one class over another
+        when selecting a packet to send. The priority is a numeric value with
+        1 being the highest priority, 2 being the next highest, and so
+        on.</para>
+      </listitem>
+
+      <listitem>
+        <para>RATE - The minimum bandwidth this class should get, when the
+        traffic load rises. Classes with a higher priority (lower PRIORITY
+        value) are served even if there are others that have a guaranteed
+        bandwith but have a lower priority (higher PRIORITY value).</para>
+      </listitem>
+
+      <listitem>
+        <para>CEIL - The maximum bandwidth the class is allowed to use when
+        the link is idle.</para>
+      </listitem>
+
+      <listitem>
+        <para>MARK - Netfilter has a facility for
+        <firstterm>marking</firstterm> packets. Packet marks have a numeric
+        value which is limited in Shorewall to the values 1-255. You assign
+        packet marks to different types of traffic using entries in the
+        <filename>/etc/shorewall/tcrules</filename> file.</para>
+      </listitem>
+    </orderedlist>
+
+    <para>One class for each interface must be designated as the
+    <firstterm>default class</firstterm>. This is the class to which unmarked
+    traffic (packets to which you have not assigned a mark value in
+    <filename>/etc/shorewall/tcrules</filename>) is assigned.</para>
+  </section>
+
+  <section>
+    <title>Linux Kernel Configuration</title>
+
+    <para>You will need at least kernel 2.4.18 for this to work, please take a
+    look at the following screenshot for what settings you need to enable. For
+    builtin support, you need the HTB scheduler, the Ingress scheduler, the
+    PRIO pseudoscheduler and SFQ queue. The other scheduler or queue
+    algorithms are not needed.</para>
+
+    <para>You also need the u32 and fw classifiers from near the bottom of the
+    main Networking Options menu (not shown).</para>
+
+    <para>This screen shot shows how I've configured QoS in my Kernel:<graphic
+    align="center" fileref="images/QoS.png" /></para>
+  </section>
+
+  <section>
+    <title>Enable TC support in Shorewall</title>
+
+    <para>You need this support whether you use the builtin support or whether
+    you provide your own tcstart script.</para>
+
+    <para>To enable the builtin traffic shaping and control in Shorewall, you
+    have to do the following:</para>
+
+    <itemizedlist>
+      <listitem>
+        <para>Set <emphasis role="bold">TC_ENABLED</emphasis> to "Internal" in
+        /etc/shorewall/shorewall.conf. Setting TC_ENABLED=Yes causes Shorewall
+        to look for an external tcstart file (See <link linkend="tcstart">a
+        later section</link> for details).</para>
+      </listitem>
+
+      <listitem>
+        <para>Setting <emphasis role="bold">CLEAR_TC</emphasis> parameter in
+        /etc/shorewall/shorewall.conf to Yes will clear the traffic shaping
+        configuration during Shorewall [re]start and Shorewall stop. This is
+        normally what you want when using the builtin support (and also if you
+        use your own tcstart script)</para>
+      </listitem>
+
+      <listitem>
+        <para>The other steps that follow depend on whether you use your own
+        script or the builtin solution. They will be explained in the
+        following sections.</para>
+      </listitem>
+    </itemizedlist>
+  </section>
+
+  <section>
+    <title>Using builtin traffic shaping/control</title>
+
+    <para>For defining bandwidths (for either devices or classes) please use
+    kbit or kbps(for Kilobytes per second) and make sure there is <emphasis
+    role="bold">NO</emphasis> space between the number and the unit (it is
+    100kbit <emphasis role="bold">not</emphasis> 100 kbit). Using mbit, mbps
+    or a raw number (which means bytes) could be used, but note that only
+    integer numbers are supported (0.5 is <emphasis role="bold">not
+    valid</emphasis>).</para>
+
+    <para>To properly configure the settings for your devices you might need
+    to find out the real up- and downstream rates you have. This is especially
+    the case, if you are using a DSL connection or one of another type that do
+    not have a guaranteed bandwidth. Don't trust the values your provider
+    tells you for this; especially measuring the real download speed is
+    important! There are several online tools that help you find out; search
+    for "dsl speed test" on google (For Germany you can use <ulink
+    url="http://www.speedcheck.arcor.de/cgi-bin/speedcheck.cgi">arcor speed
+    check</ulink>). Be sure to choose a test located near you.</para>
+
+    <section>
+      <title>/etc/shorewall/tcdevices</title>
+
+      <para>This file allows you to define the incoming and outgoing bandwidth
+      for the devices you want traffic shaping to be enabled. That means, if
+      you want to use traffic shaping for a device, you have to define it
+      here.</para>
+
+      <para>Columns in the file are as follows:</para>
+
+      <itemizedlist>
+        <listitem>
+          <para>INTERFACE - Name of interface. Each interface may be listed
+          only once in this file. You may NOT specify the name of an alias
+          (e.g., eth0:0) here; see <ulink url="FAQ.htm#faq18">FAQ #18</ulink>.
+          You man NOT specify wildcards here, e.g. if you have multiple ppp
+          interfaces, you need to put them all in here!</para>
+        </listitem>
+
+        <listitem>
+          <para>IN-BANDWIDTH - The incoming Bandwidth of that interface.
+          Please note that you are not able to do traffic shaping on incoming
+          traffic, as the traffic is already received before you could do so.
+          This Column allows you to define the maximum traffic allowed for
+          this interface in total, if the rate is exceeded, the packets are
+          dropped. You want this mainly if you have a DSL or Cable Connection
+          to avoid queuing at your providers side. If you don't want any
+          traffic to be dropped set this to a value faster than your interface
+          maximum rate.</para>
+        </listitem>
+
+        <listitem>
+          <para>OUT-BANDWIDTH - Specifiy the outgoing bandwidth of that
+          interface. This is the maximum speed your connection can handle. It
+          is also the speed you can refer as "full" if you define the tc
+          classes. Outgoing traffic above this rate will be dropped.</para>
+        </listitem>
+      </itemizedlist>
+
+      <example>
+        <title></title>
+
+        <para>Suppose you are using PPP over Ethernet (DSL) and ppp0 is the
+        interface for this. The device has an outgoing bandwidth of 500kbit
+        and an incoming bandwidth of 6000kbit</para>
+
+        <programlisting>#INTERFACE    IN-BANDWITH      OUT-BANDWIDTH
+ppp0           6000kbit         500kbit</programlisting>
+      </example>
+    </section>
+
+    <section>
+      <title>/etc/shorewall/tcclasses</title>
+
+      <para>This file allows you to define the actual classes that are used to
+      split the outgoing traffic.</para>
+
+      <itemizedlist>
+        <listitem>
+          <para>INTERFACE - Name of interface. Must match the name of an
+          interface with an entry in
+          <filename>/etc/shorewall/tcdevices</filename>.</para>
+        </listitem>
+
+        <listitem>
+          <para>MARK - The mark value which is an integer in the range 1-255.
+          You define these marks in the tcrules file, marking the traffic you
+          want to go into the queueing classes defined in here. You can use
+          the same marks for different Interfaces.</para>
+        </listitem>
+
+        <listitem>
+          <para>RATE - The minimum bandwidth this class should get, when the
+          traffic load rises. Please note that first the classes which equal
+          or a lesser priority value are served even if there are others that
+          have a guaranteed bandwith but a lower priority.</para>
+        </listitem>
+
+        <listitem>
+          <para>CEIL - The maximum bandwidth this class is allowed to use when
+          the link is idle. Useful if you have traffic which can get full
+          speed when more important services (e.g. interactive like ssh) are
+          not used. You can use the value "full" in here for setting the
+          maximum bandwidth to the defined output bandwidth of that
+          interface.</para>
+        </listitem>
+
+        <listitem>
+          <para>PRIORITY - you have to define a priority for the class.
+          packets in a class with a higher priority (=lesser value) are
+          handled before less priorized onces. You can just define the mark
+          value here also, if you are increasing the mark values with lesser
+          priority.</para>
+        </listitem>
+
+        <listitem>
+          <para>OPTIONS - A comma-separated list of options including the
+          following:</para>
+
+          <itemizedlist>
+            <listitem>
+              <para>default - this is the default class for that interface
+              where all traffic should go, that is not classified
+              otherwise.</para>
+
+              <note>
+                <para>defining default for exactly <emphasis
+                role="bold">one</emphasis> class per interface is
+                mandatory!</para>
+              </note>
+            </listitem>
+
+            <listitem>
+              <para>tos-&lt;tosname&gt; - this lets you define a filter for
+              the given &lt;tosname&gt; which lets you define a value of the
+              Type Of Service bits in the ip package which causes the package
+              to go in this class. Please note, that this filter overrides all
+              mark settings, so if you define a tos filter for a class all
+              traffic having that mark will go in it regardless of the mark on
+              the package. You can use the following for this option:
+              tos-minimize-delay (16) tos-maximize-throughput (8)
+              tos-maximize-reliability (4) tos-minimize-cost (2)
+              tos-normal-service (0)</para>
+
+              <note>
+                <para>Each of this options is only valid for <emphasis
+                role="bold">one</emphasis> class per interface.</para>
+              </note>
+            </listitem>
+
+            <listitem>
+              <para>tcp-ack - if defined causes an tc filter to be created
+              that puts all tcp ack packets on that interface that have an
+              size of &lt;=64 Bytes to go in this class. This is useful for
+              speeding up downloads. Please note that the size of the ack
+              packets is limited to 64 bytes as some applications (p2p for
+              example) use to make every package an ack package which would
+              cause them all into here. We want only packets WITHOUT payload
+              to match, so the size limit. Bigger packets just take their
+              normal way into the classes.</para>
+
+              <note>
+                <para>This option is only valid for <emphasis
+                role="bold">class</emphasis> per interface.</para>
+              </note>
+            </listitem>
+          </itemizedlist>
+        </listitem>
+      </itemizedlist>
+    </section>
+
+    <section>
+      <title>/etc/shorewall/tcrules</title>
+
+      <para>The fwmark classifier provides a convenient way to classify
+      packets for traffic shaping. The <quote>/etc/shorewall/tcrules</quote>
+      file is used for specifying these marks in a tabular fashion.</para>
+
+      <para>Normally, packet marking occurs in the PREROUTING chain before any
+      address rewriting takes place. This makes it impossible to mark inbound
+      packets based on their destination address when SNAT or Masquerading are
+      being used. You can cause packet marking to occur in the FORWARD chain
+      by using the MARK_IN_FORWARD_CHAIN option in shorewall.conf.</para>
+
+      <para>Columns in the file are as follows:</para>
+
+      <itemizedlist>
+        <listitem>
+          <para>MARK - Specifies the mark value is to be assigned in case of a
+          match. This is an integer in the range 1-255. This value may be
+          optionally followed by <quote>:</quote> and either <quote>F</quote>
+          or <quote>P</quote> to designate that the marking will occur in the
+          FORWARD or PREROUTING chains respectively. If this additional
+          specification is omitted, the chain used to mark packets will be
+          determined by the setting of the MARK_IN_FORWARD_CHAIN option in
+          shorewall.conf.</para>
+        </listitem>
+
+        <listitem>
+          <para>SOURCE - The source of the packet. If the packet originates on
+          the firewall, place <quote>$FW</quote> in this column. Otherwise,
+          this is a comma-separated list of interface names, IP addresses, MAC
+          addresses in Shorewall Format and/or Subnets.</para>
+
+          <para>Examples <programlisting>    eth0     192.168.2.4,192.168.1.0/24</programlisting></para>
+        </listitem>
+
+        <listitem>
+          <para>DEST -- Destination of the packet. Comma-separated list of IP
+          addresses and/or subnets.</para>
+        </listitem>
+
+        <listitem>
+          <para>PROTO - Protocol - Must be the name of a protocol from
+          /etc/protocol, a number or <quote>all</quote></para>
+        </listitem>
+
+        <listitem>
+          <para>PORT(S) - Destination Ports. A comma-separated list of Port
+          names (from /etc/services), port numbers or port ranges (e.g.,
+          21:22); if the protocol is <quote>icmp</quote>, this column is
+          interpreted as the destination icmp type(s).</para>
+        </listitem>
+
+        <listitem>
+          <para>CLIENT PORT(S) - (Optional) Port(s) used by the client. If
+          omitted, any source port is acceptable. Specified as a
+          comma-separate list of port names, port numbers or port
+          ranges.</para>
+        </listitem>
+
+        <listitem>
+          <para>USER/GROUP (Added in Shorewall version 1.4.10) - (Optional)
+          This column may only be non-empty if the SOURCE is the firewall
+          itself. When this column is non-empty, the rule applies only if the
+          program generating the output is running under the effective user
+          and/or group. It may contain :</para>
+
+          <para>[!][&lt;user name or number&gt;]:[&lt;group name or
+          number&gt;][+&lt;program name&gt;]</para>
+
+          <para>The colon is optionnal when specifying only a user.</para>
+
+          <para>Examples:</para>
+
+          <programlisting>joe     #program must be run by joe
+:kids   #program must be run by a member of the 'kids' group
+!:kids  #program must not be run by a member of the 'kids' group
++upnpd  #program named upnpd (This feature was removed from Netfilter in kernel version 2.6.14).</programlisting>
+        </listitem>
+      </itemizedlist>
+
+      <example>
+        <title></title>
+
+        <para>All packets arriving on eth1 should be marked with 1. All
+        packets arriving on eth2 and eth3 should be marked with 2. All packets
+        originating on the firewall itself should be marked with 3.</para>
+
+        <programlisting>#MARK   SOURCE    DESTINATION    PROTOCOL   USER/GROUP
+1       eth1      0.0.0.0/0      all
+2       eth2      0.0.0.0/0      all
+2       eth3      0.0.0.0/0      all
+3       $FW        0.0.0.0/0      all</programlisting>
+      </example>
+
+      <example>
+        <title></title>
+
+        <para>All GRE (protocol 47) packets not originating on the firewall
+        and destined for 155.186.235.151 should be marked with 12.</para>
+
+        <programlisting>#MARK   SOURCE    DESTINATION     PROTOCOL   USER/GROUP
+12      0.0.0.0/0 155.182.235.151 47</programlisting>
+      </example>
+
+      <example>
+        <title></title>
+
+        <para>All SSH packets originating in 192.168.1.0/24 and destined for
+        155.186.235.151 should be marked with 22.</para>
+
+        <programlisting>#MARK   SOURCE         DESTINATION     PROTOCOL   USER/GROUP
+22      192.168.1.0/24 155.182.235.151 tcp        22</programlisting>
+      </example>
+    </section>
+
+    <section>
+      <title>ppp devices</title>
+
+      <para>If you use ppp/pppoe/pppoa) to connect to your internet provider
+      and you use traffic shaping you need to restart shorewall traffic
+      shaping. The reason for this is, that if the ppp connection gets
+      restarted (and it usally does this at least daily), all
+      <quote>tc</quote> filters/qdiscs related to that interface are
+      deleted.</para>
+
+      <para>The easiest way to achieve this, is just to restart shorewall once
+      the link is up. To achieve this add a small executable script
+      to<quote>/etc/ppp/ip-up.d</quote>.</para>
+
+      <programlisting>#! /bin/sh
+
+/sbin/shorewall refresh</programlisting>
+    </section>
+
+    <section>
+      <title>Real life examples</title>
+
+      <section>
+        <title>Configuration to replace Wondershaper</title>
+
+        <para>You are able to fully replace the wondershaper script by using
+        the buitin traffic control.You can find example configuration files at
+        <ulink
+        url="http://www1.shorewall.net/pub/shorewall/Samples/tc4shorewall/">"http://www1.shorewall.net/pub/shorewall/Samples/tc4shorewall/</ulink>.
+        Please note that they are just examples and need to be adjusted to
+        work for you. In this examples it is assumed that your interface for
+        you internet connection is ppp0 (for DSL) , if you use another
+        connection type, you have to change it. You also need to change the
+        settings in the tcdevices.wondershaper file to reflect your line
+        speed. The relevant lines of the config files follow here. Please note
+        that this is just an 1:1 replacement doing exactly what wondershaper
+        should do. You are free to change it...</para>
+
+        <section>
+          <title>tcdevices file</title>
+
+          <programlisting>#INTERFACE    IN-BANDWITH      OUT-BANDWIDTH
+ppp0            5000kbit        500kbit</programlisting>
+        </section>
+
+        <section>
+          <title>tcclasses file</title>
+
+          <programlisting>#INTERFACE      MARK    RATE            CEIL        PRIORITY    OPTIONS
+ppp0            1       full            full            1       tcp-ack,tos-minimize-delay
+ppp0            2       9*full/10       9*full/10       2       default
+ppp0            3       8*full/10       8*full/10       2</programlisting>
+        </section>
+
+        <section>
+          <title>tcrules file</title>
+
+          <programlisting>#MARK           SOURCE          DEST            PROTO   PORT(S) CLIENT   USER
+#                                                              PORT(S)
+1:P             0.0.0.0/0       0.0.0.0/0       icmp    echo-request
+1:P             0.0.0.0/0       0.0.0.0/0       icmp    echo-reply
+# mark traffic which should have a lower priority with a 3:
+# mldonkey
+3               0.0.0.0/0       0.0.0.0/0       udp     -        4666</programlisting>
+
+          <para>Wondershaper allows you to define a set of hosts and/or ports
+          you want to classify as low priority. To achieve this , you have to
+          add these hosts to tcrules and set the mark to 3 (true if you use
+          the example configuration files).</para>
+        </section>
+
+        <section>
+          <title>Setting hosts to low priority</title>
+
+          <para>lets assume the following settings from your old wondershaper
+          script (don't assume these example values are really useful, they
+          are only used for demonstrating ;-):</para>
+
+          <programlisting>
+# low priority OUTGOING traffic - you can leave this blank if you want
+# low priority source netmasks
+NOPRIOHOSTSRC="192.168.1.128/25 192.168.3.28"
+
+# low priority destination netmasks
+NOPRIOHOSTDST=60.0.0.0/24
+
+# low priority source ports
+NOPRIOPORTSRC="6662 6663"
+
+# low priority destination ports
+NOPRIOPORTDST="6662 6663"  </programlisting>
+
+          <para>This would result in the following additional settings to the
+          tcrules file:</para>
+
+          <programlisting>3               192.168.1.128/25 0.0.0.0/0      all
+3               192.168.3.28     0.0.0.0/0      all
+3               0.0.0.0/0        60.0.0.0/24    all
+3               0.0.0.0/0        0.0.0.0/0      udp     6662,6663
+3               0.0.0.0/0        0.0.0.0/0      udp     -         6662,6663
+3               0.0.0.0/0        0.0.0.0/0      tcp     6662,6663
+3               0.0.0.0/0        0.0.0.0/0      tcp     -         6662,6663</programlisting>
+        </section>
+      </section>
+
+      <section>
+        <title>A simple setup</title>
+
+        <para>This is a simple setup for people sharing an internet connection
+        and using different computers for this. It just basically shapes
+        between 2 hosts which have the ip addresses 192.168.2.23 and
+        192.168.2.42</para>
+
+        <section>
+          <title>tcdevices file</title>
+
+          <programlisting>#INTERFACE    IN-BANDWITH      OUT-BANDWIDTH
+ppp0            6000kbit        700kbit</programlisting>
+
+          <para>We have 6mbit down and 700kbit upstream.</para>
+        </section>
+
+        <section>
+          <title>tcclasses file</title>
+
+          <programlisting>#INTERFACE      MARK    RATE            CEIL            PRIORITY    OPTIONS
+ppp0            1       10kbit          50kbit          1           tcp-ack
+ppp0            2       300kbit         full            2
+ppp0            3       300kbit         full            2
+ppp0            4       90kbit          200kbit         3           default</programlisting>
+
+          <para>We add a class for tcp ack packets with highest priority, so
+          that downloads are fast. The following 2 classes share most of the
+          bandwidth between the 2 hosts, if the connection is idle, they may
+          use full speed. As the hosts should be treated equally they have the
+          same priority. The last class is for the remaining traffic.</para>
+        </section>
+
+        <section>
+          <title>tcrules file</title>
+
+          <programlisting>#MARK           SOURCE          DEST            PROTO   PORT(S)      CLIENT   USER
+#                                                                    PORT(S)
+1:P             0.0.0.0/0       0.0.0.0/0       icmp    echo-request
+1:P             0.0.0.0/0       0.0.0.0/0       icmp    echo-reply
+2:P             192.168.2.23    0.0.0.0/0       all
+3:P             192.168.2.42    0.0.0.0/0       all</programlisting>
+
+          <para>We mark icmp ping and replies so they will go into the fast
+          interactive class and set a mark for each host.</para>
+        </section>
+      </section>
+    </section>
+  </section>
+
+  <section>
+    <title id="tcstart">Using your own tc script</title>
+
+    <section id="owntcstart">
+      <title>Replacing builtin tcstart file</title>
+
+      <para>If you prefer your own tcstart file, just install it in
+      /etc/shorewall/tcstart.</para>
+
+      <para>In your tcstart script, when you want to run the <quote>tc</quote>
+      utility, use the run_tc function supplied by Shorewall if you want tc
+      errors to stop the firewall.</para>
+
+      <orderedlist>
+        <listitem>
+          <para>Set TC_ENABLED=Yes and CLEAR_TC=Yes</para>
+        </listitem>
+
+        <listitem>
+          <para>Supply an /etc/shorewall/tcstart script to configure your
+          traffic shaping rules.</para>
+        </listitem>
+
+        <listitem>
+          <para>Optionally supply an /etc/shorewall/tcclear script to stop
+          traffic shaping. That is usually unnecessary.</para>
+        </listitem>
+
+        <listitem>
+          <para>If your tcstart script uses the <quote>fwmark</quote>
+          classifier, you can mark packets using entries in
+          /etc/shorewall/tcrules.</para>
+        </listitem>
+      </orderedlist>
+    </section>
+
+    <section>
+      <title>Traffic control outside Shorewall</title>
+
+      <para>To start traffic shaping when you bring up your network
+      interfaces, you will have to arrange for your traffic shaping
+      configuration script to be run at that time. How you do that is
+      distribution dependent and will not be covered here. You then
+      should:</para>
+
+      <orderedlist>
+        <listitem>
+          <para>Set TC_ENABLED=No and CLEAR_TC=No</para>
+        </listitem>
+
+        <listitem>
+          <para>If your script uses the <quote>fwmark</quote> classifier, you
+          can mark packets using entries in /etc/shorewall/tcrules.</para>
+        </listitem>
+      </orderedlist>
+    </section>
+  </section>
+</article>
