@@ -29,7 +29,7 @@ from shorewall_nft.compiler.ir import (
     Match,
     Rule,
     Verdict,
-    _expand_line_for_tokens,
+    expand_line_for_tokens,
 )
 from shorewall_nft.compiler.verdicts import (
     ClassifyVerdict,
@@ -422,7 +422,7 @@ def _process_mark_rule(ir: FirewallIR, line: ConfigLine,
         return
 
     # nfset/dns/dnsr token pre-pass on SOURCE(col 1) + DEST(col 2).
-    found, expanded = _expand_line_for_tokens(line, 1, 2, ir)
+    found, expanded = expand_line_for_tokens(line, 1, 2, ir)
     if found:
         for exp_line in expanded:
             _process_mark_rule(ir, exp_line, zones)

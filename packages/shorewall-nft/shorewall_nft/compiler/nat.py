@@ -27,7 +27,7 @@ from shorewall_nft.compiler.ir import (
     Match,
     Rule,
     Verdict,
-    _expand_line_for_tokens,
+    expand_line_for_tokens,
     _has_set_token,
 )
 from shorewall_nft.compiler.verdicts import DnatVerdict, SnatVerdict
@@ -95,7 +95,7 @@ def _process_masq_line(ir: FirewallIR, line: ConfigLine) -> None:
         )
 
     # nfset/dns/dnsr token pre-pass on SOURCE (col 1) only.
-    found, expanded = _expand_line_for_tokens(line, 1, None, ir)
+    found, expanded = expand_line_for_tokens(line, 1, None, ir)
     if found:
         for exp_line in expanded:
             _process_masq_line(ir, exp_line)
@@ -179,7 +179,7 @@ def _process_dnat_line(ir: FirewallIR, line: ConfigLine) -> None:
         )
 
     # nfset/dns/dnsr token pre-pass on SOURCE (col 1) only.
-    found, expanded = _expand_line_for_tokens(line, 1, None, ir)
+    found, expanded = expand_line_for_tokens(line, 1, None, ir)
     if found:
         for exp_line in expanded:
             _process_dnat_line(ir, exp_line)
