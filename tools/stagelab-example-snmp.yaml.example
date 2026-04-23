@@ -1,0 +1,97 @@
+# Template file. Copy to /home/avalentin/projects/marcant-fw/shorewall-config/stagelab/stagelab-example-snmp.yaml,
+# fill in real values (or set STAGELAB_* env vars and run via the env-substitution loader),
+# and point the stagelab CLI at the resulting file.
+#
+# See tools/stagelab-env.example for the full list of variables.
+#
+# Example stagelab config demonstrating SNMP metric sources alongside Prometheus.
+#
+# Topology:
+#   ${STAGELAB_TESTER01} (${STAGELAB_MGMT_TESTER01}) — client side, native-mode on eth2.10
+#   ${STAGELAB_TESTER02} (${STAGELAB_MGMT_TESTER02}) — server side, native-mode on eth2.20
+#   ${STAGELAB_FW_PRIMARY} (${STAGELAB_MGMT_PRIMARY})   — firewall-under-test (primary)
+#   ${STAGELAB_FW_SECONDARY} (${STAGELAB_MGMT_SECONDARY}) — firewall-under-test (secondary)
+#
+# SNMP community string is read from the environment — NEVER commit a literal value.
+# Set it before running:
+#   export STAGELAB_SNMP_COMMUNITY_MON=<your-community>
+#   stagelab validate tools/stagelab-example-snmp.yaml
+#   stagelab run    tools/stagelab-example-snmp.yaml
+#
+# Install the SNMP extra on the controller host before use:
+#   pip install 'shorewall-nft-stagelab[snmp]'
+
+hosts:
+  - name: tester01
+    address: root@${STAGELAB_MGMT_TESTER01}
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+
+  - name: tester02
+    address: root@${STAGELAB_MGMT_TESTER02}
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+
+dut:
+  kind: external
+
+endpoints:
+  - name: client-lan
+    host: tester01
+    mode: native
+    nic: eth2
+    vlan: 13
+    ipv4: 10.0.13.100/24
+    ipv4_gw: 10.0.13.200
+    rss_queues: 4
+    irq_affinity: [2, 3]
+
+  - name: server-wan
+    host: tester02
+    mode: native
+    nic: eth2
+    vlan: 13
+    ipv4: 10.0.13.200/24
+    ipv4_gw: 10.0.13.100
+    rss_queues: 4
+    irq_affinity: [2, 3]
+
+scenarios:
+  - id: baseline_throughput
+    kind: throughput
+    source: client-lan
+    sink: server-wan
+    proto: tcp
+    duration_s: 10
+    parallel: 4
+    expect_min_gbps: 0.5
+
+metrics:
+  poll_interval_s: 5
+  collect: [nft_counters, conntrack_stats]
+  sources:
+    - kind: prometheus
+      name: fw-primary-shorewalld
+      url: http://${STAGELAB_MGMT_PRIMARY}:9748/metrics
+      timeout_s: 5.0
+      metric_prefix_allow: ["shorewalld_"]
+
+    - kind: snmp
+      name: fw-primary-snmp
+      host: ${STAGELAB_MGMT_PRIMARY}
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      port: 161
+      timeout_s: 5.0
+      bundles: [node_traffic, system, vrrp, pdns]
+
+    - kind: snmp
+      name: fw-secondary-snmp
+      host: ${STAGELAB_MGMT_SECONDARY}
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      port: 161
+      timeout_s: 5.0
+      bundles: [node_traffic, system, vrrp, pdns]
+
+report:
+  output_dir: /tmp/stagelab-reports
+  keep_pcaps: failed_only

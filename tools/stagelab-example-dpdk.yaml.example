@@ -1,0 +1,88 @@
+# Template file. Copy to /home/avalentin/projects/marcant-fw/shorewall-config/stagelab/stagelab-example-dpdk.yaml,
+# fill in real values (or set STAGELAB_* env vars and run via the env-substitution loader),
+# and point the stagelab CLI at the resulting file.
+#
+# See tools/stagelab-env.example for the full list of variables.
+#
+# Example stagelab config — DPDK smoke on virtio eth1/eth2.
+#
+# Tests the NIC-binding lifecycle (unbind kernel driver → bind vfio-pci →
+# ... run scenario ... → rebind) on two tester VMs, with all four endpoints
+# operating on virtio_net NICs. Each endpoint gets its PCI address passed
+# to topology_dpdk; on setup the agent moves the NIC to vfio-pci via
+# dpdk-devbind.py, on teardown it restores the original virtio_net driver.
+#
+# TRex itself is not staged on these VMs (tarball download blocked by SSL
+# cert chain at cisco.com), so the run_trex_stateless scenario will fail
+# with ImportError — that is the expected outcome here. The goal is to
+# validate that endpoint setup + teardown restore the kernel NIC cleanly.
+#
+# Warning: binding eth1 to vfio-pci takes it out of bond0 → br-trunk.
+# Operator acknowledged this is fine (VMs have snapshots).
+
+hosts:
+  - name: tester01
+    address: root@${STAGELAB_MGMT_TESTER01}
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+    hugepages_gib: 1
+
+  - name: tester02
+    address: root@${STAGELAB_MGMT_TESTER02}
+    work_dir: /root/shorewall-nft
+    isolate_cores: [2, 3]
+    hugepages_gib: 1
+
+dut:
+  kind: external
+
+endpoints:
+  - name: dpdk-src-a
+    host: tester01
+    mode: dpdk
+    pci_addr: "${STAGELAB_TESTER01_PCI_ETH1}"     # eth1
+    dpdk_cores: [2, 3]
+    hugepages_gib: 1
+    trex_role: client
+
+  - name: dpdk-src-b
+    host: tester01
+    mode: dpdk
+    pci_addr: "${STAGELAB_TESTER01_PCI_ETH2}"     # eth2
+    dpdk_cores: [2, 3]
+    hugepages_gib: 1
+    trex_role: client
+
+  - name: dpdk-sink-a
+    host: tester02
+    mode: dpdk
+    pci_addr: "${STAGELAB_TESTER02_PCI_ETH1}"     # eth1
+    dpdk_cores: [2, 3]
+    hugepages_gib: 1
+    trex_role: server
+
+  - name: dpdk-sink-b
+    host: tester02
+    mode: dpdk
+    pci_addr: "${STAGELAB_TESTER02_PCI_ETH2}"     # eth2
+    dpdk_cores: [2, 3]
+    hugepages_gib: 1
+    trex_role: server
+
+scenarios:
+  - id: dpdk_smoke
+    kind: throughput_dpdk
+    source: dpdk-src-a
+    sink: dpdk-sink-a
+    proto: udp
+    duration_s: 5
+    multiplier: "1gbps"
+    packet_size_b: 64
+
+metrics:
+  poll_interval_s: 5
+  collect: [nft_counters]
+
+report:
+  output_dir: /tmp/stagelab-reports
+  keep_pcaps: failed_only

@@ -1,0 +1,121 @@
+# Template file. Copy to /home/avalentin/projects/marcant-fw/shorewall-config/stagelab/stagelab-fw-test-live.yaml,
+# fill in real values (or set STAGELAB_* env vars and run via the env-substitution loader),
+# and point the stagelab CLI at the resulting file.
+#
+# See tools/stagelab-env.example for the full list of variables.
+#
+# stagelab-fw-test-live.yaml — base config for full live FW test.
+#
+# Topology:
+#   ${STAGELAB_TESTER01} (${STAGELAB_MGMT_TESTER01}) — WAN-side endpoint; sim-uplink netns is already
+#     up on eth2 for OSPF peering.  Stagelab uses probe mode on a fresh netns
+#     (TAP inside a VLAN-filtering bridge) so both coexist on the same host.
+#   ${STAGELAB_TESTER02} (${STAGELAB_MGMT_TESTER02}) — downstream customer-zone endpoint on eth1.10
+#     (VLAN 10, mgmt zone, ${STAGELAB_MGMT_IPV4}/29, GW ${STAGELAB_MGMT_GW_IPV4}).
+#   ${STAGELAB_FW_PRIMARY} / ${STAGELAB_FW_SECONDARY} — reference HA firewall pair (external DUT; metrics only).
+#
+# VLAN selection rationale:
+#   VLAN 20 (host zone) was NOT seen on tester02 eth1 during probing.
+#   VLAN 10 was present (VRRP advertisements from the primary FW bond0.10).
+#   VLAN 10 = mgmt zone on the reference firewall; it is the only customer-VLAN
+#   reachable from tester02's eth1 trunk port today.
+#
+# Through-FW note:
+#   tester01 sim-uplink is on bond1 (net zone).
+#   tester02 is on bond0.10 (mgmt zone).
+#   The FW policy enforces "net → all REJECT" and "mgmt → all REJECT", so
+#   bidirectional ICMP across the net/mgmt zone boundary is blocked by default.
+#   Traffic-gen scenarios that require end-to-end FW forwarding must target
+#   specific port/proto combos permitted by explicit ACCEPT rules, or the
+#   operator must temporarily add a test-only ACCEPT rule.
+#
+# SNMP community string is read from the environment — NEVER commit a literal value.
+# Set it before running:
+#   export STAGELAB_SNMP_COMMUNITY_MON=<your-community>
+#   .venv/bin/shorewall-nft-stagelab validate tools/stagelab-fw-test-live.yaml
+#
+# Usage:
+#   STAGELAB_SNMP_COMMUNITY_MON=public \
+#       tools/run-security-test-plan.sh --standards all \
+#           --config tools/stagelab-fw-test-live.yaml \
+#           --simlab --simlab-host root@${STAGELAB_MGMT_TESTER01} \
+#           --out /tmp/sec-plan-live
+
+hosts:
+  - name: tester01
+    address: root@${STAGELAB_MGMT_TESTER01}
+    work_dir: /root/shorewall-nft
+
+  - name: tester02
+    address: root@${STAGELAB_MGMT_TESTER02}
+    work_dir: /root/shorewall-nft
+
+dut:
+  kind: external
+
+endpoints:
+  # tester01 uplink endpoint — probe mode in a fresh netns alongside sim-uplink.
+  # sim-uplink owns eth2 in its own netns; stagelab probe-mode uses a TAP on a
+  # separate bridge and does NOT conflict with it.
+  - name: uplink-probe
+    host: tester01
+    mode: probe
+    bridge: br-uplink
+    role: wan-uplink
+
+  # tester02 downstream endpoint — native mode on VLAN sub-interface eth1.20
+  # (host zone). net→host ICMP is ACCEPTed by the FW policy,
+  # so tester01 sim-uplink ←→ tester02 through-FW flows are live (ICMP-only;
+  # TCP/UDP need a permitted zone-pair or a test-ACCEPT rule).
+  #
+  # eth1 is on the customer-VLAN-transparent trunk bridge (separate from eth2's
+  # backbone bridge). tester02-downstream.service creates eth1.20 + return route
+  # at boot.
+  - name: lan-downstream
+    host: tester02
+    mode: native
+    nic: eth1
+    vlan: 20
+    ipv4: ${STAGELAB_HOST_IPV4_DOWNSTREAM}/24
+    ipv4_gw: ${STAGELAB_HOST_GW_IPV4}
+    ipv6: ${STAGELAB_HOST_IPV6_DOWNSTREAM}/64
+    ipv6_gw: ${STAGELAB_HOST_GW_IPV6}
+    role: lan-downstream
+
+  # tester01 native-mode VLAN 20 endpoint — L2 peer of lan-downstream for
+  # IPv6 throughput benches. NOT through-FW (both endpoints on same L2),
+  # but validates the IPv6 code path with a real public prefix.
+  - name: wan-native
+    host: tester01
+    mode: native
+    nic: eth1
+    vlan: 20
+    ipv4: ${STAGELAB_HOST_IPV4_NATIVE}/24
+    ipv4_gw: ${STAGELAB_HOST_GW_IPV4}
+    ipv6: ${STAGELAB_HOST_IPV6_NATIVE}/64
+    ipv6_gw: ${STAGELAB_HOST_GW_IPV6}
+    role: wan-native
+
+metrics:
+  poll_interval_s: 10
+  sources:
+    - kind: snmp
+      name: fw-primary
+      host: ${STAGELAB_MGMT_PRIMARY}
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      port: 161
+      timeout_s: 5.0
+      bundles: [node_traffic, system, vrrp, vrrp_extended]
+
+    - kind: snmp
+      name: fw-secondary
+      host: ${STAGELAB_MGMT_SECONDARY}
+      community: "${STAGELAB_SNMP_COMMUNITY_MON}"
+      port: 161
+      timeout_s: 5.0
+      bundles: [node_traffic, system, vrrp, vrrp_extended]
+
+scenarios: []   # catalogue provides them at merge time
+
+report:
+  output_dir: /tmp/stagelab-fw-live

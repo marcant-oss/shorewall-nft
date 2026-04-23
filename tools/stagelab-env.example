@@ -1,0 +1,138 @@
+# tools/stagelab-env.example — environment variables consumed by the
+# stagelab YAML templates in tools/stagelab-*.yaml.example and by the
+# env-substitution loader in shorewall_nft_stagelab.config.load_stagelab_config().
+#
+# Usage:
+#   cp tools/stagelab-env.example ~/.stagelab.env
+#   # edit ~/.stagelab.env with real values (DO NOT commit)
+#   set -a; . ~/.stagelab.env; set +a
+#   shorewall-nft-stagelab validate tools/stagelab-lab-base.yaml.example
+#
+# All values in this file are intentionally safe-to-commit: RFC 5737 TEST-NET-3
+# (203.0.113.0/24), RFC 5737 TEST-NET-1 (192.0.2.0/24), RFC 1918 (192.168.x),
+# RFC 3849 (2001:db8::/32), RFC 6598 CGN (100.64/10), example.com.  Replace
+# with real deployment values in your local (gitignored) copy.
+#
+# Naming convention:
+#   STAGELAB_MGMT_*      — management-network IPv4 of a host (RFC 1918-ish)
+#   STAGELAB_FW_*        — firewall node short names
+#   STAGELAB_TESTER*     — tester VM short names
+#   STAGELAB_<ZONE>_IPV4 — production-zone IPv4 address or prefix
+#   STAGELAB_<ZONE>_IPV6 — production-zone IPv6 address or prefix
+#   STAGELAB_TESTER*_PCI_* — PCI BDF addresses for DPDK endpoints
+#   STAGELAB_SNMP_COMMUNITY_MON — SNMP community string (read-only)
+#   NETBOX_*             — NetBox plugin deploy-overlay values
+
+# ---------------------------------------------------------------------------
+# Firewall HA pair (DUT — reference HA firewall)
+# ---------------------------------------------------------------------------
+
+# Short name of the primary (active) firewall node.
+STAGELAB_FW_PRIMARY="fw-primary"
+
+# Short name of the secondary (standby) firewall node.
+STAGELAB_FW_SECONDARY="fw-secondary"
+
+# Management-network IPv4 of the primary firewall (Prometheus + SNMP source).
+STAGELAB_MGMT_PRIMARY="192.0.2.70"
+
+# Management-network IPv4 of the secondary firewall.
+STAGELAB_MGMT_SECONDARY="192.0.2.87"
+
+# ---------------------------------------------------------------------------
+# Tester VMs (traffic generators + probe hosts)
+# ---------------------------------------------------------------------------
+
+# Short name of tester01 (WAN-side generator).
+STAGELAB_TESTER01="tester01"
+
+# Short name of tester02 (LAN-side sink / downstream generator).
+STAGELAB_TESTER02="tester02"
+
+# SSH-reachable management IPv4 of tester01.
+STAGELAB_MGMT_TESTER01="192.0.2.93"
+
+# SSH-reachable management IPv4 of tester02.
+STAGELAB_MGMT_TESTER02="192.0.2.74"
+
+# ---------------------------------------------------------------------------
+# DPDK line-rate hosts (stagelab-dpdk-example.yaml)
+# ---------------------------------------------------------------------------
+
+# SSH-reachable management IP of the DPDK client-side tester.
+STAGELAB_TESTER_DPDK_01_HOST="203.0.113.10"
+
+# SSH-reachable management IP of the DPDK server-side tester.
+STAGELAB_TESTER_DPDK_02_HOST="203.0.113.11"
+
+# PCI BDF of the first DPDK-capable NIC port on tester-dpdk-01.
+STAGELAB_TESTER_DPDK_01_PCI_A="0000:00:00.0"
+
+# PCI BDF of the second DPDK-capable NIC port on tester-dpdk-01 (bidirectional tests).
+STAGELAB_TESTER_DPDK_01_PCI_B="0000:00:00.1"
+
+# PCI BDF of the first DPDK-capable NIC port on tester-dpdk-02.
+STAGELAB_TESTER_DPDK_02_PCI_A="0000:00:00.0"
+
+# PCI BDF of the second DPDK-capable NIC port on tester-dpdk-02.
+STAGELAB_TESTER_DPDK_02_PCI_B="0000:00:00.1"
+
+# PCI BDF of tester01 eth1 (used by stagelab-example-dpdk and crash-test templates).
+STAGELAB_TESTER01_PCI_ETH1="0000:06:13.0"
+
+# PCI BDF of tester01 eth2.
+STAGELAB_TESTER01_PCI_ETH2="0000:06:14.0"
+
+# PCI BDF of tester02 eth1.
+STAGELAB_TESTER02_PCI_ETH1="0000:06:13.0"
+
+# PCI BDF of tester02 eth2.
+STAGELAB_TESTER02_PCI_ETH2="0000:06:14.0"
+
+# ---------------------------------------------------------------------------
+# Production-zone addresses used by stagelab-fw-test-live.yaml
+# ---------------------------------------------------------------------------
+
+# mgmt-zone IPv4 address of tester02's eth1.10 endpoint.
+STAGELAB_MGMT_IPV4="203.0.113.30"
+
+# mgmt-zone IPv4 gateway on the firewall bond0.10.
+STAGELAB_MGMT_GW_IPV4="203.0.113.25"
+
+# host-zone IPv4 address of tester02's lan-downstream endpoint.
+STAGELAB_HOST_IPV4_DOWNSTREAM="203.0.113.254"
+
+# host-zone IPv4 address of tester01's wan-native endpoint (same L2 as tester02).
+STAGELAB_HOST_IPV4_NATIVE="203.0.113.253"
+
+# host-zone IPv4 default gateway (firewall bond0.20).
+STAGELAB_HOST_GW_IPV4="203.0.113.1"
+
+# host-zone IPv6 address of tester02's lan-downstream endpoint.
+STAGELAB_HOST_IPV6_DOWNSTREAM="2001:db8:0:3168::254"
+
+# host-zone IPv6 address of tester01's wan-native endpoint.
+STAGELAB_HOST_IPV6_NATIVE="2001:db8:0:3168::253"
+
+# host-zone IPv6 default gateway (firewall bond0.20).
+STAGELAB_HOST_GW_IPV6="2001:db8:0:3168::1"
+
+# ---------------------------------------------------------------------------
+# SNMP
+# ---------------------------------------------------------------------------
+
+# SNMP v2c community for the monitoring read-only user.
+# Expanded by the existing SNMPSourceSpec.community field validator;
+# never commit a literal value.
+STAGELAB_SNMP_COMMUNITY_MON="public"
+
+# ---------------------------------------------------------------------------
+# NetBox plugin (tools/deploy.json.example)
+# ---------------------------------------------------------------------------
+
+# Base URL of the NetBox instance consumed by the netbox plugin.
+NETBOX_URL="https://netbox.example.com/"
+
+# NetBox API token (read-only is sufficient for the plugin).
+# NEVER commit the real token.
+NETBOX_API_TOKEN="REPLACE_WITH_NETBOX_API_TOKEN"

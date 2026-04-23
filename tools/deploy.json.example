@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "_comment": "Deployment overlay consumed by tools/setup-remote-test-host.sh via `shorewall-nft config import --to /etc/shorewall46 --force`. Copy to tools/deploy.json and fill in real credentials. tools/deploy.json is .gitignored.",
+  "_comment": "Deployment overlay consumed by tools/setup-remote-test-host.sh via `shorewall-nft config import --to /etc/shorewall46 --force`. Copy to tools/deploy.json (gitignored) and substitute real values, or run through an env-substitution wrapper that expands ${NETBOX_URL} / ${NETBOX_API_TOKEN} from the environment. See tools/stagelab-env.example.",
 
   "plugins.conf": {
     "plugins": [
@@ -9,7 +9,7 @@
   },
 
   "plugins/netbox.toml": {
-    "url":                  "https://netbox.example.com/",
+    "url":                  "${NETBOX_URL}",
     "token_file":           "/etc/shorewall46/plugins/netbox.token",
     "priority":             100,
     "cache_ttl":            86400,
@@ -21,5 +21,5 @@
     ]
   },
 
-  "plugins/netbox.token": "PASTE-YOUR-NETBOX-API-TOKEN-HERE"
+  "plugins/netbox.token": "${NETBOX_API_TOKEN}"
 }
