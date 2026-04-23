@@ -24,7 +24,7 @@ class TestConfigResolution:
         """When /etc/shorewall46 exists, it is used instead of /etc/shorewall."""
         merged = tmp_path / "shorewall46"
         merged.mkdir()
-        with patch("shorewall_nft.runtime.cli.MERGED_CONFIG_DIR", merged):
+        with patch("shorewall_nft.runtime.cli._common.MERGED_CONFIG_DIR", merged):
             result = _get_config_dir(None)
             assert result == merged
 
@@ -32,7 +32,7 @@ class TestConfigResolution:
         """Without merged dir, falls back to /etc/shorewall."""
         # Point MERGED_CONFIG_DIR to a non-existent path
         missing = tmp_path / "nonexistent"
-        with patch("shorewall_nft.runtime.cli.MERGED_CONFIG_DIR", missing):
+        with patch("shorewall_nft.runtime.cli._common.MERGED_CONFIG_DIR", missing):
             result = _get_config_dir(None)
             # Legacy default is returned (may or may not exist)
             from shorewall_nft.runtime.cli import DEFAULT_CONFIG_DIR
@@ -44,7 +44,7 @@ class TestConfigResolution:
         merged.mkdir()
         custom = tmp_path / "custom"
         custom.mkdir()
-        with patch("shorewall_nft.runtime.cli.MERGED_CONFIG_DIR", merged):
+        with patch("shorewall_nft.runtime.cli._common.MERGED_CONFIG_DIR", merged):
             assert _get_config_dir(custom) == custom
 
 
