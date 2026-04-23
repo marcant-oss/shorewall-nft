@@ -7,10 +7,10 @@ from spec_rewrite), and finally ``_add_rule`` which produces the
 Rule+Match+Verdict triple and attaches it to the appropriate zone-pair
 chain.
 
-Also hosts the macro registry _CUSTOM_MACROS — primary registry,
-populated by _load_standard_macros (from the bundled Shorewall
-macro files) and _load_custom_macros (from the user's config dir).
-User macros take precedence during load.
+Macro loading is handled by ``_load_standard_macros`` (from the bundled
+Shorewall macro files) and ``_load_custom_macros`` (from the user's
+config dir).  Both functions write into ``ir.macros`` on the
+``FirewallIR`` instance; user macros take precedence during load.
 """
 
 from __future__ import annotations
@@ -35,7 +35,6 @@ from shorewall_nft.compiler.ir._data import (
 from shorewall_nft.compiler.ir.spec_rewrite import (
     _AND_MULTISET_RE,
     _BRACKET_SET_RE,
-    _DNS_DEPRECATION_WARNED,
     _has_set_token,
     _normalise_bracket_flags,
     _rewrite_bracket_spec,
@@ -68,18 +67,12 @@ _SLASH_MACRO_RE = re.compile(r'^([\w-]+)/(\w+)(?::(.+))?$')
 # RFC1918 private address ranges
 _RFC1918_RANGES = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
-# Custom macros loaded from macros/ directory
-# Each entry is a list of (action, source, dest, proto, dport, sport) tuples
-# where "PARAM" means "use the calling action", "SOURCE"/"DEST" mean "use caller's"
-_CUSTOM_MACROS: dict[str, list[tuple[str, ...]]] = {}
-
-
-def _load_standard_macros(shorewall_dir: Path | None = None) -> None:
-    """Load standard Shorewall macros.
+def _load_standard_macros(ir: FirewallIR, shorewall_dir: Path | None = None) -> None:
+    """Load standard Shorewall macros into ``ir.macros``.
 
     Loads from the bundled macros directory (shipped inside the package)
     by default, with fallbacks to system-installed Shorewall locations
-    if the bundled copy is missing. Entries are merged into _CUSTOM_MACROS
+    if the bundled copy is missing. Entries are merged into ir.macros
     so user macros can override them.
     """
     if shorewall_dir is None:
@@ -107,7 +100,7 @@ def _load_standard_macros(shorewall_dir: Path | None = None) -> None:
         if not macro_file.is_file() or not macro_file.name.startswith("macro."):
             continue
         macro_name = macro_file.name[6:]
-        if macro_name in _CUSTOM_MACROS:
+        if macro_name in ir.macros:
             continue  # User macros take precedence
         if macro_name in _NATIVE_HANDLED_MACROS:
             continue  # Handled natively by the compiler
@@ -127,16 +120,16 @@ def _load_standard_macros(shorewall_dir: Path | None = None) -> None:
             entries.append(tuple(cols[:6]))
 
         if entries:
-            _CUSTOM_MACROS[macro_name] = entries
+            ir.macros[macro_name] = entries
 
 
 # Macros that we handle natively (better than the standard macro files)
 _NATIVE_HANDLED_MACROS = {"Rfc1918"}
 
 
-def _load_custom_macros(macros: dict[str, list]) -> None:
-    """Load custom macros from parsed macro files into _CUSTOM_MACROS."""
-    _CUSTOM_MACROS.clear()
+def _load_custom_macros(ir: FirewallIR, macros: dict[str, list]) -> None:
+    """Load custom macros from parsed macro files into ``ir.macros``."""
+    ir.macros.clear()
     for name, lines in macros.items():
         entries = []
         for line in lines:
@@ -148,7 +141,7 @@ def _load_custom_macros(macros: dict[str, list]) -> None:
                 cols.append("-")
             entries.append(tuple(cols[:6]))
         if entries:
-            _CUSTOM_MACROS[name] = entries
+            ir.macros[name] = entries
 
 
 def _parse_zone_spec(spec: str, zones: ZoneModel) -> tuple[str, str | None]:
@@ -653,7 +646,7 @@ def _expand_macro(ir: FirewallIR, zones: ZoneModel,
 
     # Check custom macros (populated from both bundled Shorewall macro
     # files and user-supplied macros; user overrides take precedence).
-    custom = _CUSTOM_MACROS.get(macro_name)
+    custom = ir.macros.get(macro_name)
     if custom:
         # Detect if calling context is IPv6:
         # - Source/dest has IPv6 addresses

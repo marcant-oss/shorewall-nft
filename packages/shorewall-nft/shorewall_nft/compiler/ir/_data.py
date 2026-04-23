@@ -142,6 +142,18 @@ class FirewallIR:
     # populates them at runtime via ``NfSetsManager``.
     nfset_registry: NfSetRegistry = field(default_factory=NfSetRegistry)
 
+    # Macro registry: populated by _load_standard_macros (bundled Shorewall
+    # macros) and _load_custom_macros (user macros override).  Per-compile
+    # state — moved here from module-level _CUSTOM_MACROS so repeated
+    # build_ir() calls in the same process (parallel tests, daemon usage)
+    # are properly isolated.
+    macros: dict[str, list[tuple[str, ...]]] = field(default_factory=dict)
+
+    # Per-compile dedup set for the dns: deprecation warnings, so the same
+    # hostname only warns once per build_ir() call.  Moved here from
+    # module-level _DNS_DEPRECATION_WARNED for the same isolation reason.
+    _dns_deprecation_warned: set[str] = field(default_factory=set)
+
     def add_chain(self, chain: Chain) -> None:
         """Register ``chain`` in this IR under ``chain.name``.
 

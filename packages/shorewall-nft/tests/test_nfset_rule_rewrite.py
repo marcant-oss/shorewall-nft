@@ -17,7 +17,6 @@ from shorewall_nft.compiler.ir import (
     _spec_contains_nfset_token,
     _rewrite_dns_spec,
     _rewrite_nfset_spec,
-    _DNS_DEPRECATION_WARNED,
 )
 from shorewall_nft.nft.dns_sets import DnsSetRegistry
 from shorewall_nft.nft.nfsets import NfSetRegistry, NfSetEntry
@@ -324,50 +323,55 @@ class TestRewriteDnsSpecW13:
 class TestDnsDeprecationWarning:
     """dns: emits one warning per config path; dnst: emits none."""
 
-    def setup_method(self):
-        # Clear the rate-limiter between tests so each test gets a clean slate.
-        _DNS_DEPRECATION_WARNED.clear()
-
     def test_dns_emits_warning_once(self, caplog):
         reg = _dns_reg()
+        dns_warned: set[str] = set()
         with caplog.at_level(logging.WARNING, logger="shorewall_nft.compiler.ir"):
             _rewrite_dns_spec("dns:example.org", reg, "v4",
-                              config_path="/etc/shorewall/rules")
+                              config_path="/etc/shorewall/rules",
+                              dns_warned=dns_warned)
             _rewrite_dns_spec("dns:example.org", reg, "v4",
-                              config_path="/etc/shorewall/rules")
+                              config_path="/etc/shorewall/rules",
+                              dns_warned=dns_warned)
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING
                     and "deprecated" in r.message]
         assert len(warnings) == 1, f"expected 1 warning, got {len(warnings)}"
 
     def test_dns_warns_per_config_path(self, caplog):
         """Two different config paths → two separate warnings."""
-        _DNS_DEPRECATION_WARNED.clear()
         reg = _dns_reg()
+        dns_warned: set[str] = set()
         with caplog.at_level(logging.WARNING, logger="shorewall_nft.compiler.ir"):
             _rewrite_dns_spec("dns:example.org", reg, "v4",
-                              config_path="/etc/shorewall/rules")
+                              config_path="/etc/shorewall/rules",
+                              dns_warned=dns_warned)
             _rewrite_dns_spec("dns:example.org", reg, "v4",
-                              config_path="/etc/shorewall6/rules")
+                              config_path="/etc/shorewall6/rules",
+                              dns_warned=dns_warned)
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING
                     and "deprecated" in r.message]
         assert len(warnings) == 2
 
     def test_dnst_emits_no_warning(self, caplog):
         reg = _dns_reg()
+        dns_warned: set[str] = set()
         with caplog.at_level(logging.WARNING, logger="shorewall_nft.compiler.ir"):
             _rewrite_dns_spec("dnst:example.org", reg, "v4",
-                              config_path="/etc/shorewall/rules")
+                              config_path="/etc/shorewall/rules",
+                              dns_warned=dns_warned)
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING
                     and "deprecated" in r.message]
         assert len(warnings) == 0
 
     def test_unknown_path_uses_sentinel(self, caplog):
         """When config_path is empty the warning fires once for '<unknown>'."""
-        _DNS_DEPRECATION_WARNED.clear()
         reg = _dns_reg()
+        dns_warned: set[str] = set()
         with caplog.at_level(logging.WARNING, logger="shorewall_nft.compiler.ir"):
-            _rewrite_dns_spec("dns:example.org", reg, "v4", config_path="")
-            _rewrite_dns_spec("dns:example.org", reg, "v4", config_path="")
+            _rewrite_dns_spec("dns:example.org", reg, "v4", config_path="",
+                              dns_warned=dns_warned)
+            _rewrite_dns_spec("dns:example.org", reg, "v4", config_path="",
+                              dns_warned=dns_warned)
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING
                     and "deprecated" in r.message]
         assert len(warnings) == 1

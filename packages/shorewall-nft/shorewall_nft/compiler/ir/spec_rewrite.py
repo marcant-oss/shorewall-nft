@@ -35,11 +35,6 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-# Rate-limiter for dns: deprecation warnings — one warning per config path
-# (or one global warning when no path is available).  Keys are config-file
-# paths (strings); the sentinel ``"<unknown>"`` covers path-less contexts.
-_DNS_DEPRECATION_WARNED: set[str] = set()
-
 
 def _spec_contains_dns_token(spec: str) -> bool:
     """Cheap test for ``dns:HOSTNAME`` or ``dnst:HOSTNAME`` in a raw spec column.
@@ -71,6 +66,7 @@ def _rewrite_dns_spec(
     family: str,
     dnsr_registry: DnsrRegistry | None = None,
     config_path: str = "",
+    dns_warned: set[str] | None = None,
 ) -> str:
     """Replace any ``dns:hostname[,hostname…]`` or ``dnst:hostname[,hostname…]``
     token in ``spec`` with the compiled set-reference sentinel
@@ -151,8 +147,9 @@ def _rewrite_dns_spec(
     # Emit one deprecation warning per config path when dns: is used.
     if used_legacy_dns:
         key = config_path or "<unknown>"
-        if key not in _DNS_DEPRECATION_WARNED:
-            _DNS_DEPRECATION_WARNED.add(key)
+        _warned = dns_warned if dns_warned is not None else set()
+        if key not in _warned:
+            _warned.add(key)
             _log.warning(
                 "'dns:' prefix is deprecated; use 'dnst:' instead (config: %s)",
                 key,
@@ -566,7 +563,10 @@ def _rewrite_spec_for_family(
     if _spec_contains_nfset_token(spec):
         spec = _rewrite_nfset_spec(spec, ir.nfset_registry, family, line_ctx)
     if _spec_contains_dns_token(spec):
-        spec = _rewrite_dns_spec(spec, ir.dns_registry, family, ir.dnsr_registry)
+        spec = _rewrite_dns_spec(
+            spec, ir.dns_registry, family, ir.dnsr_registry,
+            dns_warned=ir._dns_deprecation_warned,
+        )
     if _spec_contains_dnsr_token(spec):
         spec = _rewrite_dnsr_spec(spec, ir.dns_registry, ir.dnsr_registry, family)
     return spec

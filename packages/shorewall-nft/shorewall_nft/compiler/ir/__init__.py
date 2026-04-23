@@ -51,7 +51,6 @@ from shorewall_nft.compiler.ir._data import (
 from shorewall_nft.compiler.ir.spec_rewrite import (
     _AND_MULTISET_RE,
     _BRACKET_SET_RE,
-    _DNS_DEPRECATION_WARNED,
     _has_set_token,
     _normalise_bracket_flags,
     _rewrite_bracket_spec,
@@ -69,7 +68,6 @@ from shorewall_nft.compiler.ir.spec_rewrite import (
 _log = logging.getLogger(__name__)
 
 from shorewall_nft.compiler.ir.rules import (
-    _CUSTOM_MACROS,
     _MACRO_RE,
     _NATIVE_HANDLED_MACROS,
     _RFC1918_RANGES,
@@ -148,10 +146,10 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
         ir.nfset_registry = build_nfset_registry(config.nfsets)
 
     # Load custom macros (user-defined take precedence)
-    _load_custom_macros(config.macros)
+    _load_custom_macros(ir, config.macros)
 
     # Load standard Shorewall macros (from Shorewall/Macros/)
-    _load_standard_macros()
+    _load_standard_macros(ir)
 
     # Create base chains
     _create_base_chains(ir)
