@@ -12,7 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from shorewall_nft.verify.simulate import NS_FW, _ns
+from shorewall_nft_netkit.netns_shell import run_shell_in_netns as _ns
+
+from shorewall_nft.verify.constants import NS_FW
 
 
 @dataclass
