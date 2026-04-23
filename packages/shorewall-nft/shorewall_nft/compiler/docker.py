@@ -12,7 +12,7 @@ chains, and the ``settings`` dict (keys: ``DOCKER``, ``DOCKER_BRIDGE``).
 Outputs: ``Rule`` entries with ``Verdict.ACCEPT`` appended to the
 ``forward`` chain (established/related, inter-container, and outbound
 matches on the bridge interface), and a masquerade rule
-(``verdict_args="masquerade:"``) appended to the ``postrouting`` chain.
+(``verdict_args=MasqueradeVerdict()``) appended to the ``postrouting`` chain.
 No new chains are created; rules are skipped silently if the expected
 chains are absent.
 
@@ -27,6 +27,7 @@ from shorewall_nft.compiler.ir import (
     Rule,
     Verdict,
 )
+from shorewall_nft.compiler.verdicts import MasqueradeVerdict
 
 
 def setup_docker(ir: FirewallIR, settings: dict[str, str]) -> None:
@@ -81,6 +82,6 @@ def setup_docker(ir: FirewallIR, settings: dict[str, str]) -> None:
                 Match(field="oifname", value=bridge, negate=True),
             ],
             verdict=Verdict.ACCEPT,
-            verdict_args="masquerade:",
+            verdict_args=MasqueradeVerdict(),
             comment="Docker: masquerade",
         ))
