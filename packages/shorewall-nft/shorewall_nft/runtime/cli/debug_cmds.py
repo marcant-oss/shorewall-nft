@@ -264,7 +264,7 @@ def debug(directory, netns, no_restore, trace_filter,
                 f"{trace_filter} meta nftrace set 1",
                 netns=netns)
             click.echo(f"Trace filter active: {trace_filter}")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — trace-filter is optional; debug session continues without it
             click.echo(f"WARNING: --trace filter install failed: {exc}",
                        err=True)
             trace_filter = None  # don't try to remove later
@@ -308,7 +308,7 @@ def debug(directory, netns, no_restore, trace_filter,
             # re-loading.
             try:
                 nft.cmd("delete table inet shorewall", netns=netns)
-            except Exception:
+            except Exception:  # noqa: BLE001 — TEARDOWN: table may already be absent; suppress to proceed with restore
                 pass
 
             if saved_path and saved_path.exists():

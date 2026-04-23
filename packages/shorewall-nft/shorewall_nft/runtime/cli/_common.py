@@ -350,7 +350,11 @@ def _check_loaded_hash(config_dir: Path, netns: str | None) -> tuple[str, str | 
             return source_hash, None
         loaded_hash = extract_hash_from_ruleset(r.stdout)
         return source_hash, loaded_hash
-    except Exception:
+    except (OSError, ValueError, TimeoutError):
+        # nft binary missing, netns inaccessible, or query timed out —
+        # caller treats None as "loaded hash unknown".
+        return source_hash, None
+    except Exception:  # noqa: BLE001 — probe; any failure means unknown hash
         return source_hash, None
 
 
@@ -401,7 +405,9 @@ def _compile_from_cli(directory, config_dir, config_dir_v4, config_dir_v6,
         try:
             override = click.get_current_context().obj.get(
                 "override_json")
-        except Exception:
+        except (AttributeError, TypeError, RuntimeError):
+            # ctx.obj may be None or not a dict when called outside a
+            # full CLI invocation (e.g. tests calling helpers directly).
             override = None
     return _compile(primary, config6_dir=secondary,
                     skip_sibling_merge=skip, debug=debug,
@@ -808,7 +814,7 @@ def _do_seed_request(
                 click.echo(f"  warn: {_w}", err=True)
             else:
                 click.echo(f"warn: {_w}", err=True)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — seed is best-effort; any error just warns
         _w = f"seed error: {exc}"
         if prog is not None:
             click.echo(f"  warn: {_w}", err=True)

@@ -177,5 +177,5 @@ def _register_plugin_commands(cli_group: click.Group) -> None:
             return
         pm = PluginManager(cdir)
         pm.register_cli_commands(cli_group)
-    except Exception:
-        pass  # Never block CLI startup on plugin errors
+    except Exception:  # noqa: BLE001 — broken plugin must never prevent CLI startup
+        pass

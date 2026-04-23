@@ -89,7 +89,7 @@ def _apply_and_register(
                         click.echo(
                             "warn: seed request failed — sets start empty",
                             err=True)
-                except Exception as _seed_exc:
+                except Exception as _seed_exc:  # noqa: BLE001 — seed best-effort; firewall must still load
                     click.echo(f"warn: seed skipped ({_seed_exc})", err=True)
 
     from shorewall_nft.netns.apply import apply_nft
@@ -238,7 +238,7 @@ def start(directory, netns, shorewalld_socket, instance_name,
                         s.warn("seed request failed, sets start empty")
                     else:
                         s.info("no seed data available")
-                except Exception as _seed_exc:
+                except Exception as _seed_exc:  # noqa: BLE001 — seed best-effort; firewall must still load
                     s.warn(f"seed skipped ({_seed_exc})")
 
     # ── Step 3: apply ruleset — this is the real gate ─────────────────
@@ -291,7 +291,7 @@ def start(directory, netns, shorewalld_socket, instance_name,
                     s.warn(e)
             else:
                 s.info("none configured")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — proxy-ARP apply is best-effort; don't block start
             s.warn(f"skipped ({exc})")
 
     # ── Step 5: tear down leftover shorewall_stopped table ────────────
@@ -306,7 +306,8 @@ def start(directory, netns, shorewalld_socket, instance_name,
                 s.info("stopped table removed")
             except NftError:
                 s.info("nothing to clean")
-        except Exception:
+        except (ImportError, OSError):
+            # nft binary or netlink unavailable — cleanup is non-critical.
             s.info("nothing to clean")
 
     prog.done("Shorewall-nft started.")
@@ -345,7 +346,7 @@ def stop(directory, netns, shorewalld_socket, instance_name,
     Without ``routestopped`` the kernel falls back to its default
     (typically wide-open) policy — same behaviour as before.
     """
-    from shorewall_nft.nft.netlink import NftError, NftInterface
+    from shorewall_nft.nft.netlink import NftInterface
     nft = NftInterface()
 
     # Resolve the primary config path up front — needed for the
@@ -367,7 +368,7 @@ def stop(directory, netns, shorewalld_socket, instance_name,
         s = emit_stopped_nft(ir)
         if s.strip():
             stopped_script = s
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — compile failure must not block stop; fall through
         click.echo(f"Note: stopped-table compile failed ({e}); "
                    "falling back to plain delete.", err=True)
 
@@ -377,7 +378,7 @@ def stop(directory, netns, shorewalld_socket, instance_name,
     # Best-effort delete of the running table.
     try:
         _run("delete table inet shorewall")
-    except (NftError, Exception) as e:
+    except Exception as e:  # noqa: BLE001 — table may already be absent; non-fatal
         click.echo(f"Note: {e}", err=True)
 
     if stopped_script is not None:
@@ -385,7 +386,7 @@ def stop(directory, netns, shorewalld_socket, instance_name,
         try:
             apply_nft(stopped_script, netns=netns)
             click.echo("Shorewall-nft stopped (routestopped table loaded).")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — stopped-table load is best-effort; firewall is already down
             click.echo(f"Note: failed to load shorewall_stopped: {e}",
                        err=True)
 
@@ -405,7 +406,7 @@ def stop(directory, netns, shorewalld_socket, instance_name,
             n = remove_proxyarp(proxy_entries, netns=netns)
             if n:
                 click.echo(f"proxy-arp/ndp: {n} entries removed")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — proxy-ARP removal is best-effort on stop
         click.echo(f"proxy-arp/ndp removal: skipped ({e})", err=True)
 
     # Deregister from shorewalld. Determine whether DNS/DNSR sets are
@@ -584,7 +585,8 @@ def status(netns: str | None):
                         "  WARNING: loaded ruleset differs from on-disk "
                         "config. Run `shorewall-nft reload` to sync.",
                         fg="yellow")
-            except Exception:
+            except (OSError, ValueError):
+                # config_dir not found or hash unreadable — drift display is non-critical
                 pass
         # Debug marker
         if "debug" in result.stdout[:500]:
