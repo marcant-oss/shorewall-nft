@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from shorewall_nft.compiler.ir import build_ir
+from shorewall_nft.compiler.verdicts import DnatVerdict
 from shorewall_nft.config.parser import load_config
 from shorewall_nft.nft.emitter import emit_nft
 
@@ -277,7 +278,7 @@ class TestDnatConcatMap:
                     Match(field="tcp dport", value=dport),
                 ],
                 verdict=Verdict.JUMP,
-                verdict_args=f"dnat:{tip}:{tport}",
+                verdict_args=DnatVerdict(target=f"{tip}:{tport}"),
             ))
         ir.chains["prerouting"] = pre
         return ir
@@ -328,7 +329,7 @@ class TestDnatConcatMap:
                 Match(field="udp dport", value="53"),
             ],
             verdict=Verdict.JUMP,
-            verdict_args="dnat:192.0.2.30:53",
+            verdict_args=DnatVerdict(target="192.0.2.30:53"),
         ))
         ir.chains["prerouting"] = pre
         out = emit_nft(ir)

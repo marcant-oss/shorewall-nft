@@ -268,64 +268,20 @@ class TestTypedEmit:
 
 
 # ---------------------------------------------------------------------------
-# 4. Legacy string-prefix fallback regression
+# 4. log_level field
 # ---------------------------------------------------------------------------
 
-class TestLegacyFallback:
-    """Legacy string-prefix verdict_args must still emit correctly (Phase 1)."""
-
-    def test_dnat_legacy_string(self):
-        rule = Rule(verdict=Verdict.JUMP, verdict_args="dnat:192.0.2.1:80")
-        out = _emit_rule(rule)
-        assert "dnat to 192.0.2.1:80" in out
-
-    def test_snat_legacy_string(self):
-        rule = Rule(verdict=Verdict.JUMP, verdict_args="snat:198.51.100.1")
-        out = _emit_rule(rule)
-        assert "snat to 198.51.100.1" in out
-
-    def test_masquerade_legacy_string(self):
-        rule = Rule(verdict=Verdict.JUMP, verdict_args="masquerade:")
-        out = _emit_rule(rule)
-        assert "masquerade" in out
-
-    def test_notrack_legacy_string(self):
-        rule = Rule(verdict=Verdict.JUMP, verdict_args="notrack:")
-        out = _emit_rule(rule)
-        assert "notrack" in out
-
-    def test_mark_legacy_string_no_mask(self):
-        rule = Rule(verdict=Verdict.JUMP, verdict_args="mark:0x10")
-        out = _emit_rule(rule)
-        assert "meta mark set 0x00000010" in out
-
-    def test_mark_legacy_string_with_mask(self):
-        rule = Rule(verdict=Verdict.JUMP, verdict_args="mark:0x10/0xff")
-        out = _emit_rule(rule)
-        assert "meta mark set meta mark and 0xffffff00 or 0x00000010" in out
-
-
-# ---------------------------------------------------------------------------
-# 5. log_level field precedence over legacy verdict_args string
-# ---------------------------------------------------------------------------
-
-class TestLogLevelPrecedence:
-    """rule.log_level must take precedence over a legacy log_level: prefix."""
+class TestLogLevel:
+    """rule.log_level carries the nft log level for Verdict.LOG rules."""
 
     def test_log_level_field_used(self):
         rule = Rule(verdict=Verdict.LOG, log_level="info")
         out = _emit_rule(rule)
         assert "level info" in out
 
-    def test_log_level_string_fallback(self):
-        rule = Rule(verdict=Verdict.LOG, verdict_args="log_level:debug")
-        out = _emit_rule(rule)
-        assert "level debug" in out
-
-    def test_log_level_field_wins_over_string(self):
-        """When both are set, rule.log_level takes precedence."""
-        rule = Rule(verdict=Verdict.LOG, log_level="info", verdict_args="log_level:debug")
+    def test_log_level_strips_limit_tag(self):
+        """A level like 'info:LOGIN,12,60' is stripped to just the level."""
+        rule = Rule(verdict=Verdict.LOG, log_level="info:LOGIN,12,60")
         out = _emit_rule(rule)
         assert "level info" in out
-        # The legacy level must NOT appear
-        assert "level debug" not in out
+        assert "LOGIN" not in out

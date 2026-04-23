@@ -620,11 +620,8 @@ def _emit_dnat_concat_map(
     bucket_order: list[Bucket] = []
 
     for rule in rules:
-        # Accept both typed DnatVerdict and legacy "dnat:<target>" string.
         if isinstance(rule.verdict_args, DnatVerdict):
             target = rule.verdict_args.target
-        elif isinstance(rule.verdict_args, str) and rule.verdict_args.startswith("dnat:"):
-            target = rule.verdict_args[len("dnat:"):]
         else:
             remaining.append(rule)
             continue
@@ -1016,18 +1013,6 @@ _INLINE_MATCH_EMITTERS: dict[str, Callable[[str], str]] = {
 }
 
 
-def _emit_special_mark(target: str) -> str:
-    """Emit ``meta mark set …`` for a ``mark:<val[/mask]>`` verdict."""
-    if "/" in target:
-        val, mask = target.split("/", 1)
-        mask_int = int(mask, 0) ^ 0xFFFFFFFF
-        return (
-            f"meta mark set meta mark and 0x{mask_int:08x} "
-            f"or 0x{int(val, 0):08x}"
-        )
-    return f"meta mark set 0x{int(target, 0):08x}"
-
-
 def _emit_typed_mark(v: MarkVerdict) -> str:
     """Emit ``meta mark set …`` for a typed :class:`MarkVerdict`."""
     if v.mask is not None:
@@ -1059,39 +1044,6 @@ _TYPED_VERDICT_EMITTERS: dict[type, Callable] = {
     NflogVerdict: lambda _v: "log group 0",
     AuditVerdict: lambda v: f'log prefix "AUDIT:{v.base_action}: " accept',
 }
-
-# Special-verdict dispatch keyed by the prefix of ``Rule.verdict_args``
-# (before the first colon).  Each handler takes the raw target string
-# (everything after the colon) and returns the one fragment to append
-# before the rule terminates.  Adding a new verdict = add one entry
-# here; no more elif cascade.
-#
-# Legacy fallback — producers still write string prefixes in Phase 1.
-# This table remains live until Phase 2 migrates every producer.
-_SPECIAL_VERDICT_EMITTERS: dict[str, Callable[[str], str]] = {
-    "snat": lambda t: f"snat to {t}",
-    "dnat": lambda t: f"dnat to {t}",
-    "masquerade": lambda _t: "masquerade",
-    "redirect": lambda t: f"redirect to :{t}" if t else "redirect",
-    "notrack": lambda _t: "notrack",
-    "ct_helper": lambda t: f'ct helper set "{t}"',
-    "mark": _emit_special_mark,
-    "connmark": lambda t: f"ct mark set 0x{int(t, 0):08x}",
-    "restore_mark": lambda _t: "meta mark set ct mark",
-    "save_mark": lambda _t: "ct mark set meta mark",
-    "dscp": lambda t: f"ip dscp set {t}",
-    # Clear the two ECN bits via `ip ecn set not-ect`.  Falls back
-    # gracefully on kernels without ip-ecn support — those raise at
-    # load time and the operator can opt out by removing the ecn file.
-    "ecn_clear": lambda _t: "ip ecn set not-ect",
-    "classify": lambda t: f"meta priority set {t}",
-    "counter": lambda _t: "counter accept",
-    "named_counter": lambda t: f'counter name "{t}" accept',
-    "account": lambda _t: "counter accept",
-    "nflog": lambda _t: "log group 0",
-    "audit": lambda t: f'log prefix "AUDIT:{t}: " accept',
-}
-
 
 def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
                chain_name: str = "", rule_idx: int = 0) -> str:
@@ -1169,32 +1121,21 @@ def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
         if inline_emit is not None:
             parts.append(inline_emit(match.value))
 
-    # Special verdicts — typed path first, legacy string-prefix fallback.
-    # Typed SpecialVerdict instances dispatch via _TYPED_VERDICT_EMITTERS.
-    # Legacy string-prefix values (still written by all producers in Phase 1)
-    # dispatch via _SPECIAL_VERDICT_EMITTERS.
+    # Special verdicts dispatch by type via _TYPED_VERDICT_EMITTERS.
+    # JUMP/GOTO chain names stay as plain str and are handled in the
+    # verdict block below; they are not special verdicts.
     typed_emitter = _TYPED_VERDICT_EMITTERS.get(type(rule.verdict_args))
     if typed_emitter is not None:
         parts.append(typed_emitter(rule.verdict_args))
         return _finish(parts)
-    if isinstance(rule.verdict_args, str) and ":" in rule.verdict_args:
-        special_type, special_target = rule.verdict_args.split(":", 1)
-        emit_special = _SPECIAL_VERDICT_EMITTERS.get(special_type)
-        if emit_special is not None:
-            parts.append(emit_special(special_target))
-            return _finish(parts)
 
     # Verdict
     if rule.verdict == Verdict.LOG:
         prefix = rule.log_prefix or ""
         level = ""
-        # Typed log_level field takes precedence over legacy string prefix.
         if rule.log_level is not None:
-            level = rule.log_level
-        elif isinstance(rule.verdict_args, str) and rule.verdict_args.startswith("log_level:"):
-            raw_level = rule.verdict_args.split(":", 1)[1]
             # Strip Limit tags like "info:LOGIN,12,60" → "info"
-            level = raw_level.split(":")[0] if ":" in raw_level else raw_level
+            level = rule.log_level.split(":")[0] if ":" in rule.log_level else rule.log_level
         # Valid nft log levels
         valid_levels = {"emerg", "alert", "crit", "err", "warn", "notice", "info", "debug"}
         level_str = f" level {level}" if level in valid_levels else ""
@@ -1340,8 +1281,6 @@ def _emit_ct_helper_objects(lines: list[str], ir: FirewallIR) -> None:
         for rule in chain.rules:
             if isinstance(rule.verdict_args, CtHelperVerdict):
                 helper_name = rule.verdict_args.name
-            elif isinstance(rule.verdict_args, str) and rule.verdict_args.startswith("ct_helper:"):
-                helper_name = rule.verdict_args.split(":")[1]
             else:
                 continue
             # Determine protocol from matches
