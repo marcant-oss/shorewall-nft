@@ -1,0 +1,10 @@
+# dnsnames — DNS-backed nft set declarations
+# All hostnames RFC 2606 (.example.com / .example.org / .example.net)
+# All addresses RFC 5737 / RFC 3849
+# Columns: NAME  TTL_FLOOR  TTL_CEIL  SIZE  COMMENT
+#
+api.example.com         300     3600    512     External API endpoint
+mail.example.org        60      900     128     Mail relay hostnames
+auth.example.net        300     3600    256     Authentication service
+metrics.example.com     900     7200    512     Metrics collector
+upload.example.org      60      600     256     Upload service endpoints

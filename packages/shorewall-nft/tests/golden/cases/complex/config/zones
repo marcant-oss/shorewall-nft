@@ -1,0 +1,17 @@
+# Anonymised zones — structurally modelled on a multi-zone HA firewall corpus
+#ZONE		TYPE		OPTIONS		IN OPTIONS		OUT OPTIONS
+fw		firewall
+net		ipv4
+dmz		ipv4
+mgmt		ipv4
+srv		ipv4
+int		ipv4
+lan:int		bport
+guest		ipv4
+iot		ipv4
+voice		ipv4
+vpn		ipv4
+# IPSEC tunnel zone — exercises tunnel-src/tunnel-dst dispatch
+tunneled	ipsec		proto=ah,mode=tunnel	\
+			tunnel-src=$TUNNEL_REMOTE,tunnel-dst=$TUNNEL_LOCAL	\
+			tunnel-src=$TUNNEL_LOCAL,tunnel-dst=$TUNNEL_REMOTE

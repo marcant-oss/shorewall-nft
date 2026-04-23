@@ -1,0 +1,10 @@
+# Anonymised masq/SNAT rules
+#INTERFACE		SOURCE			ADDRESS
+# Simple masquerade: internal LAN out via eth0
+eth0			192.0.2.0/24
+# SNAT with fixed address: DMZ gets unroutable external IP
+eth0			198.51.100.0/24		203.0.113.1
+# SNAT scoped by dest-addr: VPN pool via specific outbound IP
+eth0:203.0.113.1	10.8.0.0/24		203.0.113.1
+# Guest zone masquerade
+eth0			192.0.2.128/25

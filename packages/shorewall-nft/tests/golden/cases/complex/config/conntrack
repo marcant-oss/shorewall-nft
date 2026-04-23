@@ -1,0 +1,4 @@
+# Anonymised conntrack helper rules — no conditionals (simpler form)
+#ACTION			SOURCE	DESTINATION	PROTO	DEST PORT
+CT:helper:ftp:PO	-	-		tcp	21
+CT:helper:tftp:PO	-	-		udp	69

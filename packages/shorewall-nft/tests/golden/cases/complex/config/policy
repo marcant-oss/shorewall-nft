@@ -1,0 +1,39 @@
+# Anonymised policy — covers DROP:$LOG, REJECT:$LOG, ACCEPT, CONTINUE patterns
+#SOURCE	DEST		POLICY		LOG LEVEL
+$FW	all		ACCEPT
+
+# int/lan hierarchy: lan CONTINUEs to int chain
+lan	$FW		CONTINUE
+lan	all		CONTINUE
+
+int	$FW		REJECT		$LOG
+int	net		ACCEPT
+int	dmz		ACCEPT
+int	mgmt		REJECT		$LOG
+int	all		REJECT		$LOG
+
+srv	$FW		CONTINUE
+srv	all		ACCEPT
+
+mgmt	all		DROP
+
+guest	$FW		REJECT		$LOG
+guest	all		DROP		$LOG
+
+iot	$FW		REJECT		$LOG
+iot	all		REJECT		$LOG
+
+voice	all		REJECT		$LOG
+
+vpn	$FW		REJECT		$LOG
+vpn	mgmt		REJECT		$LOG
+vpn	all		ACCEPT
+
+tunneled	$FW	REJECT		$LOG
+tunneled	all	REJECT		$LOG
+
+dmz	all		REJECT		$LOG
+
+net	all		REJECT		$LOG
+
+all	all		REJECT		$LOG

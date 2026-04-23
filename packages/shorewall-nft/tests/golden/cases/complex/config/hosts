@@ -1,0 +1,6 @@
+# Anonymised hosts — host-based zone membership
+#ZONE		HOST(S)				OPTIONS
+# VPN road-warrior range via IPsec
+vpn		eth0:192.0.2.128/25		ipsec
+# IPSEC tunnel endpoint
+tunneled	eth0:198.51.100.0/24		ipsec

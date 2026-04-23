@@ -1,0 +1,5 @@
+# Custom macro: allows a monitored application protocol
+# Used in rules as: CustomA(ACCEPT) src dst
+#ACTION	SOURCE	DEST	PROTO	DPORT	SPORT	ORIGDEST	RATE	USER
+PARAM	-	-	tcp	8080
+PARAM	-	-	tcp	8443

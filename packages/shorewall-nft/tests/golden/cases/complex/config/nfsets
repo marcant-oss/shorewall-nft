@@ -1,0 +1,16 @@
+# nfsets — named dynamic nft sets
+# All hostnames RFC 2606; all IPs RFC 5737 / RFC 3849
+# Columns: NAME  HOSTS  OPTIONS
+#
+# abuse_v4 / abuse_v6: public threat-feed blocklists (conceptually Spamhaus DROP /
+#   Emerging Threats / Firehol level-1 — RFC 5737 ranges stand in for real feeds)
+abuse        https://lists.example.org/abuse-v4.txt   ip-list-plain,refresh=1h
+#
+# allowlist_v4: operator-maintained trusted-source prefixes (interval set)
+allowlist    /etc/shorewall/allowlist.txt             ip-list-plain,inotify
+#
+# geo_de_v4: geographic allowlist (conceptually DE prefix list)
+geo_de       https://lists.example.org/geo-de.txt     ip-list-plain,refresh=6h
+#
+# cdn: content-delivery hostnames resolved via dnstap tap
+cdn          {static,media}.example.com               dnstap

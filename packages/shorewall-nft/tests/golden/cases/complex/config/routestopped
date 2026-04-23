@@ -1,0 +1,5 @@
+# Anonymised routestopped — zones that stay reachable when firewall is stopped
+#INTERFACE	HOST(S)			OPTIONS
+br0		192.0.2.0/24
+bond0		198.51.100.10,198.51.100.11
+eth0		203.0.113.1

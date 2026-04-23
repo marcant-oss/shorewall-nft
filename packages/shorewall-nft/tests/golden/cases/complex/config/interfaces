@@ -1,0 +1,12 @@
+# Anonymised interfaces — exercises multiple option combinations
+#ZONE		INTERFACE	BROADCAST	OPTIONS
+net		eth0		-		tcpflags,nosmurfs,routefilter,blacklist,arp_filter
+dmz		eth1		-		tcpflags,nosmurfs,routefilter,arp_filter
+mgmt		bond0		-		routeback,tcpflags,nosmurfs,routefilter,arp_filter,logmartians
+srv		bond0.10	-		tcpflags,nosmurfs,routefilter,arp_filter,logmartians=0
+int		br0		-		bridge,dhcp,routeback,tcpflags,nosmurfs,routefilter,arp_filter
+lan		br0:eth2	-		tcpflags,nosmurfs
+guest		bond0.20	-		dhcp,tcpflags,nosmurfs,routefilter,arp_filter,logmartians=0
+iot		bond0.30	-		dhcp,tcpflags,nosmurfs,routefilter,arp_filter,logmartians=0
+voice		bond0.40	-		dhcp,tcpflags,nosmurfs,arp_filter
+vpn		tun0		-		tcpflags,nosmurfs,routefilter,arp_filter

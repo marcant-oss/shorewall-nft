@@ -1,0 +1,96 @@
+# Anonymised rules — exercises DNAT, REDIRECT, macros, ACCEPT, DROP, REJECT
+# Addresses: RFC 5737 (192.0.2/198.51.100/203.0.113), RFC 3849 (2001:db8::)
+#ACTION		SOURCE		DEST		PROTO	DEST PORT	SOURCE PORT	ORIGINAL DEST
+
+?SECTION NEW
+
+# ---- Guest zone: limited access, DNAT for internal voice server ----
+Ping(ACCEPT)	guest		$FW
+Web(ACCEPT)	guest		net
+# DNAT plain: redirect HTTP/HTTPS on public IP to internal voice server
+DNAT		guest		voice:192.0.2.20	tcp	80,443	-	$FW_EXT
+# REDIRECT: transparent HTTP proxy for guest zone (tests REDIRECT path)
+REDIRECT	guest		3128		tcp	80
+REJECT:$LOG	guest		all
+
+# ---- IoT zone: very restricted ----
+Ping(ACCEPT)	iot		$FW
+DNS(ACCEPT)	iot		$FW:$DNS_SRV
+REJECT:$LOG	iot		all
+
+# ---- DMZ: inbound services, outbound restricted ----
+Web(ACCEPT)	net		dmz:192.0.2.50
+SSH(ACCEPT)	net:$ADMIN	dmz
+# DNAT multi-port: external HTTPS+SMTP to DMZ mail host
+DNAT		net		dmz:192.0.2.51:443	tcp	80,443	-	$FW_EXT
+# DNAT with ORIGINAL_DEST: redirect port 25 only when destined for $FW_EXT
+DNAT		net		dmz:192.0.2.51:25	tcp	25	-	$FW_EXT
+Ping(ACCEPT)	dmz		net
+DNS(ACCEPT)	dmz		net
+ACCEPT		dmz		net		tcp	25
+
+# ---- Internal / LAN ----
+SSH(ACCEPT)	int		$FW
+SSH(ACCEPT)	lan		$FW
+Ping(ACCEPT)	int		all
+DNS(ACCEPT)	int		$FW:$DNS_SRV
+Web(ACCEPT)	int		net
+# Custom macro: monitored host group service access
+CustomA(ACCEPT)	int		srv:192.0.2.60
+CustomA(ACCEPT)	lan		srv:192.0.2.60
+
+# ---- Management zone ----
+SSH(ACCEPT)	mgmt:$ADMIN	$FW
+Web(ACCEPT)	mgmt		net
+ACCEPT		mgmt		net		udp	53,123
+Ping(ACCEPT)	mgmt		all
+
+# ---- VPN zone ----
+SSH(ACCEPT)	vpn		$FW
+Web(ACCEPT)	vpn		net
+Ping(ACCEPT)	vpn		all
+ACCEPT		vpn		srv
+ACCEPT		vpn		int
+# VPN user to management: explicit REJECT (overrides policy REJECT:$LOG)
+REJECT		vpn		mgmt
+
+# ---- IPSEC tunnel zone ----
+# Tunneled zone gets DNS and ping to FW, explicit REJECT otherwise
+DNS(ACCEPT)	tunneled	$FW:$DNS_SRV
+Ping(ACCEPT)	tunneled	$FW
+REJECT:$LOG	tunneled	all
+
+# ---- Voice zone ----
+Ping(ACCEPT)	voice		$FW
+ACCEPT		voice		net		udp	5060
+ACCEPT		voice		net		tcp	5060,5061
+REJECT:$LOG	voice		all
+
+# ---- Firewall outbound / general ----
+SSH(ACCEPT)	net:$ADMIN	$FW
+Ping(ACCEPT)	net		$FW
+# Block SMTP from internal zones to internet (anti-spam)
+REJECT:$LOG	int		net		tcp	25
+REJECT:$LOG	iot		net		tcp	25
+
+# ---- DNS-set rules (dnst: token) ----
+# Allow internal zone to reach API service resolved via DNS
+ACCEPT		int		net:dnst:api.example.com	tcp	443
+# Allow management zone to reach auth service
+ACCEPT		mgmt		net:dnst:auth.example.net	tcp	443
+
+# ---- DNSR round-robin sets ----
+# Allow IoT zone to use public DNS resolvers (round-robin pool)
+ACCEPT		iot		net:dnsr:dns1.example.com,dns2.example.com,dns3.example.com	udp	53
+# Allow management zone NTP pool access
+ACCEPT		mgmt		net:dnsr:ntp1.example.org,ntp2.example.org	udp	123
+
+# ---- nfset blocklist / allowlist rules ----
+# Drop inbound traffic from abuse blocklist (Spamhaus DROP / ET analogue)
+DROP		nfset:abuse	all
+# Allow inbound from operator-managed allowlist to DMZ services
+ACCEPT		nfset:allowlist	dmz		tcp	443
+# Allow inbound from geo allowlist to internal HTTPS services
+ACCEPT		nfset:geo_de	srv		tcp	443
+# Bracket-flag form: allowlist as source, matching in DEST column
+ACCEPT		+nfset_allowlist_v4[src]	$FW	tcp	22
