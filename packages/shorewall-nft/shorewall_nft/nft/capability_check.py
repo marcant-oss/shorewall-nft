@@ -16,6 +16,7 @@ from shorewall_nft.compiler.verdicts import (
     DnatVerdict,
     MasqueradeVerdict,
     NotrackVerdict,
+    RedirectVerdict,
     SnatVerdict,
 )
 from shorewall_nft.nft.capabilities import NftCapabilities
@@ -195,6 +196,8 @@ def _check_rule(rule: Rule, caps: NftCapabilities, chain_name: str) -> list[Capa
         _nat_verdict_type = "dnat"
     elif isinstance(rule.verdict_args, MasqueradeVerdict):
         _nat_verdict_type = "masquerade"
+    elif isinstance(rule.verdict_args, RedirectVerdict):
+        _nat_verdict_type = "redirect"
     if _nat_verdict_type is not None and not caps.has_nat:
         errors.append(CapabilityError(
             feature="nat",

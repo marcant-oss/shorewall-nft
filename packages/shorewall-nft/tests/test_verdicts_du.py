@@ -1,8 +1,8 @@
 """Tests for the typed SpecialVerdict discriminated union (Phase 1).
 
 Covers:
-- Construction and value-equality of all 16 dataclasses.
-- SpecialVerdict union alias exports all 16 variants.
+- Construction and value-equality of all 17 dataclasses.
+- SpecialVerdict union alias exports all 17 variants.
 - Each typed variant, when placed on Rule.verdict_args, produces the same
   nft fragment as the legacy string-prefix producer would have produced.
 - Legacy string-prefix path still works (fallback regression).
@@ -37,6 +37,7 @@ from shorewall_nft.compiler.verdicts import (
     NamedCounterVerdict,
     NflogVerdict,
     NotrackVerdict,
+    RedirectVerdict,
     RestoreMarkVerdict,
     SaveMarkVerdict,
     SnatVerdict,
@@ -65,7 +66,7 @@ def _emit_rule(rule: Rule) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 1. Construction + value equality for all 16 dataclasses
+# 1. Construction + value equality for all 17 dataclasses
 # ---------------------------------------------------------------------------
 
 class TestDataclassConstruction:
@@ -84,6 +85,11 @@ class TestDataclassConstruction:
     def test_masquerade_verdict(self):
         v = MasqueradeVerdict()
         assert v == MasqueradeVerdict()
+
+    def test_redirect_verdict(self):
+        v = RedirectVerdict(port=3128)
+        assert v.port == 3128
+        assert v == RedirectVerdict(port=3128)
 
     def test_notrack_verdict(self):
         v = NotrackVerdict()
@@ -157,7 +163,7 @@ class TestDataclassConstruction:
 
 
 # ---------------------------------------------------------------------------
-# 2. SpecialVerdict union alias covers all 16 variants
+# 2. SpecialVerdict union alias covers all 17 variants
 # ---------------------------------------------------------------------------
 
 class TestSpecialVerdictUnion:
@@ -168,7 +174,7 @@ class TestSpecialVerdictUnion:
         import typing
         args = typing.get_args(SpecialVerdict)
         expected = {
-            SnatVerdict, DnatVerdict, MasqueradeVerdict,
+            SnatVerdict, DnatVerdict, MasqueradeVerdict, RedirectVerdict,
             NotrackVerdict, CtHelperVerdict,
             MarkVerdict, ConnmarkVerdict, RestoreMarkVerdict, SaveMarkVerdict,
             DscpVerdict, ClassifyVerdict, EcnClearVerdict,
@@ -180,9 +186,9 @@ class TestSpecialVerdictUnion:
             f"Missing: {expected - set(args)}"
         )
 
-    def test_count_is_16(self):
+    def test_count_is_17(self):
         import typing
-        assert len(typing.get_args(SpecialVerdict)) == 16
+        assert len(typing.get_args(SpecialVerdict)) == 17
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +214,9 @@ class TestTypedEmit:
 
     def test_masquerade(self):
         self._assert_contains(MasqueradeVerdict(), "masquerade")
+
+    def test_redirect(self):
+        self._assert_contains(RedirectVerdict(port=3128), "redirect to :3128")
 
     def test_notrack(self):
         self._assert_contains(NotrackVerdict(), "notrack")

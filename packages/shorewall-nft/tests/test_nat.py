@@ -94,6 +94,62 @@ class TestNAT:
         assert "type nat hook postrouting priority 100;" in self.output
 
 
+class TestRedirect:
+    """REDIRECT action: rewrite destination to a local port on the firewall.
+
+    Classic Shorewall format: ``REDIRECT SOURCE PORT PROTO [DPORT]``.  The
+    DEST column is a numeric port on the firewall (the redirect target),
+    not a zone:ip:port. Regression test for a bug where REDIRECT rules
+    were silently processed as DNAT (empty target) and produced malformed
+    nft output.
+    """
+
+    def _run(self, cols: list[str]):
+        from shorewall_nft.compiler.ir import FirewallIR
+        from shorewall_nft.compiler.nat import _ensure_nat_chains, _process_dnat_line
+        from shorewall_nft.config.parser import ConfigLine
+        from shorewall_nft.config.zones import ZoneModel
+
+        ir = FirewallIR(zones=ZoneModel(), settings={})
+        _ensure_nat_chains(ir)
+        line = ConfigLine(columns=cols, file="rules", lineno=1)
+        _process_dnat_line(ir, line)
+        return ir
+
+    def test_redirect_emits_typed_verdict(self):
+        from shorewall_nft.compiler.verdicts import RedirectVerdict
+        ir = self._run(["REDIRECT", "loc", "3128", "tcp", "80"])
+        rules = ir.chains["prerouting"].rules
+        assert len(rules) == 1
+        assert isinstance(rules[0].verdict_args, RedirectVerdict)
+        assert rules[0].verdict_args.port == 3128
+
+    def test_redirect_preserves_proto_and_dport(self):
+        ir = self._run(["REDIRECT", "loc", "3128", "tcp", "80"])
+        rule = ir.chains["prerouting"].rules[0]
+        match_fields = [m.field for m in rule.matches]
+        assert "meta l4proto" in match_fields
+        # tcp dport matches the incoming dest port (80), not the redirect target
+        tcp_dport = next(m for m in rule.matches if m.field == "tcp dport")
+        assert tcp_dport.value == "80"
+
+    def test_redirect_emits_nft_redirect_statement(self):
+        ir = self._run(["REDIRECT", "loc", "5353", "udp", "53"])
+        out = emit_nft(ir)
+        # The key bug fix: the emit must produce ``redirect to :<port>``,
+        # not an empty ``dnat to`` fragment.
+        assert "redirect to :5353" in out
+        assert "dnat to " not in out
+
+    def test_redirect_missing_port_raises(self):
+        with pytest.raises(ValueError, match="numeric port"):
+            self._run(["REDIRECT", "loc", "-", "tcp", "80"])
+
+    def test_redirect_non_numeric_port_raises(self):
+        with pytest.raises(ValueError, match="numeric port"):
+            self._run(["REDIRECT", "loc", "abc", "tcp", "80"])
+
+
 class TestNotrack:
     def setup_method(self):
         config = load_config(NAT_DIR)

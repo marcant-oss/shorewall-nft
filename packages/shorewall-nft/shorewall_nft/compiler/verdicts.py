@@ -34,6 +34,16 @@ class MasqueradeVerdict:
     """Dynamic masquerade (no fixed target)."""
 
 
+@dataclass(frozen=True)
+class RedirectVerdict:
+    """Redirect inbound traffic to a local port on the firewall.
+
+    Shorewall ``REDIRECT`` action. Emitted as ``redirect to :<port>`` —
+    distinct from ``DnatVerdict`` which targets a remote address.
+    """
+    port: int
+
+
 # ── Conntrack family ──────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -130,7 +140,7 @@ class AuditVerdict:
 # ── Union alias ───────────────────────────────────────────────────────────
 
 SpecialVerdict = Union[
-    SnatVerdict, DnatVerdict, MasqueradeVerdict,
+    SnatVerdict, DnatVerdict, MasqueradeVerdict, RedirectVerdict,
     NotrackVerdict, CtHelperVerdict,
     MarkVerdict, ConnmarkVerdict, RestoreMarkVerdict, SaveMarkVerdict,
     DscpVerdict, ClassifyVerdict, EcnClearVerdict,

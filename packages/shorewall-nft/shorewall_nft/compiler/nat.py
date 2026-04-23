@@ -30,7 +30,7 @@ from shorewall_nft.compiler.ir import (
     expand_line_for_tokens,
     _has_set_token,
 )
-from shorewall_nft.compiler.verdicts import DnatVerdict, SnatVerdict
+from shorewall_nft.compiler.verdicts import DnatVerdict, RedirectVerdict, SnatVerdict
 from shorewall_nft.config.parser import ConfigLine
 
 
@@ -154,28 +154,43 @@ def _process_masq_line(ir: FirewallIR, line: ConfigLine) -> None:
 
 
 def _process_dnat_line(ir: FirewallIR, line: ConfigLine) -> None:
-    """Process a DNAT rule from the rules file.
+    """Process a DNAT or REDIRECT rule from the rules file.
 
-    Format: DNAT SOURCE DEST:IP[:PORT] PROTO DPORT [SPORT] [ORIG_DEST]
-    Examples:
-        DNAT  net  host:203.0.113.38:3389  tcp  13389  -  203.0.113.38
-        DNAT  all  loc:192.0.2.201          tcp  80,443 -  203.0.113.100
+    DNAT format: ``DNAT SOURCE DEST:IP[:PORT] PROTO DPORT [SPORT] [ORIG_DEST]``
+      DNAT  net  host:203.0.113.38:3389  tcp  13389  -  203.0.113.38
+      DNAT  all  loc:192.0.2.201         tcp  80,443 -  203.0.113.100
 
-    SOURCE (col 1) accepts nfset:/dns:/dnsr: tokens.
-    DEST (col 2) is a zone:ip[:port] DNAT target and MUST NOT carry set
-    tokens — raise ValueError if one is found.
+    REDIRECT format: ``REDIRECT SOURCE REDIRECT_PORT PROTO [DPORT]``
+      REDIRECT  loc  3128  tcp  80      (transparent HTTP → local squid)
+      REDIRECT  net  5353  udp  53      (intercept DNS to local resolver)
+
+    REDIRECT differs from DNAT: the DEST column is a plain numeric port
+    on the firewall itself, not a ``zone:ip[:port]`` target. Emits
+    ``RedirectVerdict(port=...)`` instead of ``DnatVerdict(target=...)``.
+
+    SOURCE (col 1) accepts nfset:/dns:/dnsr: tokens for both actions.
+    DEST (col 2) must not carry set tokens — for DNAT it is a literal
+    zone:ip[:port] target, for REDIRECT a bare port number.
     """
     cols = line.columns
     if len(cols) < 4:
         return
 
-    # Reject set tokens in the DEST column (DNAT target).
+    action = cols[0].upper().split(":")[0]
+    is_redirect = (action == "REDIRECT")
+
+    # Reject set tokens in the DEST column.
     dest_spec_raw = cols[2] if len(cols) > 2 else "-"
     if _has_set_token(dest_spec_raw):
+        action_label = "redirect" if is_redirect else "dnat"
+        target_desc = (
+            "redirect target port" if is_redirect
+            else "DNAT target"
+        )
         raise ValueError(
-            f"dnat {line.file}:{line.lineno}: DEST column (DNAT target) "
-            f"does not accept nfset:/dns:/dnsr: tokens — got {dest_spec_raw!r}. "
-            f"Use a literal zone:ip[:port] target instead."
+            f"{action_label} {line.file}:{line.lineno}: DEST column "
+            f"({target_desc}) does not accept nfset:/dns:/dnsr: tokens "
+            f"— got {dest_spec_raw!r}."
         )
 
     # nfset/dns/dnsr token pre-pass on SOURCE (col 1) only.
@@ -201,17 +216,39 @@ def _process_dnat_line(ir: FirewallIR, line: ConfigLine) -> None:
     if orig_dest == "-":
         orig_dest = None
 
-    # Parse destination: zone:ip or zone:ip:port
-    dest_zone = None
-    dest_ip = None
-    dest_port = None
-    if dest_spec and dest_spec != "-":
-        parts = dest_spec.split(":")
-        dest_zone = parts[0]
-        if len(parts) > 1:
-            dest_ip = parts[1]
-        if len(parts) > 2:
-            dest_port = parts[2]
+    # Build the verdict — REDIRECT and DNAT differ here.
+    if is_redirect:
+        # DEST column is a numeric port on the firewall.
+        if not dest_spec or dest_spec == "-":
+            raise ValueError(
+                f"redirect {line.file}:{line.lineno}: DEST column must be "
+                f"a numeric port (the local port to redirect to)"
+            )
+        try:
+            redirect_port = int(dest_spec)
+        except ValueError:
+            raise ValueError(
+                f"redirect {line.file}:{line.lineno}: DEST must be a "
+                f"numeric port, got {dest_spec!r}"
+            )
+        verdict_args = RedirectVerdict(port=redirect_port)
+    else:
+        # DNAT: DEST is zone:ip[:port].
+        dest_ip = None
+        dest_port = None
+        if dest_spec and dest_spec != "-":
+            parts = dest_spec.split(":")
+            # parts[0] is the destination zone — not used in the emit
+            # (kept only to document the grammar); matching is on the
+            # SOURCE iifname + ORIG_DEST in col 6.
+            if len(parts) > 1:
+                dest_ip = parts[1]
+            if len(parts) > 2:
+                dest_port = parts[2]
+        dnat_target = dest_ip or ""
+        if dest_port:
+            dnat_target += f":{dest_port}"
+        verdict_args = DnatVerdict(target=dnat_target)
 
     # Parse source zone.  A rewritten set-reference sentinel starts with
     # '+' (e.g. ``+nfset_allowed_v4``) and contains no zone prefix — use
@@ -228,13 +265,9 @@ def _process_dnat_line(ir: FirewallIR, line: ConfigLine) -> None:
             src_zone = source_spec
 
     chain = ir.chains["prerouting"]
-    dnat_target = dest_ip or ""
-    if dest_port:
-        dnat_target += f":{dest_port}"
-
     rule = Rule(
         verdict=Verdict.ACCEPT,  # placeholder
-        verdict_args=DnatVerdict(target=dnat_target),
+        verdict_args=verdict_args,
         source_file=line.file,
         source_line=line.lineno,
         comment=line.comment_tag,
