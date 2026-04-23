@@ -31,6 +31,14 @@ from shorewall_nft.compiler.ir import (
     Verdict,
     _expand_line_for_tokens,
 )
+from shorewall_nft.compiler.verdicts import (
+    ClassifyVerdict,
+    ConnmarkVerdict,
+    DscpVerdict,
+    MarkVerdict,
+    RestoreMarkVerdict,
+    SaveMarkVerdict,
+)
 from shorewall_nft.config.parser import ConfigLine
 from shorewall_nft.config.zones import ZoneModel
 
@@ -373,6 +381,14 @@ def apply_tc(tc: TcConfig, *, netns: str | None = None) -> TcApplyResult:
     return TcApplyResult(applied=applied, failed=failed, errors=errors)
 
 
+def _parse_mark_verdict(raw: str) -> MarkVerdict:
+    """Parse a MARK action value like ``"0x10"`` or ``"0x10/0xff"``."""
+    if "/" in raw:
+        val, mask = raw.split("/", 1)
+        return MarkVerdict(value=int(val, 0), mask=int(mask, 0))
+    return MarkVerdict(value=int(raw, 0))
+
+
 def process_mangle(ir: FirewallIR, tcrules: list[ConfigLine],
                    mangle: list[ConfigLine], zones: ZoneModel) -> None:
     """Process mangle/tcrules into nft mark rules."""
@@ -432,32 +448,32 @@ def _process_mark_rule(ir: FirewallIR, line: ConfigLine,
     if action.startswith("MARK("):
         mark_val = action[5:].rstrip(")")
         rule.verdict = Verdict.ACCEPT
-        rule.verdict_args = f"mark:{mark_val}"
+        rule.verdict_args = _parse_mark_verdict(mark_val)
     elif action.startswith("CONNMARK("):
         mark_val = action[9:].rstrip(")")
         rule.verdict = Verdict.ACCEPT
-        rule.verdict_args = f"connmark:{mark_val}"
+        rule.verdict_args = ConnmarkVerdict(value=int(mark_val, 0))
     elif action.startswith("RESTORE"):
         rule.verdict = Verdict.ACCEPT
-        rule.verdict_args = "restore_mark:"
+        rule.verdict_args = RestoreMarkVerdict()
     elif action.startswith("SAVE"):
         rule.verdict = Verdict.ACCEPT
-        rule.verdict_args = "save_mark:"
+        rule.verdict_args = SaveMarkVerdict()
     elif action.startswith("DSCP("):
         dscp_val = action[5:].rstrip(")")
         rule.verdict = Verdict.ACCEPT
-        rule.verdict_args = f"dscp:{dscp_val}"
+        rule.verdict_args = DscpVerdict(value=dscp_val)
     elif action.startswith("CLASSIFY("):
         classify_val = action[9:].rstrip(")")
         rule.verdict = Verdict.ACCEPT
-        rule.verdict_args = f"classify:{classify_val}"
+        rule.verdict_args = ClassifyVerdict(value=classify_val)
     else:
         try:
             int(action, 0)
-            rule.verdict = Verdict.ACCEPT
-            rule.verdict_args = f"mark:{action}"
         except ValueError:
             return
+        rule.verdict = Verdict.ACCEPT
+        rule.verdict_args = _parse_mark_verdict(action)
 
     if source_spec and source_spec != "-":
         # A rewritten set sentinel starts with '+'; use directly as addr.
