@@ -12,7 +12,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from shorewall_nft.compiler.verdicts import SpecialVerdict
+from shorewall_nft.compiler.verdicts import (
+    AuditVerdict,
+    CtHelperVerdict,
+    EcnClearVerdict,
+    MarkVerdict,
+    NotrackVerdict,
+    SpecialVerdict,
+)
 from shorewall_nft.config.parser import ConfigLine, ShorewalConfig
 from shorewall_nft.config.zones import ZoneModel, build_zone_model
 from shorewall_nft.nft.dns_sets import (
@@ -420,7 +427,7 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
                     mangle.rules.append(Rule(
                         matches=[Match(field="iifname", value=prov.interface)],
                         verdict=Verdict.ACCEPT,
-                        verdict_args=f"mark:{prov.mark}",
+                        verdict_args=MarkVerdict(value=prov.mark),
                         comment=f"provider:{prov.name}",
                     ))
 
@@ -1453,7 +1460,7 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
                 if verdict:
                     _add_rule(ir, zones, verdict, log_prefix,
                               source_spec, dest_spec, proto, dport, sport, line,
-                              verdict_args=f"audit:{base_action}")
+                              verdict_args=AuditVerdict(base_action=base_action))
                     continue
 
             # Check if it's a known action → jump to action chain
@@ -1639,7 +1646,7 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
               verdict: Verdict, log_prefix: str | None,
               source_spec: str, dest_spec: str,
               proto: str | None, dport: str | None, sport: str | None,
-              line: ConfigLine, verdict_args: str | None = None,
+              line: ConfigLine, verdict_args: SpecialVerdict | str | None = None,
               origdest: str | None = None,
               rate: str | None = None,
               user: str | None = None,
@@ -1876,7 +1883,7 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                     matches=list(rule.matches),
                     verdict=Verdict.LOG,
                     log_prefix=nft_log_prefix,
-                    verdict_args=f"log_level:{log_level}",
+                    log_level=log_level,
                     source_file=line.file,
                     source_line=line.lineno,
                 source_raw=line.raw,
@@ -2277,7 +2284,7 @@ def _process_notrack(ir: FirewallIR, notrack_lines: list[ConfigLine],
 
         rule = Rule(
             verdict=Verdict.ACCEPT,
-            verdict_args="notrack:",
+            verdict_args=NotrackVerdict(),
             source_file=line.file,
             source_line=line.lineno,
         source_raw=line.raw,
@@ -2346,7 +2353,7 @@ def _process_conntrack(ir: FirewallIR, conntrack_lines: list[ConfigLine]) -> Non
         chain = ir.chains["ct-helpers"]
         rule = Rule(
             verdict=Verdict.ACCEPT,
-            verdict_args=f"ct_helper:{helper_name}",
+            verdict_args=CtHelperVerdict(name=helper_name),
             source_file=line.file,
             source_line=line.lineno,
         source_raw=line.raw,
@@ -2700,7 +2707,7 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine],
                         policy=None,
                     )
                     ir.stopped_chains[stopped_raw.name] = stopped_raw
-                r = Rule(verdict=Verdict.ACCEPT, verdict_args="notrack:")
+                r = Rule(verdict=Verdict.ACCEPT, verdict_args=NotrackVerdict())
                 r.matches.append(Match(field="iifname", value=iface))
                 stopped_raw.rules.append(r)
             continue
@@ -2753,7 +2760,7 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine],
                         policy=None,
                     )
                     ir.stopped_chains[stopped_raw.name] = stopped_raw
-                r = Rule(verdict=Verdict.ACCEPT, verdict_args="notrack:")
+                r = Rule(verdict=Verdict.ACCEPT, verdict_args=NotrackVerdict())
                 r.matches.append(Match(field="iifname", value=iface))
                 if h:
                     r.matches.append(Match(field=_saddr_field(h), value=h))
@@ -2882,7 +2889,7 @@ def _process_ecn(ir: FirewallIR, ecn_lines: list[ConfigLine]) -> None:
         for h in hosts:
             r = Rule(
                 verdict=Verdict.ACCEPT,
-                verdict_args="ecn_clear:",
+                verdict_args=EcnClearVerdict(),
             )
             r.matches.append(Match(field="oifname", value=iface))
             r.matches.append(Match(field="meta l4proto", value="tcp"))
@@ -3093,7 +3100,7 @@ def _process_rawnat(ir: FirewallIR, rawnat_lines: list[ConfigLine],
         # warning and is skipped.
         if action == "NOTRACK":
             verdict = Verdict.ACCEPT
-            verdict_args: str | None = "notrack:"
+            verdict_args: SpecialVerdict | str | None = NotrackVerdict()
         elif action == "ACCEPT":
             verdict = Verdict.ACCEPT
             verdict_args = None
@@ -3250,7 +3257,7 @@ def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
         target = target_raw.upper().split("(")[0].rstrip("+")
         if target == "ACCEPT":
             verdict = Verdict.ACCEPT
-            verdict_args: str | None = None
+            verdict_args: SpecialVerdict | str | None = None
         elif target == "DROP":
             verdict = Verdict.DROP
             verdict_args = None
@@ -3259,7 +3266,7 @@ def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
             verdict_args = None
         elif target == "NOTRACK":
             verdict = Verdict.ACCEPT
-            verdict_args = "notrack:"
+            verdict_args = NotrackVerdict()
         else:
             import warnings
             warnings.warn(
@@ -3289,7 +3296,7 @@ def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
                         Match(field=f"{proto} sport", value=sport))
 
         # NOTRACK always lands in the raw-prerouting chain
-        if verdict_args == "notrack:":
+        if isinstance(verdict_args, NotrackVerdict):
             if stopped_raw is None:
                 stopped_raw = Chain(
                     name="stopped-raw-prerouting",
@@ -3299,7 +3306,7 @@ def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
                     policy=None,
                 )
                 ir.stopped_chains[stopped_raw.name] = stopped_raw
-            r = Rule(verdict=Verdict.ACCEPT, verdict_args="notrack:")
+            r = Rule(verdict=Verdict.ACCEPT, verdict_args=NotrackVerdict())
             if src_addr:
                 r.matches.append(_make_match(
                     "ip6 saddr" if is_v6_src else "ip saddr", src_addr))

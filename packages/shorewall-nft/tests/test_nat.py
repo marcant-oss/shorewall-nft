@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from shorewall_nft.compiler.ir import build_ir
+from shorewall_nft.compiler.verdicts import CtHelperVerdict, NotrackVerdict
 from shorewall_nft.config.parser import load_config
 from shorewall_nft.nft.emitter import emit_nft
 
@@ -106,7 +107,7 @@ class TestNotrack:
 
     def test_notrack_rules(self):
         chain = self.ir.chains["raw-prerouting"]
-        notrack_rules = [r for r in chain.rules if r.verdict_args and "notrack" in r.verdict_args]
+        notrack_rules = [r for r in chain.rules if isinstance(r.verdict_args, NotrackVerdict)]
         assert len(notrack_rules) >= 1
 
     def test_notrack_nft_output(self):
@@ -129,7 +130,7 @@ class TestConntrack:
 
     def test_ftp_helper(self):
         chain = self.ir.chains["ct-helpers"]
-        ftp = [r for r in chain.rules if r.verdict_args and "ftp" in r.verdict_args]
+        ftp = [r for r in chain.rules if isinstance(r.verdict_args, CtHelperVerdict) and r.verdict_args.name == "ftp"]
         assert len(ftp) == 1
 
     def test_ct_helper_nft_output(self):

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from shorewall_nft.compiler.ir import build_ir
+from shorewall_nft.compiler.verdicts import CtHelperVerdict
 from shorewall_nft.config.parser import load_config
 from shorewall_nft.nft.emitter import emit_nft
 from shorewall_nft.nft.sets import parse_init_for_sets
@@ -113,8 +114,8 @@ class TestProductionCompleteness:
         chain = prod_ir.chains["ct-helpers"]
         helper_names = set()
         for r in chain.rules:
-            if r.verdict_args and "ct_helper:" in r.verdict_args:
-                helper_names.add(r.verdict_args.split(":")[1])
+            if isinstance(r.verdict_args, CtHelperVerdict):
+                helper_names.add(r.verdict_args.name)
         assert helper_names >= {"ftp", "snmp", "tftp", "pptp"}
 
 
