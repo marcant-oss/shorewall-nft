@@ -1,0 +1,7 @@
+#SOURCE	DEST	POLICY
+$FW	all	ACCEPT
+loc	net	ACCEPT
+loc	dmz	ACCEPT
+dmz	net	ACCEPT
+net	all	DROP
+all	all	REJECT

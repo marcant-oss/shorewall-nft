@@ -1,7 +1,19 @@
-"""Sysctl configuration for network stack tuning.
+"""Sysctl script generation from Shorewall configuration.
 
-Sets kernel parameters based on Shorewall config settings
-and interface options.
+Translates global settings (``shorewall.conf``) and per-interface options
+(``interfaces`` file) into a POSIX shell script that applies the
+corresponding ``sysctl -w`` settings.
+
+Inputs: a ``ShorewalConfig`` object produced by
+``shorewall_nft.config.parser.load_config`` — specifically its
+``settings`` dict (global shorewall.conf keys) and its ``interfaces``
+section (parsed by ``build_zone_model``).
+
+Outputs: a single ``str`` containing a standalone ``#!/bin/sh`` script
+whose only side-effects are ``sysctl -w`` invocations.  The script
+contains no conditionals and is idempotent — re-running it is safe.
+
+Entry point: ``generate_sysctl_script(config) -> str``.
 """
 
 from __future__ import annotations

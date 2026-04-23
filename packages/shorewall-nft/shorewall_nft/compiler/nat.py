@@ -2,6 +2,19 @@
 
 Translates Shorewall masq config and DNAT rules into
 nft nat chain rules.
+
+Inputs: ``ConfigLine`` lists from the ``masq``, ``rules`` (DNAT/REDIRECT
+rows), and ``netmap`` config files, plus a ``FirewallIR`` that may already
+contain ``prerouting``/``postrouting`` chains.
+
+Outputs: ``Rule`` entries appended to the ``prerouting`` chain
+(``verdict_args="dnat:…"``) and the ``postrouting`` chain
+(``verdict_args="snat:…"`` or ``"masquerade:"``).  Both chains are created
+with ``ChainType.NAT`` and the appropriate hook/priority if they do not
+already exist.
+
+Entry points: ``process_nat(ir, masq_lines, dnat_rules)``,
+``process_netmap(ir, netmap_lines)``, ``extract_nat_rules(rules)``.
 """
 
 from __future__ import annotations

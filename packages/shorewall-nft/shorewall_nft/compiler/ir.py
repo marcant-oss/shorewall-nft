@@ -107,6 +107,14 @@ class Chain:
 
     @property
     def is_base_chain(self) -> bool:
+        """Return True if this chain is attached to a netfilter hook.
+
+        Base chains have a non-None ``hook`` (input/forward/output/prerouting/
+        postrouting) and carry a ``policy`` verdict.  The emitter uses this to
+        decide whether to emit ``type … hook … priority …; policy …;`` header
+        lines, and the optimizer skips deduplication passes on base chains.
+        Non-base (regular) chains have ``hook=None``.
+        """
         return self.hook is not None
 
 
@@ -147,9 +155,21 @@ class FirewallIR:
     nfset_registry: NfSetRegistry = field(default_factory=NfSetRegistry)
 
     def add_chain(self, chain: Chain) -> None:
+        """Register ``chain`` in this IR under ``chain.name``.
+
+        Overwrites any existing chain with the same name.  Callers that need
+        the lookup-or-insert pattern should use ``get_or_create_chain`` instead.
+        """
         self.chains[chain.name] = chain
 
     def get_or_create_chain(self, name: str) -> Chain:
+        """Return the chain named ``name``, creating a plain chain if absent.
+
+        If no chain with ``name`` exists in ``self.chains``, a new ``Chain``
+        with only ``name`` set (no hook, no policy, empty rules) is inserted
+        and returned.  Subsequent calls with the same name return the same
+        object, so callers can accumulate rules across multiple call sites.
+        """
         if name not in self.chains:
             self.chains[name] = Chain(name=name)
         return self.chains[name]
@@ -888,6 +908,7 @@ def _rewrite_nfset_spec(
     spec: str,
     registry: NfSetRegistry,
     family: str,
+    line_ctx: str = "",
 ) -> str:
     """Rewrite an ``nfset:name`` token in *spec* to the nft set sentinel.
 
@@ -898,6 +919,9 @@ def _rewrite_nfset_spec(
     Multi-value ``nfset:a,b`` is **not** handled here — multi-set
     expansion is done by the caller before invoking this function (one
     clone per set name, each with a single name).
+
+    *line_ctx* — optional ``"file:lineno"`` prefix added to the error
+    message when *name* is not registered.
 
     Raises :exc:`ValueError` if the logical name is not registered in
     *registry*.
@@ -931,9 +955,10 @@ def _rewrite_nfset_spec(
         return spec
 
     if name not in registry.set_names:
+        where = f"{line_ctx}: " if line_ctx else ""
         raise ValueError(
-            f"nfset:{name!r} is not declared in the nfsets config file "
-            f"(known sets: {sorted(registry.set_names)})")
+            f"{where}nfset:{name!r} is not declared in the nfsets config "
+            f"file (known sets: {sorted(registry.set_names)})")
 
     set_name = nfset_to_set_name(name, family)
     return f"{prefix}{sentinel_negate}+{set_name}"
@@ -963,7 +988,11 @@ _AND_MULTISET_RE = re.compile(
 _VALID_BRACKET_FLAGS: frozenset[str] = frozenset({"src", "dst", "src,dst", "dst,src"})
 
 
-def _normalise_bracket_flags(flags_raw: str, column_side: str) -> list[str]:
+def _normalise_bracket_flags(
+    flags_raw: str,
+    column_side: str,
+    line_ctx: str = "",
+) -> list[str]:
     """Return list of match sides from bracket flags string.
 
     ``flags_raw`` is the content inside ``[...]``, e.g. ``"src"`` or
@@ -979,8 +1008,9 @@ def _normalise_bracket_flags(flags_raw: str, column_side: str) -> list[str]:
 
     normed = flags_raw.lower().strip()
     if normed not in _VALID_BRACKET_FLAGS:
+        where = f"{line_ctx}: " if line_ctx else ""
         raise ValueError(
-            f"invalid bracket flag {flags_raw!r}; "
+            f"{where}invalid bracket flag {flags_raw!r}; "
             f"allowed: src, dst, src,dst (got {flags_raw!r})"
         )
     # Normalise both orderings of the two-side form
@@ -1027,6 +1057,7 @@ def _spec_contains_bracket_ipset(spec: str) -> bool:
 def _rewrite_bracket_spec(
     spec: str,
     column_side: str,
+    line_ctx: str = "",
 ) -> tuple[str, list[tuple[str, str, bool]]]:
     """Parse a classic ``+setname[flags]`` / ``+[a,b,c]`` spec.
 
@@ -1067,7 +1098,9 @@ def _rewrite_bracket_spec(
     if m_and:
         names = [n.strip() for n in m_and.group(1).split(",") if n.strip()]
         if not names:
-            raise ValueError(f"empty AND-multi-set list in {spec!r}")
+            where = f"{line_ctx}: " if line_ctx else ""
+            raise ValueError(
+                f"{where}empty AND-multi-set list in {spec!r}")
         sides = [column_side]  # AND-multi-set uses column_side for all members
         match_infos = [
             (side, name, negate) for name in names for side in sides
@@ -1095,13 +1128,14 @@ def _rewrite_bracket_spec(
     # Empty brackets are invalid — require at least src or dst.
     bracket_content = m_bracket.group(2)
     if bracket_content is not None and bracket_content == "":
+        where = f"{line_ctx}: " if line_ctx else ""
         raise ValueError(
-            f"empty bracket flags in {spec!r}; "
+            f"{where}empty bracket flags in {spec!r}; "
             f"use [src], [dst], or [src,dst]"
         )
     flags_raw = bracket_content if bracket_content is not None else ""
 
-    sides = _normalise_bracket_flags(flags_raw, column_side)
+    sides = _normalise_bracket_flags(flags_raw, column_side, line_ctx)
     match_infos = [(side, set_name, negate) for side in sides]
 
     # Build the stripped spec (remove bracket portion)
@@ -1195,13 +1229,14 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
                 continue
 
             # Phase 2: single-name nfset token → family clone + rewrite.
+            _line_ctx = f"{line.file}:{line.lineno}" if line.file else ""
             for family in ("v4", "v6"):
                 new_cols = list(cols)
                 new_cols[1] = _rewrite_nfset_spec(
-                    source_spec_raw, ir.nfset_registry, family)
+                    source_spec_raw, ir.nfset_registry, family, _line_ctx)
                 if len(new_cols) > 2:
                     new_cols[2] = _rewrite_nfset_spec(
-                        dest_spec_raw, ir.nfset_registry, family)
+                        dest_spec_raw, ir.nfset_registry, family, _line_ctx)
                 expanded_line = ConfigLine(
                     columns=new_cols,
                     file=line.file,
@@ -1277,12 +1312,13 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
             dst_bracket_infos: list[tuple[str, str, bool]] = []
             _bracket_source = source_spec_raw
             _bracket_dest = dest_spec_raw
+            _bracket_ctx = f"{line.file}:{line.lineno}" if line.file else ""
             if _src_has_bracket:
                 _bracket_source, src_bracket_infos = _rewrite_bracket_spec(
-                    source_spec_raw, "src")
+                    source_spec_raw, "src", _bracket_ctx)
             if _dst_has_bracket:
                 _bracket_dest, dst_bracket_infos = _rewrite_bracket_spec(
-                    dest_spec_raw, "dst")
+                    dest_spec_raw, "dst", _bracket_ctx)
             # Build a synthetic line with stripped specs and recurse once so
             # zone-list expansion and the remaining logic apply normally.
             new_cols = list(cols)
@@ -1481,7 +1517,7 @@ def _expand_macro(ir: FirewallIR, zones: ZoneModel,
         # - Source/dest has IPv6 addresses
         # - Source/dest zones are ipv6 type
         # - The rule comes from a shorewall6 config
-        ctx_is_v6 = (_is_ipv6(source_spec) or _is_ipv6(dest_spec))
+        ctx_is_v6 = (is_ipv6_spec(source_spec) or is_ipv6_spec(dest_spec))
         if not ctx_is_v6:
             # Check zone types
             src_z = source_spec.split(":<")[0].split(":")[0]
@@ -1504,7 +1540,7 @@ def _expand_macro(ir: FirewallIR, zones: ZoneModel,
 
             # Filter entries by address family — skip v4 entries in v6
             # context and vice versa
-            entry_has_v6 = any(_is_ipv6(str(f)) for f in (m_source, m_dest)
+            entry_has_v6 = any(is_ipv6_spec(str(f)) for f in (m_source, m_dest)
                                if f not in ("SOURCE", "DEST", "-", "PARAM"))
             entry_has_v4 = any(
                 f not in ("SOURCE", "DEST", "-", "PARAM") and f[0:1].isdigit()
@@ -1718,7 +1754,7 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                 elif clean_addr.startswith("+dns_") and clean_addr.endswith("_v6"):
                     # DNS-backed set sentinel produced by the pre-pass
                     # in _process_rules. Force ip6 family; bare name
-                    # has no colons, so _is_ipv6 would misclassify.
+                    # has no colons, so is_ipv6_spec would misclassify.
                     rule.matches.append(Match(
                         field="ip6 saddr", value=clean_addr, negate=negate))
                     has_v6_addr = True
@@ -1726,7 +1762,7 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                     rule.matches.append(Match(
                         field="ip saddr", value=clean_addr, negate=negate))
                     has_v4_addr = True
-                elif _is_ipv6(clean_addr):
+                elif is_ipv6_spec(clean_addr):
                     rule.matches.append(Match(field="ip6 saddr", value=clean_addr, negate=negate))
                     has_v6_addr = True
                 else:
@@ -1759,7 +1795,7 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                     rule.matches.append(Match(
                         field="ip daddr", value=clean_addr, negate=negate))
                     has_v4_addr = True
-                elif _is_ipv6(clean_addr):
+                elif is_ipv6_spec(clean_addr):
                     rule.matches.append(Match(field="ip6 daddr", value=clean_addr, negate=negate))
                     has_v6_addr = True
                 else:
@@ -1915,8 +1951,22 @@ def _parse_rate_limit(rate_str: str) -> str:
     return rate_str
 
 
-def _is_ipv6(addr: str) -> bool:
-    """Check if an address string contains IPv6 addresses."""
+def is_ipv6_spec(addr: str) -> bool:
+    """Heuristic: does *addr* describe an IPv6 host/CIDR/set?
+
+    Accepts any of the forms that appear in Shorewall config columns:
+
+    * bare host — ``"192.0.2.1"`` / ``"2001:db8::1"``
+    * CIDR — ``"192.0.2.0/24"`` / ``"2001:db8::/32"``
+    * negated — ``"!2001:db8::1"``
+    * ipset reference — ``"+setname"`` (always False; family is
+      encoded in the set sentinel, not the spec)
+    * brace-wrapped set — ``"{ 2001:db8::1, 2001:db8::2 }"``
+    * comma-separated list — True if *any* member is IPv6
+
+    Returns True if the spec contains at least one IPv6 address.
+    False for pure IPv4, empty, and bare ipset references.
+    """
     # Strip set braces and check individual addresses
     clean = addr.strip("{ }")
     for part in clean.split(","):
@@ -1926,6 +1976,26 @@ def _is_ipv6(addr: str) -> bool:
         if ":" in part and not part.startswith("/"):
             return True
     return False
+
+
+def split_nft_zone_pair(chain_name: str) -> tuple[str, str] | None:
+    """Split an nft zone-pair chain name into ``(src_zone, dst_zone)``.
+
+    nft zone-pair chains are emitted as ``"src-dst"`` by the compiler.
+    Returns ``None`` for any chain name that doesn't have exactly one
+    hyphen-delimited pair (base chains, helper chains, malformed
+    names) — callers should skip those.
+
+    Note: zone names themselves may not contain hyphens in this
+    project's naming convention, so a simple ``split("-", 1)`` is
+    sufficient. The iptables-compatible splitter (separator ``"2"``)
+    lives in ``verify/`` where disambiguation against known zones is
+    needed.
+    """
+    parts = chain_name.split("-", 1)
+    if len(parts) != 2:
+        return None
+    return parts[0], parts[1]
 
 
 _MAC_RE = re.compile(r'^[0-9A-Fa-f]{2}([-:])[0-9A-Fa-f]{2}\1[0-9A-Fa-f]{2}\1'
@@ -2083,14 +2153,19 @@ def _has_set_token(spec: str) -> bool:
     )
 
 
-def _rewrite_spec_for_family(spec: str, ir: "FirewallIR", family: str) -> str:
+def _rewrite_spec_for_family(
+    spec: str, ir: "FirewallIR", family: str, line_ctx: str = "",
+) -> str:
     """Apply nfset/dns/dnsr rewrites for a single family (v4 or v6).
 
     Runs nfset → dns → dnsr in order; each rewriter is a no-op when its
     token type is absent.
+
+    *line_ctx* — optional ``"file:lineno"`` prefix forwarded to the nfset
+    rewriter so its error messages pinpoint the offending config line.
     """
     if _spec_contains_nfset_token(spec):
-        spec = _rewrite_nfset_spec(spec, ir.nfset_registry, family)
+        spec = _rewrite_nfset_spec(spec, ir.nfset_registry, family, line_ctx)
     if _spec_contains_dns_token(spec):
         spec = _rewrite_dns_spec(spec, ir.dns_registry, family, ir.dnsr_registry)
     if _spec_contains_dnsr_token(spec):
@@ -2122,11 +2197,14 @@ def _expand_line_for_tokens(
         return False, []
 
     expanded: list[ConfigLine] = []
+    _line_ctx = f"{line.file}:{line.lineno}" if line.file else ""
     for family in ("v4", "v6"):
         new_cols = list(cols)
-        new_cols[src_col] = _rewrite_spec_for_family(src_raw, ir, family)
+        new_cols[src_col] = _rewrite_spec_for_family(
+            src_raw, ir, family, _line_ctx)
         if dst_col is not None and dst_col < len(cols):
-            new_cols[dst_col] = _rewrite_spec_for_family(dst_raw, ir, family)
+            new_cols[dst_col] = _rewrite_spec_for_family(
+                dst_raw, ir, family, _line_ctx)
         expanded.append(ConfigLine(
             columns=new_cols,
             file=line.file,
@@ -2463,15 +2541,6 @@ _ROUTESTOPPED_VALID_OPTIONS = {
 }
 
 
-def _is_ipv6_addr(host: str) -> bool:
-    """Heuristic: does this host token look like an IPv6 literal/CIDR?"""
-    h = host.strip()
-    if not h:
-        return False
-    addr = h.split("/", 1)[0]
-    return ":" in addr
-
-
 def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine],
                           settings: dict[str, str] | None = None) -> None:
     """Process routestopped rules.
@@ -2559,10 +2628,10 @@ def _process_routestopped(ir: FirewallIR, routestopped: list[ConfigLine],
     stopped_raw: Chain | None = None
 
     def _saddr_field(host: str) -> str:
-        return "ip6 saddr" if _is_ipv6_addr(host) else "ip saddr"
+        return "ip6 saddr" if is_ipv6_spec(host) else "ip saddr"
 
     def _daddr_field(host: str) -> str:
-        return "ip6 daddr" if _is_ipv6_addr(host) else "ip daddr"
+        return "ip6 daddr" if is_ipv6_spec(host) else "ip daddr"
 
     def _add_proto(rule: Rule, proto: str | None,
                    dport: str | None, sport: str | None) -> None:
@@ -2726,8 +2795,8 @@ def _process_scfilter(ir: FirewallIR, scfilter_lines: list[ConfigLine]) -> None:
         if not hosts_raw:
             continue
         hosts = [h.strip() for h in hosts_raw.split(",") if h.strip()]
-        v4 = [h for h in hosts if not _is_ipv6(h)]
-        v6 = [h for h in hosts if _is_ipv6(h)]
+        v4 = [h for h in hosts if not is_ipv6_spec(h)]
+        v6 = [h for h in hosts if is_ipv6_spec(h)]
 
         if v4:
             r = Rule(verdict=Verdict.DROP)
@@ -2816,7 +2885,7 @@ def _process_ecn(ir: FirewallIR, ecn_lines: list[ConfigLine]) -> None:
             r.matches.append(Match(field="oifname", value=iface))
             r.matches.append(Match(field="meta l4proto", value="tcp"))
             if h:
-                field = "ip6 daddr" if _is_ipv6(h) else "ip daddr"
+                field = "ip6 daddr" if is_ipv6_spec(h) else "ip daddr"
                 r.matches.append(Match(field=field, value=h))
             chain.rules.append(r)
 
@@ -3078,10 +3147,10 @@ def _process_rawnat(ir: FirewallIR, rawnat_lines: list[ConfigLine],
         _zone_iface_match(dst_zone, "oifname")
 
         if src_addr:
-            field = "ip6 saddr" if _is_ipv6(src_addr) else "ip saddr"
+            field = "ip6 saddr" if is_ipv6_spec(src_addr) else "ip saddr"
             rule.matches.append(Match(field=field, value=src_addr))
         if dst_addr:
-            field = "ip6 daddr" if _is_ipv6(dst_addr) else "ip daddr"
+            field = "ip6 daddr" if is_ipv6_spec(dst_addr) else "ip daddr"
             rule.matches.append(Match(field=field, value=dst_addr))
         if proto:
             rule.matches.append(Match(field="meta l4proto", value=proto))
@@ -3201,8 +3270,8 @@ def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
         dst_zone, dst_addr = _parse_zone_spec(dest_spec, zones)
         dst_addr = _sentinel_to_addr(dst_zone, dst_addr)
 
-        is_v6_src = src_addr is not None and _is_ipv6(src_addr)
-        is_v6_dst = dst_addr is not None and _is_ipv6(dst_addr)
+        is_v6_src = src_addr is not None and is_ipv6_spec(src_addr)
+        is_v6_dst = dst_addr is not None and is_ipv6_spec(dst_addr)
 
         def _make_match(field: str, val: str) -> Match:
             return Match(field=field, value=val)

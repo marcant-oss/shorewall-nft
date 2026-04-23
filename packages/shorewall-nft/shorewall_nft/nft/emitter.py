@@ -6,7 +6,7 @@ for unified IPv4/IPv6 support.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from shorewall_nft.compiler.ir import (
     Chain,
@@ -16,6 +16,7 @@ from shorewall_nft.compiler.ir import (
     Match,
     Rule,
     Verdict,
+    split_nft_zone_pair,
 )
 from shorewall_nft.nft.flowtable import emit_flow_offload_rule
 
@@ -784,10 +785,10 @@ def _emit_dispatch_rules(lines: list[str], base_chain: Chain,
     for chain_name, chain in sorted(ir.chains.items()):
         if chain.is_base_chain:
             continue
-        parts = chain_name.split("-", 1)
-        if len(parts) != 2:
+        pair = split_nft_zone_pair(chain_name)
+        if pair is None:
             continue
-        src_zone, dst_zone = parts
+        src_zone, dst_zone = pair
         if dst_zone == fw_zone and base_chain.hook == Hook.INPUT:
             dispatch_candidates.append((src_zone, "", chain_name))
         elif src_zone == fw_zone and base_chain.hook == Hook.OUTPUT:
@@ -834,10 +835,10 @@ def _emit_vmap_dispatch(lines: list[str], base_chain: Chain,
     for chain_name, chain in sorted(ir.chains.items()):
         if chain.is_base_chain:
             continue
-        parts = chain_name.split("-", 1)
-        if len(parts) != 2:
+        pair = split_nft_zone_pair(chain_name)
+        if pair is None:
             continue
-        src_zone, dst_zone = parts
+        src_zone, dst_zone = pair
 
         # Filter by hook
         if base_chain.hook == Hook.INPUT:
@@ -978,6 +979,67 @@ def _emit_zone_jump(lines: list[str], chain_name: str,
         lines.append(f"{indent}jump {chain_name}")
 
 
+# Inline-match passthrough: Match.field values that don't use the default
+# `<field> <value>` shape.  Keyed by the field string; each handler takes
+# the raw value and returns the nft fragment to append.
+_INLINE_MATCH_EMITTERS: dict[str, Callable[[str], str]] = {
+    "inline": lambda v: v,
+    "exthdr": lambda v: f"exthdr {v} exists",
+    "ct helper": lambda v: f"ct helper {v}",
+    "ct mark": lambda v: f"ct mark {v}",
+    "ether saddr": lambda v: f"ether saddr {v}",
+    "probability": lambda v: f"numgen random mod 100 < {v}",
+    "connbytes": lambda v: f"ct bytes > {v}",
+    "recent": lambda v: f"# recent: {v}",  # nft has no direct equivalent
+}
+
+
+def _emit_special_mark(target: str) -> str:
+    """Emit ``meta mark set …`` for a ``mark:<val[/mask]>`` verdict."""
+    if "/" in target:
+        val, mask = target.split("/", 1)
+        mask_int = int(mask, 0) ^ 0xFFFFFFFF
+        return (
+            f"meta mark set meta mark and 0x{mask_int:08x} "
+            f"or 0x{int(val, 0):08x}"
+        )
+    return f"meta mark set 0x{int(target, 0):08x}"
+
+
+# Special-verdict dispatch keyed by the prefix of ``Rule.verdict_args``
+# (before the first colon).  Each handler takes the raw target string
+# (everything after the colon) and returns the one fragment to append
+# before the rule terminates.  Adding a new verdict = add one entry
+# here; no more elif cascade.
+#
+# NOTE: this dict encodes the undocumented ``verdict_args`` wire format
+# (architectural debt item #2).  The dispatch shape stays the same once
+# that is migrated to a discriminated union; only the lookup key changes.
+_SPECIAL_VERDICT_EMITTERS: dict[str, Callable[[str], str]] = {
+    "snat": lambda t: f"snat to {t}",
+    "dnat": lambda t: f"dnat to {t}",
+    "masquerade": lambda _t: "masquerade",
+    "redirect": lambda t: f"redirect to :{t}" if t else "redirect",
+    "notrack": lambda _t: "notrack",
+    "ct_helper": lambda t: f'ct helper set "{t}"',
+    "mark": _emit_special_mark,
+    "connmark": lambda t: f"ct mark set 0x{int(t, 0):08x}",
+    "restore_mark": lambda _t: "meta mark set ct mark",
+    "save_mark": lambda _t: "ct mark set meta mark",
+    "dscp": lambda t: f"ip dscp set {t}",
+    # Clear the two ECN bits via `ip ecn set not-ect`.  Falls back
+    # gracefully on kernels without ip-ecn support — those raise at
+    # load time and the operator can opt out by removing the ecn file.
+    "ecn_clear": lambda _t: "ip ecn set not-ect",
+    "classify": lambda t: f"meta priority set {t}",
+    "counter": lambda _t: "counter accept",
+    "named_counter": lambda t: f'counter name "{t}" accept',
+    "account": lambda _t: "counter accept",
+    "nflog": lambda _t: "log group 0",
+    "audit": lambda t: f'log prefix "AUDIT:{t}: " accept',
+}
+
+
 def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
                chain_name: str = "", rule_idx: int = 0) -> str:
     """Emit a single rule as nft syntax.
@@ -1046,94 +1108,23 @@ def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
             rule, chain_name, rule_idx)
         parts.append(f'counter name "{debug_counter_name}"')
 
-    # Inline match passthrough (;; syntax from Shorewall)
+    # Inline match passthrough (;; syntax from Shorewall) — dispatch
+    # via _INLINE_MATCH_EMITTERS.  Fields not in the table were already
+    # handled by the default `<field> <value>` path in _emit_match above.
     for match in rule.matches:
-        if match.field == "inline":
-            parts.append(match.value)
-        elif match.field == "exthdr":
-            parts.append(f"exthdr {match.value} exists")
-        elif match.field == "ct helper":
-            parts.append(f"ct helper {match.value}")
-        elif match.field == "ct mark":
-            parts.append(f"ct mark {match.value}")
-        elif match.field == "ether saddr":
-            parts.append(f"ether saddr {match.value}")
-        elif match.field == "probability":
-            parts.append(f"numgen random mod 100 < {match.value}")
-        elif match.field == "connbytes":
-            parts.append(f"ct bytes > {match.value}")
-        elif match.field == "recent":
-            parts.append(f"# recent: {match.value}")  # nft has no direct equivalent
+        inline_emit = _INLINE_MATCH_EMITTERS.get(match.field)
+        if inline_emit is not None:
+            parts.append(inline_emit(match.value))
 
-    # Check for special verdicts (encoded in verdict_args as "type:target")
+    # Special verdicts are encoded in verdict_args as "type:target".
+    # Dispatch via _SPECIAL_VERDICT_EMITTERS — unknown types fall
+    # through to the plain Verdict branch below (log_level: is handled
+    # there, not here).
     if rule.verdict_args and ":" in rule.verdict_args:
         special_type, special_target = rule.verdict_args.split(":", 1)
-        if special_type == "snat":
-            parts.append(f"snat to {special_target}")
-            return _finish(parts)
-        elif special_type == "dnat":
-            parts.append(f"dnat to {special_target}")
-            return _finish(parts)
-        elif special_type == "masquerade":
-            parts.append("masquerade")
-            return _finish(parts)
-        elif special_type == "redirect":
-            if special_target:
-                parts.append(f"redirect to :{special_target}")
-            else:
-                parts.append("redirect")
-            return _finish(parts)
-        elif special_type == "notrack":
-            parts.append("notrack")
-            return _finish(parts)
-        elif special_type == "ct_helper":
-            parts.append(f"ct helper set \"{special_target}\"")
-            return _finish(parts)
-        elif special_type == "mark":
-            if "/" in special_target:
-                val, mask = special_target.split("/", 1)
-                parts.append(f"meta mark set meta mark and 0x{int(mask, 0) ^ 0xffffffff:08x} or 0x{int(val, 0):08x}")
-            else:
-                parts.append(f"meta mark set 0x{int(special_target, 0):08x}")
-            return _finish(parts)
-        elif special_type == "connmark":
-            parts.append(f"ct mark set 0x{int(special_target, 0):08x}")
-            return _finish(parts)
-        elif special_type == "restore_mark":
-            parts.append("meta mark set ct mark")
-            return _finish(parts)
-        elif special_type == "save_mark":
-            parts.append("ct mark set meta mark")
-            return _finish(parts)
-        elif special_type == "dscp":
-            parts.append(f"ip dscp set {special_target}")
-            return _finish(parts)
-        elif special_type == "ecn_clear":
-            # Clear the two ECN bits in the IP DSCP/ECN byte. The
-            # nft `ecn set` statement is the canonical form; we
-            # use `ip ecn set not-ect` to map to plain text.
-            # Falls back gracefully on kernels without ip-ecn
-            # support — those will raise at load time and the
-            # operator can opt out by removing the ecn file.
-            parts.append("ip ecn set not-ect")
-            return _finish(parts)
-        elif special_type == "classify":
-            parts.append(f"meta priority set {special_target}")
-            return _finish(parts)
-        elif special_type == "counter":
-            parts.append("counter accept")
-            return _finish(parts)
-        elif special_type == "named_counter":
-            parts.append(f"counter name \"{special_target}\" accept")
-            return _finish(parts)
-        elif special_type == "account":
-            parts.append("counter accept")
-            return _finish(parts)
-        elif special_type == "nflog":
-            parts.append("log group 0")
-            return _finish(parts)
-        elif special_type == "audit":
-            parts.append(f"log prefix \"AUDIT:{special_target}: \" accept")
+        emit_special = _SPECIAL_VERDICT_EMITTERS.get(special_type)
+        if emit_special is not None:
+            parts.append(emit_special(special_target))
             return _finish(parts)
 
     # Verdict

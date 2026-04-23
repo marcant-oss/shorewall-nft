@@ -57,6 +57,35 @@ Enable MAC-address filtering on this interface.
 .TP
 .BI nets= NETWORKS
 Restrict the zone to these networks on this interface.
+.TP
+.BR routefilter [= VALUE ]
+Enable reverse-path filtering (rp_filter) on this interface.
+.RS
+Without a value (or with
+.BR =1 ),
+strict mode is set
+.RB ( net.ipv4.conf. \fIIFACE\fR .rp_filter=1 ).
+.BR =2
+selects loose mode; the option is absent or
+.B noroutefilter
+sets
+.BR =0 .
+The generated sysctl line is written by
+.BR "shorewall-nft generate-sysctl" .
+If the global
+.B ROUTE_FILTER
+setting in
+.I shorewall.conf
+is also enabled it sets
+.B net.ipv4.conf.all.rp_filter
+and
+.BR net.ipv4.conf.default.rp_filter ;
+the kernel uses the maximum of the global and per-interface values.
+.PP
+At OPTIMIZE level 1 and above, the compiler uses this flag as a heuristic to
+elide rules whose source addresses cannot arrive on the interface — the kernel
+would drop them via rp_filter anyway.
+.RE
 
 .SH EXAMPLES
 .PP

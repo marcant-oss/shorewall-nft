@@ -4,6 +4,17 @@ Handles IPsec, GRE, OpenVPN, 6to4, PPTP tunnel definitions
 from the Shorewall tunnels config file.
 
 Format: TYPE ZONE GATEWAY GATEWAY_ZONE
+
+Inputs: ``ConfigLine`` list from the ``tunnels`` config file and a
+``ZoneModel`` (used to resolve the firewall zone name).
+
+Outputs: ``Rule`` entries with ``Verdict.ACCEPT`` appended to the
+``<zone>-<fw>`` (inbound) and ``<fw>-<zone>`` (outbound) zone-pair chains,
+which are created via ``get_or_create_chain`` if they do not already exist.
+Matches encode the required protocol numbers and destination/source ports
+for each tunnel type as defined in ``_TUNNEL_RULES``.
+
+Entry point: ``process_tunnels(ir, tunnel_lines, zones)``.
 """
 
 from __future__ import annotations

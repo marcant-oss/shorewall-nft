@@ -18,22 +18,47 @@ from shorewall_nft.config.parser import load_config
 from shorewall_nft.nft.emitter import emit_nft
 from shorewall_nft.nft.sets import parse_init_for_sets
 
-PROD_DIR = Path(os.environ.get("SHOREWALL_NFT_PROD_DIR", "/etc/shorewall"))
+_FIXTURE_DEFAULT = Path(__file__).parent / "fixtures" / "ref-ha-minimal"
+_FIXTURE_SHOREWALL = _FIXTURE_DEFAULT / "shorewall"
+_FIXTURE_IPT = _FIXTURE_DEFAULT / "iptables.txt"
+
 S2F_DIR = Path(os.environ.get("SHOREWALL_NFT_S2F_DIR", "/opt/shorewall2foomuuri"))
-IPT_DUMP = Path(os.environ.get("SHOREWALL_NFT_IPT_DUMP", "/tmp/iptables-save.txt"))
+
+
+def _resolve_prod_dir() -> Path:
+    env = os.environ.get("SHOREWALL_NFT_PROD_DIR")
+    if env and Path(env).is_dir():
+        return Path(env)
+    if _FIXTURE_SHOREWALL.is_dir():
+        return _FIXTURE_SHOREWALL
+    pytest.skip("neither SHOREWALL_NFT_PROD_DIR nor bundled fixture available")
+
+
+def _resolve_ipt_dump() -> Path:
+    env = os.environ.get("SHOREWALL_NFT_IPT_DUMP")
+    if env and Path(env).is_file():
+        return Path(env)
+    if _FIXTURE_IPT.is_file():
+        return _FIXTURE_IPT
+    pytest.skip("neither SHOREWALL_NFT_IPT_DUMP nor bundled fixture iptables.txt available")
+
+
+PROD_DIR = _resolve_prod_dir.__func__ if False else None  # resolved lazily in fixtures
+IPT_DUMP = _resolve_ipt_dump.__func__ if False else None   # resolved lazily in fixtures
 
 
 @pytest.fixture
 def prod_config():
-    if not PROD_DIR.exists():
-        pytest.skip("Production config not available")
-    return load_config(PROD_DIR)
+    d = _resolve_prod_dir()
+    return load_config(d)
 
 
 @pytest.fixture
 def prod_nft(prod_config):
     ir = build_ir(prod_config)
-    sets = parse_init_for_sets(PROD_DIR / "init", PROD_DIR)
+    d = _resolve_prod_dir()
+    init_file = d / "init"
+    sets = parse_init_for_sets(init_file, d) if init_file.exists() else {}
     return emit_nft(ir, nft_sets=sets)
 
 
@@ -189,20 +214,13 @@ class TestSemanticTriangleComparison:
     shorewall-nft nft output ↔ iptables-save ground truth.
     """
 
-    @pytest.fixture(autouse=True)
-    def skip_if_missing(self):
-        if not PROD_DIR.exists():
-            pytest.skip("Production config not available")
-        if not IPT_DUMP.exists():
-            pytest.skip("iptables dump not available")
-
     def test_triangle_runs(self):
         """The triangle comparison should complete without errors."""
         from shorewall_nft.verify.triangle import run_triangle
 
         report = run_triangle(
-            shorewall_config_dir=PROD_DIR,
-            iptables_dump=IPT_DUMP,
+            shorewall_config_dir=_resolve_prod_dir(),
+            iptables_dump=_resolve_ipt_dump(),
         )
         print(report.summarize())
         assert report.pairs_checked > 0
@@ -212,8 +230,8 @@ class TestSemanticTriangleComparison:
         from shorewall_nft.verify.triangle import run_triangle
 
         report = run_triangle(
-            shorewall_config_dir=PROD_DIR,
-            iptables_dump=IPT_DUMP,
+            shorewall_config_dir=_resolve_prod_dir(),
+            iptables_dump=_resolve_ipt_dump(),
         )
         print(f"\n{report.summarize()}")
         total = report.ok + report.missing

@@ -1,0 +1,24 @@
+#ACTION		SOURCE		DEST		PROTO	DEST PORT
+?SECTION NEW
+
+# Allow SSH from local network to firewall
+SSH(ACCEPT)	loc		$FW
+
+# Allow SSH from admin host on net
+SSH(ACCEPT)	net:$ADMIN	$FW
+
+# Allow DNS from local network to any
+DNS(ACCEPT)	loc		net
+
+# Allow HTTP/HTTPS inbound to local web server
+ACCEPT		net		loc:$WEBSERVER	tcp	80,443
+
+# DNAT: forward port 8080 on firewall to web server port 80
+DNAT		net		loc:$WEBSERVER:80	tcp	8080
+
+# Allow ICMP ping from net to firewall
+Ping/ACCEPT	net		$FW
+
+# Allow ICMP ping from loc
+Ping(ACCEPT)	loc		$FW
+Ping(ACCEPT)	$FW		all

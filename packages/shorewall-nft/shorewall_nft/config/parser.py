@@ -145,9 +145,11 @@ class ConfigParser:
                      "providers", "routes", "rtrules", "tunnels",
                      "accounting", "secmarks",
                      "maclist", "netmap",
-                     # Structured-io groundwork additions. These are
-                     # now parsed + exported, but the compiler/emitter
-                     # does not yet consume them. TODO per file:
+                     # Structured-io groundwork additions: these files are
+                     # parsed and exported for round-trip fidelity, but the
+                     # compiler/emitter does not yet consume them. Each file
+                     # is silently ignored during compilation until the
+                     # corresponding compiler feature is implemented:
                      # - arprules:   ARP anti-spoof rules (arp table)
                      # - proxyarp:   proxy-arp address table
                      # - proxyndp:   proxy-ndp address table
@@ -504,6 +506,13 @@ class ConfigParser:
     def _expand_vars(self, text: str) -> str:
         """Expand $variable and ${variable} references."""
         def replace(m: re.Match) -> str:
+            """Return the expanded value for a matched ``$name`` or ``${name}`` token.
+
+            Looks up *name* first in ``params`` (shorewall.conf VARIABLE= lines),
+            then in ``settings`` (shorewall.conf directive lines).  If the variable
+            is undefined in both, the original ``$name`` / ``${name}`` text is
+            returned unchanged (no KeyError).
+            """
             name = m.group(2) or m.group(1)
             return self.params.get(name, self.settings.get(name, m.group(0)))
 

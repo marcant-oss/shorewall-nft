@@ -1,0 +1,5 @@
+#ZONE	INTERFACE	BROADCAST	OPTIONS
+net	eth0		detect		tcpflags
+dmz	eth1		detect		tcpflags
+loc	eth2		detect		tcpflags
+loc	eth3		detect		tcpflags

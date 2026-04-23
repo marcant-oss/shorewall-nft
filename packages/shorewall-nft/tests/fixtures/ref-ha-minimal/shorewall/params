@@ -1,0 +1,5 @@
+# Addresses use RFC 5737 (IPv4) and RFC 3849 (IPv6) documentation ranges.
+LOG=info
+ADMIN=192.0.2.10
+WEBSERVER=192.0.2.20
+PUBLIC_IP=192.0.2.1

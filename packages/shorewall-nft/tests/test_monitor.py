@@ -29,7 +29,7 @@ class TestTraceStartArgv:
             return _make_mock_proc()
 
         with patch("shorewall_nft.runtime.monitor.subprocess.Popen", side_effect=_mock_popen):
-            with patch("shorewall_nft.runtime.monitor._in_netns") as mock_ctx:
+            with patch("shorewall_nft.runtime.monitor.in_netns") as mock_ctx:
                 mock_ctx.return_value.__enter__ = lambda s: None
                 mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
                 trace_start(netns=None)
@@ -45,7 +45,7 @@ class TestTraceStartArgv:
             return _make_mock_proc()
 
         with patch("shorewall_nft.runtime.monitor.subprocess.Popen", side_effect=_mock_popen):
-            with patch("shorewall_nft.runtime.monitor._in_netns") as mock_ctx:
+            with patch("shorewall_nft.runtime.monitor.in_netns") as mock_ctx:
                 mock_ctx.return_value.__enter__ = lambda s: None
                 mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
                 trace_start(netns="testns")
@@ -62,7 +62,7 @@ class TestTraceStartArgv:
         mock_proc.wait.side_effect = KeyboardInterrupt
 
         with patch("shorewall_nft.runtime.monitor.subprocess.Popen", return_value=mock_proc):
-            with patch("shorewall_nft.runtime.monitor._in_netns") as mock_ctx:
+            with patch("shorewall_nft.runtime.monitor.in_netns") as mock_ctx:
                 mock_ctx.return_value.__enter__ = lambda s: None
                 mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
                 trace_start()  # should not raise

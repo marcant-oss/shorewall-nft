@@ -15,7 +15,7 @@ match the on-disk placeholder convention.
 **No filesystem writes** — this module only builds the in-memory
 object. The on-disk writer (``shorewall-nft config import FILE --to
 DIR``) lives in the CLI layer and serialises a ShorewalConfig back
-to the Shorewall column format via :func:`write_config_dir` (TODO).
+to the Shorewall column format via :func:`write_config_dir`.
 """
 
 from __future__ import annotations

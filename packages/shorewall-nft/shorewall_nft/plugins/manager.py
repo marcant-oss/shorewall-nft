@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -22,6 +23,13 @@ _BUILTIN_PLUGINS = {
     "ip-info": "shorewall_nft.plugins.builtin.ip_info:IpInfoPlugin",
     "netbox": "shorewall_nft.plugins.builtin.netbox:NetboxPlugin",
 }
+
+# Entry-point group used by third-party plugin packages.
+_EP_GROUP = "shorewall_nft.plugins"
+
+
+class PluginLoadError(Exception):
+    """Raised when a third-party plugin entry-point fails to load."""
 
 
 class PluginManager:
@@ -173,13 +181,38 @@ class PluginManager:
 
 
 def _resolve_plugin_class(name: str) -> type[Plugin] | None:
-    """Resolve a plugin name to its class via the built-in registry."""
+    """Resolve a plugin name to its class.
+
+    Resolution order:
+    1. Built-in registry (``_BUILTIN_PLUGINS``) — zero-install, always wins.
+    2. ``importlib.metadata`` entry-points in group ``shorewall_nft.plugins``
+       — third-party packages advertise themselves here.
+    3. ``None`` if neither source has a match.
+
+    Raises:
+        PluginLoadError: if a matching entry-point exists but fails to load.
+    """
+    # 1. Built-in lookup
     spec = _BUILTIN_PLUGINS.get(name)
-    if not spec:
-        return None
-    module_path, _, class_name = spec.partition(":")
-    try:
-        module = importlib.import_module(module_path)
-        return getattr(module, class_name)
-    except (ImportError, AttributeError):
-        return None
+    if spec:
+        module_path, _, class_name = spec.partition(":")
+        try:
+            module = importlib.import_module(module_path)
+            return getattr(module, class_name)
+        except (ImportError, AttributeError):
+            return None
+
+    # 2. Entry-points fallback
+    eps = importlib.metadata.entry_points(group=_EP_GROUP)
+    for ep in eps:
+        if ep.name == name:
+            try:
+                return ep.load()
+            except Exception as exc:
+                raise PluginLoadError(
+                    f"Failed to load third-party plugin '{name}' "
+                    f"from entry-point '{ep.value}': {exc}"
+                ) from exc
+
+    # 3. Unknown
+    return None

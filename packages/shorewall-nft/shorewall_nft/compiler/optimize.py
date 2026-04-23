@@ -21,7 +21,13 @@ from __future__ import annotations
 import ipaddress
 from collections import defaultdict
 
-from shorewall_nft.compiler.ir import FirewallIR, Match, Rule, Verdict
+from shorewall_nft.compiler.ir import (
+    FirewallIR,
+    Match,
+    Rule,
+    Verdict,
+    split_nft_zone_pair,
+)
 
 # ── Level 1: Routefilter heuristic ─────────────────────────────────────
 
@@ -41,10 +47,10 @@ def optimize_unreachable_sources(ir: FirewallIR) -> int:
     for chain_name, chain in ir.chains.items():
         if chain.is_base_chain or chain_name.startswith("sw_"):
             continue
-        parts = chain_name.split("-", 1)
-        if len(parts) != 2:
+        pair = split_nft_zone_pair(chain_name)
+        if pair is None:
             continue
-        src_zone = parts[0]
+        src_zone = pair[0]
 
         for rule in chain.rules:
             for match in rule.matches:
@@ -69,10 +75,10 @@ def optimize_unreachable_sources(ir: FirewallIR) -> int:
     for chain_name, chain in list(ir.chains.items()):
         if chain.is_base_chain or chain_name.startswith("sw_"):
             continue
-        parts = chain_name.split("-", 1)
-        if len(parts) != 2:
+        pair = split_nft_zone_pair(chain_name)
+        if pair is None:
             continue
-        src_zone = parts[0]
+        src_zone = pair[0]
 
         if src_zone not in routefilter_zones:
             continue

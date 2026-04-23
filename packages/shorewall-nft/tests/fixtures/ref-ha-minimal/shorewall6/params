@@ -1,0 +1,4 @@
+# Addresses use RFC 3849 (IPv6) documentation range.
+LOG=info
+ADMIN6=2001:db8::10
+WEBSERVER6=2001:db8::20

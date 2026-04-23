@@ -1,0 +1,16 @@
+#ACTION		SOURCE		DEST		PROTO	DEST PORT
+?SECTION NEW
+
+# Allow SSH from admin host on net
+SSH(ACCEPT)	net:<$ADMIN6>	$FW
+
+# Allow DNS from local network
+DNS(ACCEPT)	loc		net
+
+# Allow HTTP/HTTPS inbound to local web server
+ACCEPT		net		loc:<$WEBSERVER6>	tcp	80,443
+
+# Allow ICMP ping
+Ping(ACCEPT)	net		$FW
+Ping(ACCEPT)	loc		$FW
+Ping(ACCEPT)	$FW		all

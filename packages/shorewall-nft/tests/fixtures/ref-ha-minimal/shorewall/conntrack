@@ -1,0 +1,6 @@
+?if __CT_TARGET
+CT:helper:ftp:PO	-	-	tcp	21
+CT:helper:snmp:PR	-	-	udp	161
+CT:helper:tftp:PR	-	-	udp	69
+CT:helper:pptp:PO	-	-	tcp	1723
+?endif

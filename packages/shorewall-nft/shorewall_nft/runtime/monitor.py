@@ -8,7 +8,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from shorewall_nft.nft.netlink import _in_netns
+from shorewall_nft.nft.netlink import in_netns
 
 
 def trace_start(netns: str | None = None) -> None:
@@ -17,13 +17,13 @@ def trace_start(netns: str | None = None) -> None:
     Runs ``nft monitor trace`` and streams output to stdout.
 
     When ``netns`` is given, the main process temporarily enters the target
-    network namespace via ``_in_netns()`` before spawning the ``nft`` child.
+    network namespace via ``in_netns()`` before spawning the ``nft`` child.
     The child inherits the netns file-descriptor and keeps running in it after
     the context manager restores the parent's original namespace.  This avoids
     a ``ip netns exec`` subprocess prefix.
     """
     try:
-        with _in_netns(netns):
+        with in_netns(netns):
             proc = subprocess.Popen(  # noqa: S603
                 ["nft", "monitor", "trace"],
                 stdout=sys.stdout,

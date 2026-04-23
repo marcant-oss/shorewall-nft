@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from shorewall_nft.compiler.ir import is_ipv6_spec
 from shorewall_nft.config.parser import ConfigLine
 
 
@@ -66,10 +67,6 @@ def parse_proxyarp(lines: list[ConfigLine]) -> list[ProxyArpEntry]:
             haveroute=haveroute, persistent=persistent,
         ))
     return out
-
-
-def _is_v6(addr: str) -> bool:
-    return ":" in addr.split("/", 1)[0]
 
 
 def generate_proxyarp_sysctl(proxyarp_lines: list[ConfigLine]) -> list[str]:
@@ -179,7 +176,7 @@ def apply_proxyarp(
     #    file.
     sysctl_targets: set[tuple[int, str]] = set()
     for e in entries:
-        fam = 6 if _is_v6(e.address) else 4
+        fam = 6 if is_ipv6_spec(e.address) else 4
         sysctl_targets.add((fam, e.ext_iface))
         sysctl_targets.add((fam, e.iface))
     for fam, iface in sorted(sysctl_targets):
@@ -214,7 +211,7 @@ def apply_proxyarp(
             return links[0]
 
         for e in entries:
-            fam_v6 = _is_v6(e.address)
+            fam_v6 = is_ipv6_spec(e.address)
             family_const = 10 if fam_v6 else 2  # AF_INET6/AF_INET
             ext_idx = _idx(e.ext_iface)
             if ext_idx is None:
@@ -295,7 +292,7 @@ def remove_proxyarp(
         for e in entries:
             if e.persistent:
                 continue
-            fam_v6 = _is_v6(e.address)
+            fam_v6 = is_ipv6_spec(e.address)
             family_const = 10 if fam_v6 else 2
             try:
                 links = ipr.link_lookup(ifname=e.ext_iface)
@@ -366,7 +363,7 @@ def emit_proxyarp_script(
     prefix_len = "128" if fam_v6 else "32"
     label = "proxyndp" if fam_v6 else "proxyarp"
 
-    selected = [e for e in entries if _is_v6(e.address) == fam_v6]
+    selected = [e for e in entries if is_ipv6_spec(e.address) == fam_v6]
     if not selected:
         return ""
 

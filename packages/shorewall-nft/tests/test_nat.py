@@ -11,7 +11,36 @@ from shorewall_nft.config.parser import load_config
 from shorewall_nft.nft.emitter import emit_nft
 
 NAT_DIR = Path(__file__).parent / "configs" / "nat"
-PROD_DIR = Path(os.environ.get("SHOREWALL_NFT_PROD_DIR", "/etc/shorewall"))
+_FIXTURE_DEFAULT = Path(__file__).parent / "fixtures" / "ref-ha-minimal" / "shorewall"
+
+
+def _resolve_prod_dir() -> Path:
+    env = os.environ.get("SHOREWALL_NFT_PROD_DIR")
+    if env and Path(env).is_dir():
+        return Path(env)
+    if _FIXTURE_DEFAULT.is_dir():
+        return _FIXTURE_DEFAULT
+    pytest.skip("neither SHOREWALL_NFT_PROD_DIR nor bundled fixture available")
+
+
+PROD_DIR = None  # kept for reference; tests call _resolve_prod_dir() directly
+
+
+def _is_real_prod_dir() -> bool:
+    """True when SHOREWALL_NFT_PROD_DIR points at a real prod config.
+
+    Used to gate scale-assertion tests (zone/rule/chain counts) that only
+    make sense against a full production config. The bundled minimal
+    fixture deliberately cannot satisfy production-scale numbers.
+    """
+    env = os.environ.get("SHOREWALL_NFT_PROD_DIR")
+    return bool(env and Path(env).is_dir())
+
+
+_prod_scale_only = pytest.mark.skipif(
+    not _is_real_prod_dir(),
+    reason="scale assertion needs SHOREWALL_NFT_PROD_DIR with a full prod config",
+)
 
 
 class TestNAT:
@@ -101,25 +130,23 @@ class TestConntrack:
 
 
 class TestProductionConfig:
-    """Test against the real production config."""
-
-    @pytest.fixture(autouse=True)
-    def skip_if_missing(self):
-        if not PROD_DIR.exists():
-            pytest.skip("Production config not available")
+    """Test against the real production config (or bundled fixture)."""
 
     def setup_method(self):
-        if PROD_DIR.exists():
-            config = load_config(PROD_DIR)
-            self.ir = build_ir(config)
-            self.output = emit_nft(self.ir)
+        prod_dir = _resolve_prod_dir()
+        config = load_config(prod_dir)
+        self.ir = build_ir(config)
+        self.output = emit_nft(self.ir)
 
+    @_prod_scale_only
     def test_zones(self):
         assert len(self.ir.zones.zones) >= 16
 
+    @_prod_scale_only
     def test_chain_count(self):
         assert len(self.ir.chains) > 250
 
+    @_prod_scale_only
     def test_rule_count(self):
         total = sum(len(c.rules) for c in self.ir.chains.values())
         assert total > 5000
@@ -137,6 +164,7 @@ class TestProductionConfig:
         chain = self.ir.chains["ct-helpers"]
         assert len(chain.rules) >= 4  # ftp, snmp, tftp, pptp
 
+    @_prod_scale_only
     def test_output_line_count(self):
         lines = self.output.split("\n")
         assert len(lines) > 9000

@@ -96,7 +96,7 @@ def _invoke_subprocess(
 
 
 @contextlib.contextmanager
-def _in_netns(name: str | None):
+def in_netns(name: str | None):
     """Context manager that enters a named network namespace.
 
     Saves the current net namespace fd, opens ``/run/netns/<name>``,
@@ -427,7 +427,7 @@ class NftInterface:
                      **kwargs) -> "subprocess.CompletedProcess[str]":
         """Run a subprocess, entering *netns* via in-process setns() if provided.
 
-        Primary path: uses ``_in_netns()`` context manager so the forked
+        Primary path: uses ``in_netns()`` context manager so the forked
         subprocess child inherits the target namespace without a privilege
         round-trip.  EPERM fallback: uses ``run_in_netns_fork`` with
         ``_invoke_subprocess`` — a child that enters the namespace first and
@@ -438,7 +438,7 @@ class NftInterface:
         """
         if netns:
             try:
-                with _in_netns(netns):
+                with in_netns(netns):
                     return subprocess.run(args, **kwargs)  # noqa: S603
             except OSError:
                 # EPERM: cannot setns in the parent — fork a child that enters

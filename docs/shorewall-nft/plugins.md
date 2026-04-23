@@ -174,15 +174,56 @@ shorewall-nft enrich /etc/shorewall
 shorewall-nft plugins list
 ```
 
-## Writing custom plugins
+## Third-party plugins
 
-*(Planned: full developer guide in a future release.)*
+shorewall-nft discovers external plugins via Python's
+`importlib.metadata` entry-point mechanism. Any installable Python
+package can ship a plugin without modifying the shorewall-nft core.
+
+### Registering an entry-point
+
+In the third-party package's `pyproject.toml`, add a
+`[project.entry-points]` table using the group name
+`shorewall_nft.plugins`:
+
+```toml
+[project.entry-points."shorewall_nft.plugins"]
+my-plugin = "my_package.my_module:MyPluginClass"
+```
+
+The key on the left (`my-plugin`) is the name users put in
+`plugins.conf` to activate the plugin:
+
+```toml
+# /etc/shorewall/plugins.conf
+[[plugins]]
+name = "my-plugin"
+enabled = true
+```
+
+After installing the third-party package (`pip install my-package`),
+shorewall-nft will find and load `MyPluginClass` automatically.
+
+### Load order
+
+The loader checks built-in plugins first, then entry-points. A
+third-party plugin whose name collides with a built-in (`ip-info`,
+`netbox`) will never be reached. Pick a unique name.
+
+### Error handling
+
+If the entry-point exists but its `load()` call raises an exception
+(e.g. missing dependency), shorewall-nft raises
+`shorewall_nft.plugins.PluginLoadError` with a message that names the
+failing entry-point. The error is not swallowed silently.
+
+## Writing custom plugins
 
 A plugin is a Python class inheriting from
 `shorewall_nft.plugins.base.Plugin`. Override the hook methods you
-implement, set `name`, `version`, and `priority` class attributes, and
-add your module to the built-in registry in
-`shorewall_nft.plugins.manager._BUILTIN_PLUGINS`.
+implement and set `name`, `version`, and `priority` class attributes.
+Ship the class in your own Python package and register it via the
+entry-point mechanism described above.
 
 Hook methods:
 

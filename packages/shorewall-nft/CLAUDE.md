@@ -47,8 +47,6 @@ Release mechanics (version bump sync, tag, CHANGELOG) live in the root
 
 Deeper open items (not release-blockers):
 
-- host-r compiler bug: chain name `linux,vpn-voice` from zone list
-  with a comma. Surfaces on the host-r corpus config.
 - Debug-mode edge cases: fresh netns with no loaded ruleset during
   `debug` save → restore; SIGINT during `apply_nft`; unrelated tables
   (docker, fail2ban) in the save file.
@@ -61,13 +59,6 @@ Source of truth: `docs/reference/dependencies.md`. Tests run as root via
 
 ## Open items (compiler/emitter)
 
-- **routefilter / rp_filter parity** — compiler does nothing with the
-  `routefilter` interface option. Shorewall maps it to
-  `net.ipv4.conf.<iface>.rp_filter` (0=off, 1=strict, 2=loose) plus
-  interplay with `net.ipv4.conf.all.rp_filter` (kernel uses max).
-  Implement: (1) compiler reads option, emits sysctl line via
-  `runtime/sysctl_gen.py`; (2) shorewall.conf `ROUTE_FILTER` global
-  as default for unset interfaces.
 - **3-firewall config-merge replay** — re-emit merged `/etc/shorewall46`
   with consistent column widths, zone-pair grouping, catch-all DROP at
   bottom, per-rule `?COMMENT` provenance markers. Requires `@host`

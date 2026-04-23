@@ -16,6 +16,6 @@ from shorewall_nft.plugins.base import (
     ParamEnrichResult,
     Plugin,
 )
-from shorewall_nft.plugins.manager import PluginManager
+from shorewall_nft.plugins.manager import PluginLoadError, PluginManager
 
-__all__ = ["Plugin", "EnrichResult", "ParamEnrichResult", "PluginManager"]
+__all__ = ["Plugin", "EnrichResult", "ParamEnrichResult", "PluginManager", "PluginLoadError"]

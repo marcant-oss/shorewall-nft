@@ -5,6 +5,18 @@ Docker container traffic and preserve Docker-created chains.
 
 In nft, Docker integration is simpler than iptables because
 nft uses a separate table — Docker's own nft rules don't conflict.
+
+Inputs: a ``FirewallIR`` with pre-existing ``forward`` and ``postrouting``
+chains, and the ``settings`` dict (keys: ``DOCKER``, ``DOCKER_BRIDGE``).
+
+Outputs: ``Rule`` entries with ``Verdict.ACCEPT`` appended to the
+``forward`` chain (established/related, inter-container, and outbound
+matches on the bridge interface), and a masquerade rule
+(``verdict_args="masquerade:"``) appended to the ``postrouting`` chain.
+No new chains are created; rules are skipped silently if the expected
+chains are absent.
+
+Entry point: ``setup_docker(ir, settings)``.
 """
 
 from __future__ import annotations

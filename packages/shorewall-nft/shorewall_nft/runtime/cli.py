@@ -926,7 +926,7 @@ def start(directory, netns, shorewalld_socket, instance_name,
     nft_iface = None
     with prog.step("Probing kernel capabilities") as s:
         try:
-            from shorewall_nft.compiler.capability_check import check_capabilities, format_errors
+            from shorewall_nft.nft.capability_check import check_capabilities, format_errors
             from shorewall_nft.nft.capabilities import NftCapabilities
             from shorewall_nft.nft.netlink import NftInterface
             nft_iface = NftInterface()
@@ -1443,7 +1443,7 @@ def check(directory, skip_caps, config_dir, config_dir_v4, config_dir_v6,
         click.echo(f"Configuration compiled ({len(ir.chains)} chains).")
 
         if not skip_caps:
-            from shorewall_nft.compiler.capability_check import check_capabilities, format_errors
+            from shorewall_nft.nft.capability_check import check_capabilities, format_errors
             from shorewall_nft.nft.capabilities import NftCapabilities
 
             click.echo("Checking kernel capabilities...")
@@ -2346,7 +2346,7 @@ def generate_sysctl(directory, config_dir, config_dir_v4, config_dir_v6,
                     no_auto_v4, no_auto_v6):
     """Generate sysctl configuration script."""
     from shorewall_nft.config.parser import load_config
-    from shorewall_nft.runtime.sysctl import generate_sysctl_script
+    from shorewall_nft.compiler.sysctl import generate_sysctl_script
 
     primary, secondary, skip = _resolve_config_paths(
         directory, config_dir, config_dir_v4, config_dir_v6,

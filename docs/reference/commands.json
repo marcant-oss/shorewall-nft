@@ -648,11 +648,11 @@
       "params": [
         {
           "kind": "option",
-          "name": "netns",
+          "name": "with_netns",
           "flags": [
-            "--netns"
+            "--with-netns"
           ],
-          "help": "Generate template for network namespaces.",
+          "help": "Generate a templated unit (shorewall-nft@.service) for per-netns deployments instead of the single-instance unit.",
           "is_flag": true,
           "default": false
         },
@@ -663,7 +663,7 @@
             "-o",
             "--output-dir"
           ],
-          "help": "",
+          "help": "Write the generated unit file(s) to this directory instead of stdout.",
           "is_flag": false,
           "default": null
         }
@@ -987,7 +987,7 @@
             "-o",
             "--output"
           ],
-          "help": "",
+          "help": "Write the compiled nft script to FILE. Without this flag the script is written to a temporary file and deleted after the check completes.",
           "is_flag": false,
           "default": null
         },
@@ -997,7 +997,7 @@
           "flags": [
             "--dry-run"
           ],
-          "help": "Validate with nft -c.",
+          "help": "Compile and run nft -c syntax check only; do not load rules into the kernel.",
           "is_flag": true,
           "default": false
         },
@@ -1057,11 +1057,12 @@
     {
       "name": "plugins",
       "path": "cli plugins",
-      "help": "Manage shorewall-nft plugins.",
+      "help": "List shorewall-nft plugins. The only valid subcommand value is 'list' (default when omitted).",
       "params": [
         {
           "kind": "argument",
           "name": "subcommand",
+          "choices": ["list"],
           "required": false
         },
         {
@@ -1071,7 +1072,7 @@
             "--config-dir",
             "-c"
           ],
-          "help": "",
+          "help": "Config directory containing plugins.conf.",
           "is_flag": false,
           "default": null
         }
@@ -1369,7 +1370,17 @@
           "flags": [
             "--iptables"
           ],
-          "help": "iptables-save dump (ground truth).",
+          "help": "iptables-save dump (ground truth). Required.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "ip6tables_dump",
+          "flags": [
+            "--ip6tables"
+          ],
+          "help": "ip6tables-save dump for IPv6 tests.",
           "is_flag": false,
           "default": null
         },
@@ -1379,9 +1390,59 @@
           "flags": [
             "--target"
           ],
-          "help": "Target IP for tests.",
+          "help": "Single target IP for tests.",
           "is_flag": false,
           "default": "203.0.113.5"
+        },
+        {
+          "kind": "option",
+          "name": "targets",
+          "flags": [
+            "--targets"
+          ],
+          "help": "Comma-separated list of target IPs, or @FILE with one IP per line. Bypasses --target; all targets share a single netns topology.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "targets_v6",
+          "flags": [
+            "--targets-v6"
+          ],
+          "help": "Comma-separated list or @FILE of IPv6 target addresses. Requires --ip6tables.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "src_iface",
+          "flags": [
+            "--src-iface"
+          ],
+          "help": "Override the source-zone interface name in the firewall netns (default: bond1).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "dst_iface",
+          "flags": [
+            "--dst-iface"
+          ],
+          "help": "Override the destination-zone interface name in the firewall netns (default: bond0.20).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "all_zones",
+          "flags": [
+            "--all-zones"
+          ],
+          "help": "Multi-zone topology: create one veth pair per zone and derive test cases across every src->dst chain in the iptables dump.",
+          "is_flag": true,
+          "default": false
         },
         {
           "kind": "option",
@@ -1390,7 +1451,7 @@
             "--max-tests",
             "-n"
           ],
-          "help": "Max test cases.",
+          "help": "Max test cases per target.",
           "is_flag": false,
           "default": 60
         },
@@ -1406,10 +1467,10 @@
         },
         {
           "kind": "option",
-          "name": "sim_verbose",
+          "name": "verbose",
           "flags": [
-            "-V",
-            "--sim-verbose"
+            "-v",
+            "--verbose"
           ],
           "help": "Show all test results.",
           "is_flag": true,
@@ -1685,9 +1746,394 @@
           "default": false
         }
       ]
+    },
+    {
+      "name": "apply-tc",
+      "path": "cli apply-tc",
+      "help": "Apply TC (traffic control) config via pyroute2. Reads tcdevices/tcclasses/tcfilters and configures kernel qdiscs, classes, and fwmark filters directly via netlink. No tc(8) binary required. Idempotent: existing qdiscs are deleted then re-added.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "netns",
+          "flags": [
+            "--netns"
+          ],
+          "help": "Apply inside this named network namespace (pyroute2 IPRoute(netns=NAME) — no ip-netns-exec fork).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "dry_run",
+          "flags": [
+            "--dry-run"
+          ],
+          "help": "Parse and validate the TC config then print the planned operations as a bulleted list. Nothing is applied to the kernel.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "generate-conntrackd",
+      "path": "cli generate-conntrackd",
+      "help": "Generate a conntrackd.conf fragment for an HA firewall pair. Honours CT_ZONE_TAG_MASK to build a Mark filter that replicates only zone bits across the sync link.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "sync_iface",
+          "flags": [
+            "--sync-iface"
+          ],
+          "help": "Interface used for the conntrackd sync link. Defaults to CONNTRACKD_IFACE from shorewall.conf.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "peer_ip",
+          "flags": [
+            "--peer-ip"
+          ],
+          "help": "IPv4 address of the peer HA node on the sync link.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "local_ip",
+          "flags": [
+            "--local-ip"
+          ],
+          "help": "IPv4 address of this node on the sync link.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "cluster_ip",
+          "flags": [
+            "--cluster-ip"
+          ],
+          "help": "Shared virtual IP that HA failover moves between nodes.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir4",
+          "flags": [
+            "--config-dir4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config6_dir",
+          "flags": [
+            "--config6-dir"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
+      "name": "config",
+      "path": "cli config",
+      "help": "Structured config I/O (export / import / template / merge).",
+      "params": [],
+      "subcommands": [
+        {
+          "name": "export",
+          "path": "cli config export",
+          "help": "Dump a Shorewall config directory as a structured JSON or YAML blob.",
+          "params": [
+            {
+              "kind": "argument",
+              "name": "directory",
+              "required": false
+            },
+            {
+              "kind": "option",
+              "name": "fmt",
+              "flags": [
+                "--format"
+              ],
+              "help": "Output format: json (default) or yaml (requires PyYAML).",
+              "is_flag": false,
+              "default": "json"
+            },
+            {
+              "kind": "option",
+              "name": "output",
+              "flags": [
+                "-o",
+                "--output"
+              ],
+              "help": "Write to FILE instead of stdout. Extension auto-selects yaml format when --format is not given.",
+              "is_flag": false,
+              "default": null
+            },
+            {
+              "kind": "option",
+              "name": "include_trace",
+              "flags": [
+                "--include-trace"
+              ],
+              "help": "Keep _file / _lineno / _comment diagnostic fields in the output.",
+              "is_flag": true,
+              "default": false
+            },
+            {
+              "kind": "option",
+              "name": "indent",
+              "flags": [
+                "--indent"
+              ],
+              "help": "JSON indent level (ignored for YAML; default: 2).",
+              "is_flag": false,
+              "default": 2
+            }
+          ]
+        },
+        {
+          "name": "import",
+          "path": "cli config import",
+          "help": "Validate a structured JSON/YAML config blob and optionally write it back as on-disk Shorewall files.",
+          "params": [
+            {
+              "kind": "argument",
+              "name": "source",
+              "required": true
+            },
+            {
+              "kind": "option",
+              "name": "fmt",
+              "flags": [
+                "--format"
+              ],
+              "help": "Input format: json, yaml, or auto (selects by file extension; default).",
+              "is_flag": false,
+              "default": "auto"
+            },
+            {
+              "kind": "option",
+              "name": "target",
+              "flags": [
+                "--to"
+              ],
+              "help": "Target directory. When given, the parsed blob is written back as on-disk Shorewall files.",
+              "is_flag": false,
+              "default": null
+            },
+            {
+              "kind": "option",
+              "name": "force",
+              "flags": [
+                "--force"
+              ],
+              "help": "Overwrite --to target even if it is not empty.",
+              "is_flag": true,
+              "default": false
+            },
+            {
+              "kind": "option",
+              "name": "dry_run",
+              "flags": [
+                "--dry-run"
+              ],
+              "help": "Parse and validate only; print a summary. Implied when --to is absent.",
+              "is_flag": true,
+              "default": false
+            }
+          ]
+        },
+        {
+          "name": "template",
+          "path": "cli config template",
+          "help": "Expand a multi-host text template against a target host name.",
+          "params": [
+            {
+              "kind": "argument",
+              "name": "source",
+              "required": true
+            },
+            {
+              "kind": "option",
+              "name": "host_name",
+              "flags": [
+                "--host"
+              ],
+              "help": "Target host name. Required.",
+              "is_flag": false,
+              "default": null
+            },
+            {
+              "kind": "option",
+              "name": "output",
+              "flags": [
+                "-o",
+                "--output"
+              ],
+              "help": "Write to FILE instead of stdout.",
+              "is_flag": false,
+              "default": null
+            }
+          ]
+        },
+        {
+          "name": "merge",
+          "path": "cli config merge",
+          "help": "Merge one or more Shorewall config directories into a unified pretty-printed output directory.",
+          "params": [
+            {
+              "kind": "argument",
+              "name": "sources",
+              "required": true,
+              "nargs": -1
+            },
+            {
+              "kind": "option",
+              "name": "target",
+              "flags": [
+                "--to"
+              ],
+              "help": "Target directory for the merged output. Required.",
+              "is_flag": false,
+              "default": null
+            },
+            {
+              "kind": "option",
+              "name": "force",
+              "flags": [
+                "--force"
+              ],
+              "help": "Overwrite --to even if it exists and is non-empty.",
+              "is_flag": true,
+              "default": false
+            },
+            {
+              "kind": "option",
+              "name": "provenance",
+              "flags": [
+                "--provenance"
+              ],
+              "help": "Interleave # from <file>:<lineno> comments before each rule.",
+              "is_flag": true,
+              "default": false
+            },
+            {
+              "kind": "option",
+              "name": "config_dir_v6",
+              "flags": [
+                "--config-dir-v6"
+              ],
+              "help": "Optional v6 sibling for the first source directory.",
+              "is_flag": false,
+              "default": null
+            }
+          ]
+        }
+      ]
     }
   ],
   "version": "1.2",
-  "shorewall_nft_version": "1.0.0",
+  "shorewall_nft_version": "1.10.0",
   "generator": "shorewall-nft CLI introspection"
 }

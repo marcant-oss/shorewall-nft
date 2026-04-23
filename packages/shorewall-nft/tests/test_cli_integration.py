@@ -20,18 +20,64 @@ import pytest
 
 MINIMAL_DIR = Path(__file__).parent / "configs" / "minimal"
 NAT_DIR = Path(__file__).parent / "configs" / "nat"
-# Production config paths (optional — tests gate on their existence).
-# Override via env var for local development:
-#   SHOREWALL_NFT_PROD_DIR=/srv/mytest/shorewall pytest ...
-PROD_DIR = Path(os.environ.get(
-    "SHOREWALL_NFT_PROD_DIR",
-    "/etc/shorewall"))
-PROD6_DIR = Path(os.environ.get(
-    "SHOREWALL_NFT_PROD6_DIR",
-    "/etc/shorewall6"))
-IPT_DUMP = Path(os.environ.get(
-    "SHOREWALL_NFT_IPT_DUMP",
-    "/tmp/iptables-save.txt"))
+
+_FIXTURE_DEFAULT = Path(__file__).parent / "fixtures" / "ref-ha-minimal"
+_FIXTURE_SHOREWALL = _FIXTURE_DEFAULT / "shorewall"
+_FIXTURE_SHOREWALL6 = _FIXTURE_DEFAULT / "shorewall6"
+_FIXTURE_IPT = _FIXTURE_DEFAULT / "iptables.txt"
+
+
+def _resolve_prod_dir() -> Path:
+    """Return the shorewall config dir: env override or bundled fixture."""
+    env = os.environ.get("SHOREWALL_NFT_PROD_DIR")
+    if env and Path(env).is_dir():
+        return Path(env)
+    if _FIXTURE_SHOREWALL.is_dir():
+        return _FIXTURE_SHOREWALL
+    pytest.skip("neither SHOREWALL_NFT_PROD_DIR nor bundled fixture available")
+
+
+def _is_real_prod_dir() -> bool:
+    """True when SHOREWALL_NFT_PROD_DIR points at a real prod config.
+
+    Used to gate tests that assert on prod-specific structures the
+    bundled minimal fixture cannot provide (mandant comment blocks,
+    param-name collisions across shorewall/shorewall6).
+    """
+    env = os.environ.get("SHOREWALL_NFT_PROD_DIR")
+    return bool(env and Path(env).is_dir())
+
+
+_needs_real_prod = pytest.mark.skipif(
+    not _is_real_prod_dir(),
+    reason="test asserts on prod-specific merge artefacts not in minimal fixture",
+)
+
+
+def _resolve_prod6_dir() -> Path:
+    """Return the shorewall6 config dir: env override or bundled fixture."""
+    env = os.environ.get("SHOREWALL_NFT_PROD6_DIR")
+    if env and Path(env).is_dir():
+        return Path(env)
+    if _FIXTURE_SHOREWALL6.is_dir():
+        return _FIXTURE_SHOREWALL6
+    pytest.skip("neither SHOREWALL_NFT_PROD6_DIR nor bundled fixture available")
+
+
+def _resolve_ipt_dump() -> Path:
+    """Return the iptables dump path: env override or bundled fixture."""
+    env = os.environ.get("SHOREWALL_NFT_IPT_DUMP")
+    if env and Path(env).is_file():
+        return Path(env)
+    if _FIXTURE_IPT.is_file():
+        return _FIXTURE_IPT
+    pytest.skip("neither SHOREWALL_NFT_IPT_DUMP nor bundled fixture iptables.txt available")
+
+
+# Legacy module-level names kept for compatibility with any direct references.
+PROD_DIR = _FIXTURE_SHOREWALL
+PROD6_DIR = _FIXTURE_SHOREWALL6
+IPT_DUMP = _FIXTURE_IPT
 NS = "shorewall-next-sim-cli"
 IP_NETNS = ["ip", "netns"]
 
@@ -87,7 +133,16 @@ def _kill_ns_pids(ns: str) -> None:
 
 @pytest.fixture(scope="module")
 def swnft_cli_netns():
-    """Create the test namespace for the entire module, clean up after."""
+    """Create the test namespace for the entire module, clean up after.
+
+    Skipped when running without root: ``ip netns add`` requires
+    CAP_NET_ADMIN, so non-root dev boxes cannot create the namespace.
+    Tests that depend on this fixture skip rather than fail with the
+    misleading 'No such file or directory' error from later
+    ``ip netns exec`` calls.
+    """
+    if os.geteuid() != 0:
+        pytest.skip("netns-based CLI tests require root (CAP_NET_ADMIN)")
     # Create
     _run([*IP_NETNS, "add", NS])
     yield NS
@@ -306,18 +361,17 @@ class TestGenerators:
 # ──────────────────────────────────────────────────────────────────────
 
 class TestVerifyMigrate:
-    @pytest.fixture(autouse=True)
-    def skip_if_no_prod(self):
-        if not PROD_DIR.exists() or not IPT_DUMP.exists():
-            pytest.skip("Production config not available")
-
     def test_verify(self):
-        r = _cli("verify", str(PROD_DIR), "--iptables", str(IPT_DUMP), timeout=120)
+        prod = _resolve_prod_dir()
+        ipt = _resolve_ipt_dump()
+        r = _cli("verify", str(prod), "--iptables", str(ipt), timeout=120)
         assert r.returncode in (0, 1)
         assert "100.0%" in r.stdout or "coverage" in r.stdout.lower()
 
     def test_migrate(self):
-        r = _cli("migrate", str(PROD_DIR), "--iptables", str(IPT_DUMP), timeout=120)
+        prod = _resolve_prod_dir()
+        ipt = _resolve_ipt_dump()
+        r = _cli("migrate", str(prod), "--iptables", str(ipt), timeout=120)
         assert r.returncode == 0
         assert "Migration" in r.stdout or "Compil" in r.stdout
 
@@ -515,13 +569,10 @@ class TestDebug:
 
 
 class TestMerge:
-    @pytest.fixture(autouse=True)
-    def skip_if_no_prod(self):
-        if not PROD_DIR.exists() or not PROD6_DIR.exists():
-            pytest.skip("Production config not available")
-
     def test_merge_config(self, tmp_merged):
-        r = _cli("merge-config", str(PROD_DIR), str(PROD6_DIR),
+        prod = _resolve_prod_dir()
+        prod6 = _resolve_prod6_dir()
+        r = _cli("merge-config", str(prod), str(prod6),
                  "-o", str(tmp_merged))
         assert r.returncode == 0
         assert (tmp_merged / "rules").exists()
@@ -546,7 +597,9 @@ class TestMerge:
 
     def test_merge_zones_no_duplicates(self, tmp_merged):
         """Identical v6 zones are dropped entirely, not commented out."""
-        r = _cli("merge-config", str(PROD_DIR), str(PROD6_DIR),
+        prod = _resolve_prod_dir()
+        prod6 = _resolve_prod6_dir()
+        r = _cli("merge-config", str(prod), str(prod6),
                  "-o", str(tmp_merged))
         assert r.returncode == 0
         zones_text = (tmp_merged / "zones").read_text()
@@ -561,7 +614,9 @@ class TestMerge:
 
     def test_merge_policies_no_duplicates(self, tmp_merged):
         """Identical v6 policies (same src/dest) are dropped entirely."""
-        r = _cli("merge-config", str(PROD_DIR), str(PROD6_DIR),
+        prod = _resolve_prod_dir()
+        prod6 = _resolve_prod6_dir()
+        r = _cli("merge-config", str(prod), str(prod6),
                  "-o", str(tmp_merged))
         assert r.returncode == 0
         policy_text = (tmp_merged / "policy").read_text()
@@ -576,9 +631,12 @@ class TestMerge:
         # No duplicates
         assert len(pairs) == len(set(pairs)), f"Duplicate policies: {pairs}"
 
+    @_needs_real_prod
     def test_merge_comment_blocks_combined(self, tmp_merged):
         """Same ?COMMENT tags from v4 and v6 are merged into one block."""
-        r = _cli("merge-config", str(PROD_DIR), str(PROD6_DIR),
+        prod = _resolve_prod_dir()
+        prod6 = _resolve_prod6_dir()
+        r = _cli("merge-config", str(prod), str(prod6),
                  "-o", str(tmp_merged))
         assert r.returncode == 0
         rules_text = (tmp_merged / "rules").read_text()
@@ -603,11 +661,14 @@ class TestMerge:
         assert has_v4, "mandant-b block missing IPv4 rules"
         assert has_v6, "mandant-b block missing IPv6 rules"
 
+    @_needs_real_prod
     def test_merge_with_plugins(self, tmp_path):
         """merge-config with ip-info plugin detects param pairs."""
         import shutil
+        prod = _resolve_prod_dir()
+        prod6 = _resolve_prod6_dir()
         v4 = tmp_path / "shorewall"
-        shutil.copytree(PROD_DIR, v4)
+        shutil.copytree(prod, v4)
         (v4 / "plugins").mkdir(exist_ok=True)
         (v4 / "plugins.conf").write_text('[[plugins]]\nname = "ip-info"\nenabled = true\n')
         (v4 / "plugins" / "ip-info.toml").write_text("""
@@ -624,7 +685,7 @@ v4_subnet = "203.0.113.0/24"
 v6_prefix = "2001:db8:0:3002::/64"
 """)
         out = tmp_path / "merged"
-        r = _cli("merge-config", str(v4), str(PROD6_DIR), "-o", str(out))
+        r = _cli("merge-config", str(v4), str(prod6), "-o", str(out))
         assert r.returncode == 0
         assert "Plugins enabled: ip-info" in r.stdout
         assert "param pairs detected" in r.stdout
@@ -635,8 +696,10 @@ v6_prefix = "2001:db8:0:3002::/64"
     def test_merge_no_plugins_flag(self, tmp_path):
         """--no-plugins disables plugin enrichment."""
         import shutil
+        prod = _resolve_prod_dir()
+        prod6 = _resolve_prod6_dir()
         v4 = tmp_path / "shorewall"
-        shutil.copytree(PROD_DIR, v4)
+        shutil.copytree(prod, v4)
         (v4 / "plugins").mkdir(exist_ok=True)
         (v4 / "plugins.conf").write_text('[[plugins]]\nname = "ip-info"\nenabled = true\n')
         (v4 / "plugins" / "ip-info.toml").write_text("""
@@ -645,14 +708,17 @@ v4_subnet = "203.0.113.0/24"
 v6_prefix = "2001:db8:0:100::/64"
 """)
         out = tmp_path / "merged"
-        r = _cli("merge-config", str(v4), str(PROD6_DIR), "-o", str(out),
+        r = _cli("merge-config", str(v4), str(prod6), "-o", str(out),
                  "--no-plugins")
         assert r.returncode == 0
         assert "Plugins enabled" not in r.stdout
 
+    @_needs_real_prod
     def test_merge_params_collisions(self, tmp_merged):
         """Colliding params get _V6 suffix, identical ones are dropped."""
-        r = _cli("merge-config", str(PROD_DIR), str(PROD6_DIR),
+        prod = _resolve_prod_dir()
+        prod6 = _resolve_prod6_dir()
+        r = _cli("merge-config", str(prod), str(prod6),
                  "-o", str(tmp_merged))
         assert r.returncode == 0
         params_text = (tmp_merged / "params").read_text()

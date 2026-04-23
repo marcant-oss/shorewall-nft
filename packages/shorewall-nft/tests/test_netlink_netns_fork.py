@@ -164,7 +164,7 @@ class TestRunInNetnsEpermFallback:
         def _raise_eperm(*args, **kwargs):
             raise OSError(1, "Operation not permitted")
 
-        with patch("shorewall_nft.nft.netlink._in_netns") as mock_ctx:
+        with patch("shorewall_nft.nft.netlink.in_netns") as mock_ctx:
             mock_ctx.return_value.__enter__ = _raise_eperm
             mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
             with patch(
@@ -186,7 +186,7 @@ class TestRunInNetnsEpermFallback:
                     return False
             return _CM()
 
-        with patch("shorewall_nft.nft.netlink._in_netns", side_effect=_raise):
+        with patch("shorewall_nft.nft.netlink.in_netns", side_effect=_raise):
             with patch(
                 "shorewall_nft.nft.netlink.run_in_netns_fork",
                 side_effect=_mock_fork_subprocess,

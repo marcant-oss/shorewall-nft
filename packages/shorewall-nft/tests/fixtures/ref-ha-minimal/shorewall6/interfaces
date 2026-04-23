@@ -1,0 +1,3 @@
+#ZONE	INTERFACE	OPTIONS
+net	eth0		tcpflags
+loc	eth1		tcpflags
