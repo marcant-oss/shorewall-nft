@@ -1,10 +1,10 @@
 #!/usr/bin/make -f
-# debian/rules for shorewall-nft — monorepo, three sub-packages.
+# debian/rules for shorewall-nft — two sub-packages (core + shorewalld).
 #
 # Primary wheel (shorewall-nft core) is built by pybuild from
-# packages/shorewall-nft/.  The shorewalld and shorewall-nft-simlab
-# wheels are installed afterwards via pip --no-deps so they land in
-# the same binary package without a separate pybuild invocation.
+# packages/shorewall-nft/.  The shorewalld wheel is installed afterwards
+# via pip --no-deps so it lands in the same binary package without a
+# separate pybuild invocation.
 export PYBUILD_NAME = shorewall_nft
 export PYBUILD_SYSTEM = pyproject
 export PYBUILD_DIR = packages/shorewall-nft
@@ -20,8 +20,6 @@ override_dh_auto_install:
 	# instead, which honours the system sysconfig and writes to usr/bin/.
 	cd packages/shorewalld && python3 -m build --wheel --no-isolation --outdir /tmp/shorewalld-wheel
 	python3 -m installer --destdir=debian/shorewall-nft --prefix=/usr /tmp/shorewalld-wheel/*.whl
-	cd packages/shorewall-nft-simlab && python3 -m build --wheel --no-isolation --outdir /tmp/simlab-wheel
-	python3 -m installer --destdir=debian/shorewall-nft --prefix=/usr /tmp/simlab-wheel/*.whl
 	# Debian's patched Python sysconfig redirects entry-point scripts to
 	# usr/local/bin/ even when --prefix=/usr is set.  Move them to usr/bin/
 	# before dh_usrlocal runs (it cannot handle plain files under usr/local/).
@@ -47,10 +45,6 @@ override_dh_auto_install:
 	    debian/shorewall-nft/usr/share/man/man8/shorewalld.8
 	install -D -m 0644 tools/man/shorewall-nft-migrate.8 \
 	    debian/shorewall-nft/usr/share/man/man8/shorewall-nft-migrate.8
-	install -D -m 0644 tools/man/shorewall-nft-simlab.8 \
-	    debian/shorewall-nft/usr/share/man/man8/shorewall-nft-simlab.8
-	install -D -m 0644 tools/man/shorewall-nft-stagelab.8 \
-	    debian/shorewall-nft/usr/share/man/man8/shorewall-nft-stagelab.8
 	for page in \
 	    zones interfaces hosts policy rules nfsets masq netmap rawnat \
 	    conntrack notrack providers routes rtrules tunnels mangle \
