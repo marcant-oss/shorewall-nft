@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from shorewall_nft.compiler.verdicts import SpecialVerdict
 from shorewall_nft.config.parser import ConfigLine, ShorewalConfig
 from shorewall_nft.config.zones import ZoneModel, build_zone_model
 from shorewall_nft.nft.dns_sets import (
@@ -81,10 +82,11 @@ class Rule:
     """A single firewall rule."""
     matches: list[Match] = field(default_factory=list)
     verdict: Verdict = Verdict.ACCEPT
-    verdict_args: str | None = None  # e.g. chain name for JUMP, log prefix for LOG
+    verdict_args: SpecialVerdict | str | None = None  # typed verdict, chain name for JUMP/GOTO, or log prefix for LOG
     comment: str | None = None
     counter: bool = False
     log_prefix: str | None = None
+    log_level: str | None = None  # e.g. "info", "debug" — typed override for log_level: prefix
     rate_limit: str | None = None  # e.g. "30/minute burst 100"
     connlimit: str | None = None   # e.g. "s:1:2"
     time_match: str | None = None  # e.g. "utc&timestart=8:00&timestop=17:00"

@@ -11,6 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shorewall_nft.compiler.ir import FirewallIR, Rule
+from shorewall_nft.compiler.verdicts import (
+    CtHelperVerdict,
+    DnatVerdict,
+    MasqueradeVerdict,
+    NotrackVerdict,
+    SnatVerdict,
+)
 from shorewall_nft.nft.capabilities import NftCapabilities
 
 
@@ -64,7 +71,9 @@ def check_capabilities(ir: FirewallIR, caps: NftCapabilities) -> list[Capability
     if not caps.has_ct_helper_obj:
         for chain_name, chain in ir.chains.items():
             for rule in chain.rules:
-                if rule.verdict_args and "ct_helper:" in rule.verdict_args:
+                if isinstance(rule.verdict_args, CtHelperVerdict) or (
+                    isinstance(rule.verdict_args, str) and "ct_helper:" in rule.verdict_args
+                ):
                     errors.append(CapabilityError(
                         feature="ct_helper_obj",
                         description="CT helper objects not supported",
@@ -169,8 +178,11 @@ def _check_rule(rule: Rule, caps: NftCapabilities, chain_name: str) -> list[Capa
             suggestion="Load nft_limit module: modprobe nft_limit",
         ))
 
-    # Log
-    if rule.verdict_args and rule.verdict_args.startswith("log_level:") and not caps.has_log:
+    # Log — check both the new log_level field and the legacy string prefix.
+    _has_log_level = rule.log_level is not None or (
+        isinstance(rule.verdict_args, str) and rule.verdict_args.startswith("log_level:")
+    )
+    if _has_log_level and not caps.has_log:
         errors.append(CapabilityError(
             feature="log",
             description="Logging not available",
@@ -180,20 +192,33 @@ def _check_rule(rule: Rule, caps: NftCapabilities, chain_name: str) -> list[Capa
             suggestion="Load nft_log module: modprobe nft_log",
         ))
 
-    # NAT
-    if rule.verdict_args and any(rule.verdict_args.startswith(p) for p in ("snat:", "dnat:", "masquerade:", "redirect:")):
-        if not caps.has_nat:
-            errors.append(CapabilityError(
-                feature="nat",
-                description="NAT not available",
-                rule_file=rule.source_file,
-                rule_line=rule.source_line,
-                rule_context=f"{rule.verdict_args.split(':')[0]} in {ctx}",
-                suggestion="Load nft_nat and nft_masq modules",
-            ))
+    # NAT — check both typed variants and legacy string prefixes.
+    _nat_verdict_type: str | None = None
+    if isinstance(rule.verdict_args, SnatVerdict):
+        _nat_verdict_type = "snat"
+    elif isinstance(rule.verdict_args, DnatVerdict):
+        _nat_verdict_type = "dnat"
+    elif isinstance(rule.verdict_args, MasqueradeVerdict):
+        _nat_verdict_type = "masquerade"
+    elif isinstance(rule.verdict_args, str) and any(
+        rule.verdict_args.startswith(p) for p in ("snat:", "dnat:", "masquerade:", "redirect:")
+    ):
+        _nat_verdict_type = rule.verdict_args.split(":")[0]
+    if _nat_verdict_type is not None and not caps.has_nat:
+        errors.append(CapabilityError(
+            feature="nat",
+            description="NAT not available",
+            rule_file=rule.source_file,
+            rule_line=rule.source_line,
+            rule_context=f"{_nat_verdict_type} in {ctx}",
+            suggestion="Load nft_nat and nft_masq modules",
+        ))
 
-    # Notrack
-    if rule.verdict_args and rule.verdict_args.startswith("notrack:") and not caps.has_notrack:
+    # Notrack — check both typed NotrackVerdict and legacy "notrack:" prefix.
+    _is_notrack = isinstance(rule.verdict_args, NotrackVerdict) or (
+        isinstance(rule.verdict_args, str) and rule.verdict_args.startswith("notrack:")
+    )
+    if _is_notrack and not caps.has_notrack:
         errors.append(CapabilityError(
             feature="notrack",
             description="Notrack (raw table) not available",
