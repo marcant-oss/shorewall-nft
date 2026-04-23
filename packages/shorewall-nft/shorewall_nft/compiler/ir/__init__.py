@@ -69,14 +69,11 @@ from shorewall_nft.compiler.ir.spec_rewrite import (
 _log = logging.getLogger(__name__)
 
 from shorewall_nft.compiler.ir.rules import (
-    _ACTION_MACROS,
-    _BUILTIN_MACROS,
     _CUSTOM_MACROS,
     _MACRO_RE,
     _NATIVE_HANDLED_MACROS,
     _RFC1918_RANGES,
     _SLASH_MACRO_RE,
-    _add_interface_matches,
     _add_rule,
     _expand_macro,
     _expand_zone_list,

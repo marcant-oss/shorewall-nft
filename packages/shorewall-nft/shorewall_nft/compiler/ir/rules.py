@@ -7,13 +7,10 @@ from spec_rewrite), and finally ``_add_rule`` which produces the
 Rule+Match+Verdict triple and attaches it to the appropriate zone-pair
 chain.
 
-Also hosts the macro registries:
-- _CUSTOM_MACROS — primary registry, populated by _load_standard_macros
-  and _load_custom_macros
-- _BUILTIN_MACROS, _ACTION_MACROS — module-level dicts preserved for
-  historical reasons. _BUILTIN_MACROS is read but never written (see
-  TODO); _ACTION_MACROS is unreferenced. Both are kept to avoid
-  accidental behavioural changes during the ir.py split.
+Also hosts the macro registry _CUSTOM_MACROS — primary registry,
+populated by _load_standard_macros (from the bundled Shorewall
+macro files) and _load_custom_macros (from the user's config dir).
+User macros take precedence during load.
 """
 
 from __future__ import annotations
@@ -67,15 +64,6 @@ _MACRO_RE = re.compile(r'^([\w-]+)\((\w+)\)(?::(.+))?$')
 # Slash macro pattern: NAME/VERDICT e.g. Ping/ACCEPT, Rfc1918/DROP:$LOG
 # Name can contain hyphens (e.g. OrgAdmin/ACCEPT)
 _SLASH_MACRO_RE = re.compile(r'^([\w-]+)/(\w+)(?::(.+))?$')
-
-# Builtin macros are loaded dynamically from Shorewall/Macros/ at build time.
-# This dict is populated by _load_standard_macros().
-_BUILTIN_MACROS: dict[str, list[tuple[str, str]]] = {}
-
-# Shorewall actions loaded from Shorewall/Actions/
-# Actions are chains that implement complex multi-rule behaviors.
-# They are loaded dynamically like macros.
-_ACTION_MACROS: dict[str, str] = {}
 
 # RFC1918 private address ranges
 _RFC1918_RANGES = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
@@ -236,30 +224,6 @@ def _sentinel_to_addr(zone: str, addr: str | None) -> str | None:
     if addr is None and zone.startswith("+"):
         return zone
     return addr
-
-
-def _add_interface_matches(rule: Rule, src_zone: str, dst_zone: str,
-                           zones: ZoneModel) -> None:
-    """Add interface matches based on zone definitions."""
-    if src_zone in zones.zones and not zones.zones[src_zone].is_firewall:
-        ifaces = zones.zones[src_zone].interfaces
-        if len(ifaces) == 1:
-            rule.matches.insert(0, Match(field="iifname", value=ifaces[0].name))
-        elif len(ifaces) > 1:
-            names = ", ".join(f'"{i.name}"' for i in ifaces)
-            rule.matches.insert(0, Match(field="iifname", value=f"{{ {names} }}"))
-
-    if dst_zone in zones.zones and not zones.zones[dst_zone].is_firewall:
-        ifaces = zones.zones[dst_zone].interfaces
-        if len(ifaces) == 1:
-            rule.matches.insert(
-                1 if rule.matches else 0,
-                Match(field="oifname", value=ifaces[0].name))
-        elif len(ifaces) > 1:
-            names = ", ".join(f'"{i.name}"' for i in ifaces)
-            rule.matches.insert(
-                1 if rule.matches else 0,
-                Match(field="oifname", value=f"{{ {names} }}"))
 
 
 def _zone_pair_chain_name(src: str, dst: str, zones: ZoneModel) -> str:
@@ -687,17 +651,8 @@ def _expand_macro(ir: FirewallIR, zones: ZoneModel,
                       dest_spec, proto, dport, sport, line)
         return
 
-    # Check builtin macros first
-    expansions = _BUILTIN_MACROS.get(macro_name)
-    if expansions:
-        for exp_proto, exp_port in expansions:
-            actual_proto = proto or exp_proto
-            actual_dport = dport or exp_port
-            _add_rule(ir, zones, verdict, log_prefix,
-                      source_spec, dest_spec, actual_proto, actual_dport, sport, line)
-        return
-
-    # Check custom macros
+    # Check custom macros (populated from both bundled Shorewall macro
+    # files and user-supplied macros; user overrides take precedence).
     custom = _CUSTOM_MACROS.get(macro_name)
     if custom:
         # Detect if calling context is IPv6:
