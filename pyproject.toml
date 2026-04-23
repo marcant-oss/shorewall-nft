@@ -1,19 +1,16 @@
-# Monorepo root — not a real installable package.
-# Each sub-package lives under packages/ and has its own pyproject.toml.
+# Repo root — not a real installable package.
+# Sub-packages live under packages/ and each has its own pyproject.toml.
 #
 # Quick bootstrap:
-#   pip install -e packages/shorewall-nft
-#   pip install -e packages/shorewalld
-#   pip install -e packages/shorewall-nft-simlab
-#
-# Or all at once (editable, development extras):
 #   pip install -e 'packages/shorewall-nft[dev]' \
-#               -e 'packages/shorewalld[dev]' \
-#               -e 'packages/shorewall-nft-simlab[dev]'
+#               -e 'packages/shorewalld[dev]'
+#
+# Lab packages (netkit, simlab, stagelab) live in their own repos under
+# github.com/marcant-oss.
 #
 # [build-system] and [project] exist solely so that pyproject-rpm-macros'
 # auto-wheel hook (which always fires for any source tree with a
-# pyproject.toml) can build a harmless empty wheel from the monorepo root
+# pyproject.toml) can build a harmless empty wheel from the repo root
 # without hitting setuptools' flat-layout guard.
 
 [build-system]

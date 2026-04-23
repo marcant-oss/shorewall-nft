@@ -73,8 +73,6 @@ machine-readable JSON catalogs of commands and features.
     --wheel-dir /tmp/swnft-wheels .)
 (cd packages/shorewalld && pip3 wheel --no-deps --no-build-isolation \
     --wheel-dir /tmp/swnft-wheels .)
-(cd packages/shorewall-nft-simlab && pip3 wheel --no-deps --no-build-isolation \
-    --wheel-dir /tmp/swnft-wheels .)
 pip3 install --no-deps --root=%{buildroot} --prefix=/usr /tmp/swnft-wheels/*.whl
 
 # systemd unit
@@ -94,10 +92,6 @@ install -Dm644 tools/man/shorewalld.8 \
     %{buildroot}%{_mandir}/man8/shorewalld.8
 install -Dm644 tools/man/shorewall-nft-migrate.8 \
     %{buildroot}%{_mandir}/man8/shorewall-nft-migrate.8
-install -Dm644 tools/man/shorewall-nft-simlab.8 \
-    %{buildroot}%{_mandir}/man8/shorewall-nft-simlab.8
-install -Dm644 tools/man/shorewall-nft-stagelab.8 \
-    %{buildroot}%{_mandir}/man8/shorewall-nft-stagelab.8
 # man pages — section 5
 for page in \
     zones interfaces hosts policy rules nfsets masq netmap rawnat \
@@ -150,13 +144,10 @@ fi
 %{_bindir}/shorewall-nft
 %{_bindir}/shorewall-nft-migrate
 %{_bindir}/shorewalld
-%{_bindir}/shorewall-nft-simlab
 %{python3_sitelib}/shorewall_nft/
 %{python3_sitelib}/shorewall_nft-*.dist-info/
 %{python3_sitelib}/shorewalld/
 %{python3_sitelib}/shorewalld-*.dist-info/
-%{python3_sitelib}/shorewall_nft_simlab/
-%{python3_sitelib}/shorewall_nft_simlab-*.dist-info/
 %{_unitdir}/shorewall-nft.service
 %{_unitdir}/shorewall-nft@.service
 %{_unitdir}/shorewalld.service
@@ -166,8 +157,6 @@ fi
 %{_mandir}/man8/shorewall-nft.8*
 %{_mandir}/man8/shorewalld.8*
 %{_mandir}/man8/shorewall-nft-migrate.8*
-%{_mandir}/man8/shorewall-nft-simlab.8*
-%{_mandir}/man8/shorewall-nft-stagelab.8*
 %{_mandir}/man5/shorewall-nft-*.5*
 %{_datadir}/bash-completion/completions/shorewall-nft
 %{_datadir}/zsh/site-functions/_shorewall-nft
