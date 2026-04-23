@@ -20,7 +20,15 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
   systemd unit generator, conntrackd fragment generator.
 - `shorewall_nft/verify/` — post-compile verification:
   - `triangle.py` — static rule-coverage fingerprint vs iptables-save
-  - `simulate.py` — single-pair netns packet test (deprecated; use simlab)
+  - `simulate.py` — 3-namespace veth test topology + per-pair packet
+    probes. Used by `connstate.py` and the `shorewall-nft simulate`
+    CLI. Long-term internal: simlab uses a different architecture
+    (TUN/TAP + asyncio + live-dump replay) and currently has no
+    `(config_dir, iptables_dump)` entry point that could replace
+    this module. Do not add new callers; consider simlab first for
+    new validation work.
+  - `constants.py` — shared NS_FW/NS_SRC/NS_DST/DEFAULT_SRC names
+    used by simulate.py and its peer validators.
   - `iptables_parser.py`, `connstate.py` — shared by simlab (public API)
 - `shorewall_nft/plugins/` — plugin loader + `builtin/` plugins.
 - `shorewall_nft/netns/` — netns helper wrappers.
