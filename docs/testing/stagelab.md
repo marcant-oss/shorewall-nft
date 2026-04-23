@@ -119,7 +119,7 @@ report:      ReportSpec
 
 ```yaml
 - name: tester-1          # logical label used in endpoint.host
-  address: "root@192.0.2.73"   # SSH target; "local:" prefix = local subprocess
+  address: "root@192.0.2.73"   # example SSH target; set for your tester. "local:" prefix = local subprocess
   work_dir: /root/shorewall-nft  # default
   isolate_cores: []              # CPUs to pin to (informational)
   hugepages_gib: 0               # total hugepages reserved on host (informational)
@@ -301,7 +301,7 @@ metrics:
   sources:
     - kind: snmp
       name: fw-primary-snmp
-      host: 192.0.2.70
+      host: 192.0.2.70                   # example IP; set to your primary firewall node
       community: "${STAGELAB_SNMP_COMMUNITY_MON}"
       oids:
         - "1.3.6.1.2.1.31.1.1.1.6"      # ifHCInOctets
@@ -672,14 +672,15 @@ upgrading TRex. Use `STAGELAB_SKIP_SHA=1` in CI/dev only.
 
 Bootstrap supports:
 
-- **Debian / grml (apt)** — the default simlab test host uses grml trixie/sid
-  (RAM-only, reboots wipe everything).
-- **AlmaLinux 10 (dnf)** — current stagelab smoke-test host. EPEL 10 + CRB
-  enabled by bootstrap for `iperf3`, `python3-pyroute2`, and `python3-pytest`.
+- **Debian (apt)** — supports Debian-family simlab test hosts (including
+  live/RAM-only distros such as grml, where reboots wipe everything).
+- **AlmaLinux 10 (dnf)** — Red Hat-family hosts. EPEL 10 + CRB enabled by
+  bootstrap for `iperf3`, `python3-pyroute2`, and `python3-pytest`.
 
-Current stagelab smoke-test host: **192.0.2.73** (AlmaLinux 10,
-virtio-net NIC). virtio-net is supported for `probe` and `native` mode
-correctness smoke; it is not suitable for DPDK line-rate testing.
+The stagelab smoke-test target is a single AlmaLinux 10 host with a
+virtio-net NIC (example). virtio-net is supported for `probe` and
+`native` mode correctness smoke; it is not suitable for DPDK line-rate
+testing.
 
 ---
 

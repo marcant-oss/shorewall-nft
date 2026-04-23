@@ -280,8 +280,8 @@ A minimal naming bootstrap:
 2. **Interfaces:** let the kernel name them. Don't rename
    via udev just to make the config prettier.
 3. **Parameters:** pick one prefix for your org (3–6 chars),
-   stick to it. The marcant convention is `MARCANT_*` for
-   deployment constants, `$NAME` for individual hosts.
+   stick to it. A common convention is `<ORG>_*` for deployment
+   constants and `$NAME` for individual hosts.
 4. **Macros:** only write one if the same rule pattern shows up
    ≥ 3 times. Don't macro-ize for "generality". See
    `shorewall_nft/compiler/actions.py` for the built-in set.

@@ -156,8 +156,8 @@ packages/shorewalld/
 packages/shorewall-nft/
   shorewall_nft/nft/dns_sets.py qname_to_set_name() — shared mit Daemon
 
-  # Smoke-Test auf 192.0.2.83:
-  tools/setup-shorewalld-dnstap-smoke.sh root@192.0.2.83
+  # Smoke-Test auf dem Simulations-Testhost:
+  tools/setup-shorewalld-dnstap-smoke.sh root@<simlab-host>   # set to your test host
   # Dann auf dem Host:
   shorewalld tap --socket /run/shorewalld/dnstap.sock
   dig @127.0.0.1 -p 5354 github.com A
@@ -326,8 +326,8 @@ git push && git push --tags
 ## Point of truth (Verifikation)
 
 ```
-/home/avalentin/projects/marcant-fw/old/iptables.txt   ← gewinnt immer
-/home/avalentin/projects/marcant-fw/old/ip6tables.txt  ← gewinnt immer
+iptables.txt   (reference-HA dumps, kept outside this repo)  ← gewinnt immer
+ip6tables.txt  (reference-HA dumps, kept outside this repo)  ← gewinnt immer
 Autoritative Doku: docs/testing/point-of-truth.md
 ```
 

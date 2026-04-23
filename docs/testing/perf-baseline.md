@@ -180,8 +180,8 @@ path, no FW forwarding involved; port 80 served by stdlib HTTP server in the
 
 ```bash
 # From repo root. Activates .venv automatically via the script.
-# Sync latest code to testers first:
-for h in 192.0.2.93 192.0.2.74; do
+# Sync latest code to testers first (set TESTER_HOSTS to your two tester IPs):
+for h in ${TESTER_HOSTS:-tester01 tester02}; do
     rsync -a --delete \
         packages/shorewall-nft-stagelab/shorewall_nft_stagelab/ \
         root@$h:/root/shorewall-nft/packages/shorewall-nft-stagelab/shorewall_nft_stagelab/
@@ -328,13 +328,13 @@ completes the TCP 3-way handshake; each connection contributes one
 `topology_native.py` untagged-NIC support (NIC moved directly into netns,
 `vlan=None`), added in this commit.
 
-**Pre-run operator steps**:
-1. `ssh root@192.0.2.93 "systemctl stop sim-uplink"` — sim-uplink uses
+**Pre-run operator steps** (replace `<tester01>` with your first tester host):
+1. `ssh root@<tester01> "systemctl stop sim-uplink"` — sim-uplink uses
    eth2 (router ID `203.0.113.77`); must not conflict with the test endpoint.
-2. `ssh root@192.0.2.93 "ip route"` — verify the default route still
+2. `ssh root@<tester01> "ip route"` — verify the default route still
    exists via the management NIC (eth0 or equivalent) so stagelab SSH stays up.
 3. Run: `STAGELAB_SNMP_COMMUNITY_MON=public .venv/bin/shorewall-nft-stagelab run tools/stagelab-fw-test-live.yaml --output-dir /tmp/through-fw-test`
-4. `ssh root@192.0.2.93 "systemctl start sim-uplink"` — restore.
+4. `ssh root@<tester01> "systemctl start sim-uplink"` — restore.
 
 **Expected results**:
 | Metric | Expected range | Notes |

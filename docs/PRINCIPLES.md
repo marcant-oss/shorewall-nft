@@ -69,8 +69,8 @@ for a new standard without reading source code. If they have to `grep` or
 
 Ranking when signals disagree (from `docs/testing/point-of-truth.md`):
 
-1. **`/home/avalentin/projects/marcant-fw/old/iptables.txt` + `ip6tables.txt`** — live dumps from the reference firewall primary. The authoritative "what is the firewall actually doing" signal.
-2. **`/home/avalentin/projects/marcant-fw/old/etc/shorewall{,6}/`** — the Shorewall config that produces (1). Use when (1) looks stale.
+1. **`iptables.txt` + `ip6tables.txt`** (reference-HA dumps, kept outside this repo) — live dumps from the reference-HA primary. The authoritative "what is the firewall actually doing" signal.
+2. **`etc/shorewall{,6}/`** (in the same reference-dump directory) — the Shorewall config that produces (1). Use when (1) looks stale.
 3. **simlab output** is the WEAKEST signal. When simlab disagrees with (1), assume simlab is wrong and investigate: probe generator → topology → emit.
 
 ## P5 — Test reports split false-drop vs false-accept

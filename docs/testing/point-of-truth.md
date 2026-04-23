@@ -6,16 +6,20 @@ discrepancy. If two sources disagree, this is the tiebreaker.
 
 ## Authoritative sources
 
+The reference dumps live **outside this repository** (they contain
+production data). Configure their location via `SHOREWALL_NFT_REFDUMPS`
+and treat the paths below as relative to that directory.
+
 | artifact                                              | role                                        |
 |-------------------------------------------------------|---------------------------------------------|
-| `/home/avalentin/projects/marcant-fw/old/iptables.txt`  | **IPv4 ground truth** — `iptables-save` from the *running* marcant-fw primary |
-| `/home/avalentin/projects/marcant-fw/old/ip6tables.txt` | **IPv6 ground truth** — `ip6tables-save` from the same host |
-| `/home/avalentin/projects/marcant-fw/old/etc/shorewall/`  | **IPv4 source** — the Shorewall config directory that, when compiled by *classic* Shorewall, produces `iptables.txt` |
-| `/home/avalentin/projects/marcant-fw/old/etc/shorewall6/` | **IPv6 source** — ditto for `ip6tables.txt`                 |
-| `/home/avalentin/projects/marcant-fw/old/ip4add` / `ip4routes` / `ip6add` / `ip6routes` | **topology + routing ground truth** — what simlab reproduces in its namespace |
+| `iptables.txt`  | **IPv4 ground truth** — `iptables-save` from the *running* reference-HA primary |
+| `ip6tables.txt` | **IPv6 ground truth** — `ip6tables-save` from the same host |
+| `etc/shorewall/`  | **IPv4 source** — the Shorewall config directory that, when compiled by *classic* Shorewall, produces `iptables.txt` |
+| `etc/shorewall6/` | **IPv6 source** — ditto for `ip6tables.txt`                 |
+| `ip4add` / `ip4routes` / `ip6add` / `ip6routes` | **topology + routing ground truth** — what simlab reproduces in its namespace |
 
 Dump captured **2026-04-07 18:56 UTC** by `iptables-save v1.4.21`
-from the running marcant-fw primary node. v4 dump: 12 132 lines,
+from the running reference-HA primary node. v4 dump: 12 132 lines,
 v6 dump: 5 321 lines.
 
 ## Conflict resolution ranking
@@ -24,7 +28,7 @@ When a verification tool finds a mismatch between its prediction
 and the compiled output, resolve in this order:
 
 1. **`iptables.txt` / `ip6tables.txt` wins.** These describe what
-   the production firewall is actually doing *right now*. If our
+   the reference firewall is actually doing *right now*. If our
    compiled nft script disagrees with them, the compiled script is
    wrong — unless the difference is explicitly introduced by a
    shorewall-nft 1.1 feature (flowtable, vmap dispatch, CT zone
@@ -79,10 +83,10 @@ as a follow-up to the simlab four-way report split.
 
 ## Refreshing the dump
 
-When the production firewall's config is updated, re-capture:
+When the reference firewall's config is updated, re-capture:
 
 ```bash
-# On the marcant-fw primary
+# On the reference-HA primary
 iptables-save  > /tmp/iptables.txt
 ip6tables-save > /tmp/ip6tables.txt
 ip -4 addr show  > /tmp/ip4add
@@ -90,9 +94,9 @@ ip -4 route show > /tmp/ip4routes
 ip -6 addr show  > /tmp/ip6add
 ip -6 route show table all > /tmp/ip6routes
 
-# Copy all four to the host
+# Copy all four into your reference-dump directory
 rsync /tmp/{iptables,ip6tables}.txt /tmp/ip{4,6}{add,routes} \
-      host:/home/avalentin/projects/marcant-fw/old/
+      host:${SHOREWALL_NFT_REFDUMPS}/
 ```
 
 Bump the `2026-04-07` date at the top of this file and commit

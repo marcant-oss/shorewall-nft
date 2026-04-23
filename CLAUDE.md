@@ -114,11 +114,11 @@ Located at `/home/avalentin/projects/marcant-fw/`:
   `nft_parser.py`: nft-syntax reference (matchers, actions, table/family
   hierarchy). `iptables_parser.py`: iptables↔nft semantic equivalence.
   `verify.py`: multi-stage verification framework.
-- **netns-routing** — production environment: 16 zones, ~3300 rules,
-  HA with VRRP across two nodes / three namespaces, real flowtables.
-  Best "what does the reference config really look like" reference.
-  nft features in production: named counters, anonymous sets, flow
-  offloading, flowtables.
+- **netns-routing** — a large reference configuration at enterprise
+  scale (~16 zones, ~3300 rules, HA with VRRP across two nodes / three
+  namespaces, flowtables). Useful as a "what does a non-trivial config
+  look like" reference. Exercised nft features: named counters,
+  anonymous sets, flow offloading, flowtables.
 
 ## CI (.github/workflows/build.yaml)
 
@@ -195,15 +195,16 @@ The primary test target is an **active/passive HA pair**:
 When a tool (simlab, simulate, triangle) reports a mismatch, the
 tiebreaker ranking is:
 
-1. **`/home/avalentin/projects/marcant-fw/old/iptables.txt`** and
-   **`ip6tables.txt`** — `iptables-save`/`ip6tables-save` from the
-   production primary node. Last captured **2026-04-07 18:56 UTC**.
-   This is what the firewall is *actually doing*.
-2. **`/home/avalentin/projects/marcant-fw/old/etc/shorewall{,6}/`** —
-   the Shorewall config that, compiled by classic Shorewall, produces
-   those iptables files. Use when the dump looks stale vs the source.
-3. **`/home/avalentin/projects/marcant-fw/old/{ip4add,ip4routes,ip6add,ip6routes}`**
-   — `ip addr show`/`ip route show` dumps; topology ground truth for
+1. **`iptables.txt`** and **`ip6tables.txt`** in the reference dumps
+   (kept outside this repo) — `iptables-save`/`ip6tables-save` from
+   the active reference-HA primary node. Last captured
+   **2026-04-07 18:56 UTC**. This is what the firewall is *actually
+   doing*.
+2. **`etc/shorewall{,6}/`** in the reference dumps — the Shorewall
+   config that, compiled by classic Shorewall, produces those iptables
+   files. Use when the dump looks stale vs the source.
+3. **`ip4add` / `ip4routes` / `ip6add` / `ip6routes`** in the reference
+   dumps — `ip addr show`/`ip route show`; topology ground truth for
    simlab's NS_FW namespace.
 
 **Conflict rules:**
@@ -216,7 +217,8 @@ tiebreaker ranking is:
   generator → topology → emit in that order.
 - Canonical doc: `docs/testing/point-of-truth.md`.
 - Refresh procedure: on the primary, capture iptables-save, ip6tables-save,
-  ip addr, ip route; rsync to `old/`; bump the date in that doc.
+  ip addr, ip route; rsync into the reference-dump directory; bump the
+  date in that doc.
 
 ## nft emit architecture (match Shorewall iptables layout)
 
@@ -249,5 +251,6 @@ architecture. Deviations cause IPv6 breakage. Key invariants:
 - Test reports must split **false-drop** vs **false-accept** and
   explain random-probe mismatches with the oracle reason (which rule
   fired, which chain matched) — never just "N mismatches".
-- Point of truth for verification: `old/iptables.txt` +
-  `old/ip6tables.txt` (2026-04-07). simlab is the weakest signal.
+- Point of truth for verification: `iptables.txt` + `ip6tables.txt`
+  from the reference-HA dumps (2026-04-07), kept outside this repo.
+  simlab is the weakest signal.

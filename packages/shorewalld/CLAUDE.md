@@ -325,4 +325,5 @@ Key decisions recorded here to avoid re-debating them:
 1. **Flame graph for scrape hot path** — `py-spy record --format
    flamegraph` during a load test; save artifact locally (not committed).
    (The dnstap smoke harness is shipped as
-   `tools/setup-shorewalld-dnstap-smoke.sh`; target host 192.0.2.83.)
+   `tools/setup-shorewalld-dnstap-smoke.sh`; target host is your
+   simulation test host.)

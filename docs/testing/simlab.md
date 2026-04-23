@@ -211,7 +211,9 @@ Commands:
 ### Example: full run on the VM
 
 ```bash
-ssh root@192.0.2.83 "
+# Replace <simlab-host> with your own simulation test host (e.g. via
+# SHOREWALL_SIMLAB_HOST env var).
+ssh root@<simlab-host> "
   cd /root/shorewall-nft && \
   PYTHONUNBUFFERED=1 .venv/bin/python -m shorewall_nft.verify.simlab.smoketest \
     full --random 50 --max-per-pair 30 --seed 42
@@ -219,7 +221,7 @@ ssh root@192.0.2.83 "
 ```
 
 Reports land under `/root/shorewall-nft/docs/testing/simlab-reports/<UTC>/`
-on the VM. `rsync` them back to the host for git commit.
+on the VM. `rsync` them back to your workstation for git commit.
 
 ## Performance baseline (reference VM, 2 cores, 4.9 GB RAM)
 
