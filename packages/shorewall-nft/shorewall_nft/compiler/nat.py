@@ -8,8 +8,8 @@ rows), and ``netmap`` config files, plus a ``FirewallIR`` that may already
 contain ``prerouting``/``postrouting`` chains.
 
 Outputs: ``Rule`` entries appended to the ``prerouting`` chain
-(``verdict_args="dnat:…"``) and the ``postrouting`` chain
-(``verdict_args="snat:…"`` or ``"masquerade:"``).  Both chains are created
+(``verdict_args=DnatVerdict(…)``) and the ``postrouting`` chain
+(``verdict_args=SnatVerdict(…)`` or ``MasqueradeVerdict()``).  Both chains are created
 with ``ChainType.NAT`` and the appropriate hook/priority if they do not
 already exist.
 
@@ -30,6 +30,7 @@ from shorewall_nft.compiler.ir import (
     _expand_line_for_tokens,
     _has_set_token,
 )
+from shorewall_nft.compiler.verdicts import DnatVerdict, SnatVerdict
 from shorewall_nft.config.parser import ConfigLine
 
 
@@ -125,7 +126,7 @@ def _process_masq_line(ir: FirewallIR, line: ConfigLine) -> None:
     chain = ir.chains["postrouting"]
     rule = Rule(
         verdict=Verdict.ACCEPT,  # placeholder, emitter handles snat specially
-        verdict_args=f"snat:{snat_addr}",
+        verdict_args=SnatVerdict(target=snat_addr),
         source_file=line.file,
         source_line=line.lineno,
         comment=line.comment_tag,
@@ -233,7 +234,7 @@ def _process_dnat_line(ir: FirewallIR, line: ConfigLine) -> None:
 
     rule = Rule(
         verdict=Verdict.ACCEPT,  # placeholder
-        verdict_args=f"dnat:{dnat_target}",
+        verdict_args=DnatVerdict(target=dnat_target),
         source_file=line.file,
         source_line=line.lineno,
         comment=line.comment_tag,
@@ -282,7 +283,7 @@ def process_netmap(ir: FirewallIR, netmap_lines: list[ConfigLine]) -> None:
             chain = ir.chains["prerouting"]
             rule = Rule(
                 verdict=Verdict.ACCEPT,
-                verdict_args=f"dnat:{net2}",
+                verdict_args=DnatVerdict(target=net2),
                 source_file=line.file,
                 source_line=line.lineno,
             )
@@ -299,7 +300,7 @@ def process_netmap(ir: FirewallIR, netmap_lines: list[ConfigLine]) -> None:
             chain = ir.chains["postrouting"]
             rule = Rule(
                 verdict=Verdict.ACCEPT,
-                verdict_args=f"snat:{net1}",
+                verdict_args=SnatVerdict(target=net1),
                 source_file=line.file,
                 source_line=line.lineno,
             )

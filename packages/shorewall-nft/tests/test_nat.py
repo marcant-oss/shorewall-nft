@@ -62,18 +62,25 @@ class TestNAT:
         assert chain.chain_type.value == "nat"
 
     def test_dnat_rule(self):
+        from shorewall_nft.compiler.verdicts import DnatVerdict
         chain = self.ir.chains["prerouting"]
-        dnat_rules = [r for r in chain.rules if r.verdict_args and "dnat:" in r.verdict_args]
+        dnat_rules = [
+            r for r in chain.rules
+            if isinstance(r.verdict_args, DnatVerdict)
+        ]
         assert len(dnat_rules) >= 1
         # DNAT to webserver:80 on port 8080
-        r = dnat_rules[0]
-        assert "192.168.1.10:80" in r.verdict_args
+        assert dnat_rules[0].verdict_args.target == "192.168.1.10:80"
 
     def test_snat_rule(self):
+        from shorewall_nft.compiler.verdicts import SnatVerdict
         chain = self.ir.chains["postrouting"]
-        snat_rules = [r for r in chain.rules if r.verdict_args and "snat:" in r.verdict_args]
+        snat_rules = [
+            r for r in chain.rules
+            if isinstance(r.verdict_args, SnatVerdict)
+        ]
         assert len(snat_rules) >= 1
-        assert "203.0.113.1" in snat_rules[0].verdict_args
+        assert "203.0.113.1" in snat_rules[0].verdict_args.target
 
     def test_dnat_nft_output(self):
         assert "dnat to 192.168.1.10:80" in self.output

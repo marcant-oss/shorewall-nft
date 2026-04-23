@@ -78,9 +78,10 @@ class TestMasqNfsetSource:
         line = _line("eth0", "nfset:blocklist", "203.0.113.5")
         _process_masq_line(ir, line)
 
+        from shorewall_nft.compiler.verdicts import SnatVerdict
         chain = ir.chains["postrouting"]
         snat_targets = [r.verdict_args for r in chain.rules]
-        assert all(a == "snat:203.0.113.5" for a in snat_targets)
+        assert all(a == SnatVerdict(target="203.0.113.5") for a in snat_targets)
 
     def test_nfset_in_address_column_raises(self):
         """nfset: in ADDRESS (SNAT target) column must raise ValueError."""
