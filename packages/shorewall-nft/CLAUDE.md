@@ -8,16 +8,45 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
 
 ## Key directories
 
-- `shorewall_nft/compiler/` — config → IR (`build_ir()` in `ir.py`),
-  optimisations (`optimize.py`), rule actions (`actions.py`),
-  proxy ARP/NDP (`proxyarp.py`).
+- `shorewall_nft/compiler/` — config → IR:
+  - `ir/` — IR package (was a single 3427-LOC `ir.py` until April 2026):
+    - `__init__.py` — `build_ir()` orchestrator + re-exports
+    - `_data.py` — enums, dataclasses (Rule/Chain/FirewallIR/Match/…),
+      pure helpers (`is_ipv6_spec`, `split_nft_zone_pair`, …)
+    - `spec_rewrite.py` — token rewriters (`expand_line_for_tokens`,
+      `_rewrite_dns_spec`, `_rewrite_nfset_spec`, …)
+    - `rules.py` — macro expansion, `_add_rule`, zone-pair builder
+    - `_build.py` — per-table `_process_*` stages
+  - `verdicts.py` — typed discriminated union for `Rule.verdict_args`
+    (17 variants — Snat/Dnat/Masquerade/Redirect/Notrack/CtHelper/
+    Mark/…). Replaces the old `"prefix:target"` string wire format.
+  - `optimize.py`, `actions.py`, `proxyarp.py`, `nat.py`, `tc.py`,
+    `accounting.py`, `docker.py`, `tunnels.py`, `macfilter.py`,
+    `providers.py`, `sysctl.py` (sysctl-script generator, was in
+    `runtime/`).
 - `shorewall_nft/nft/` — IR → nft script emitter (`emitter.py`),
-  flowtable, sets, capabilities probe, explain engine, netlink glue
-  (`netlink.py`), DNS sets API (`dns_sets.py`).
+  flowtable, sets, capabilities probe (`capabilities.py`), capability
+  check (`capability_check.py`, was in `compiler/`), explain engine,
+  netlink glue (`netlink.py` — `in_netns` is the public netns context
+  helper), DNS sets API (`dns_sets.py`).
 - `shorewall_nft/config/` — config file parser (`parser.py`),
   importer (`importer.py`), schema consistency.
-- `shorewall_nft/runtime/` — CLI commands (`cli.py`), sysctl generator,
-  systemd unit generator, conntrackd fragment generator.
+- `shorewall_nft/runtime/` — runtime helpers + CLI:
+  - `cli/` — CLI package (was a single 2929-LOC `cli.py` until April 2026):
+    - `__init__.py` — root `@click.group` + command registration
+    - `_common.py` — shared helpers (config resolution, compile pipeline,
+      shorewalld notify, seed handshake, progress reporting)
+    - `apply_cmds.py` — start/stop/restart/reload/clear/status/check/
+      compile/save/restore/show+aliases/reset/load-sets/apply-tc
+    - `config_cmds.py` — `config` group (export/import/template/merge)
+      + flat `merge-config`
+    - `debug_cmds.py` — verify/trace/debug/counters/migrate/simulate/
+      capabilities/explain-nft-features/blacklist commands
+    - `generate_cmds.py` — generate-systemd/generate-tc/
+      generate-conntrackd/generate-sysctl/generate-set-loader
+    - `plugin_cmds.py` — plugins/lookup/enrich +
+      `_register_plugin_commands` dynamic registration
+  - `monitor.py`, `seed.py`, `conntrackd.py`, `topology.py`.
 - `shorewall_nft/verify/` — post-compile verification:
   - `triangle.py` — static rule-coverage fingerprint vs iptables-save
   - `simulate.py` — 3-namespace veth test topology + per-pair packet
@@ -29,12 +58,24 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
     new validation work.
   - `constants.py` — shared NS_FW/NS_SRC/NS_DST/DEFAULT_SRC names
     used by simulate.py and its peer validators.
-  - `iptables_parser.py`, `connstate.py` — shared by simlab (public API)
-- `shorewall_nft/plugins/` — plugin loader + `builtin/` plugins.
+  - `iptables_parser.py`, `connstate.py` — shared by simlab (public API).
+  - `tc_validate.py` — uses `shorewall_nft_netkit.netns_shell.run_shell_in_netns`
+    for shell-in-netns probes (no longer importing simulate's private `_ns`).
+- `shorewall_nft/plugins/` — plugin loader + `builtin/` plugins. Loader
+  also discovers third-party plugins via `importlib.metadata` entry
+  points under group `shorewall_nft.plugins`.
 - `shorewall_nft/netns/` — netns helper wrappers.
 - `shorewall_nft/tools/` — `merge_config.py`, `migrate.py`.
-- `tests/` — pytest; `test_emitter_features.py` covers 1.1-era knobs
-  (flowtable, vmap dispatch, ct zone tag, concat-map DNAT, ct mask).
+- `tests/` — pytest:
+  - `test_emitter_features.py` covers 1.1-era knobs (flowtable,
+    vmap dispatch, ct zone tag, concat-map DNAT, ct mask)
+  - `golden/` — snapshot suite (6 cases: minimal, fastaccept_no,
+    ipv6_basic, nat_dnat, vmap_dispatch, complex). Regenerate with
+    `UPDATE_GOLDEN=1 pytest tests/golden/`.
+  - `verify/` — direct unit tests for connstate, iptables_parser,
+    netns_topology, tc_validate, slave_worker (no netns required).
+  - `fixtures/ref-ha-minimal/` — anonymised three-zone fixture used
+    when `SHOREWALL_NFT_PROD_DIR` is unset (RFC 5737/3849 addresses).
 
 ## Release-blocker invariants
 

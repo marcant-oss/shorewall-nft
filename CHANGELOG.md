@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Refactor (maintainability pass — April 2026)
+
+Internal restructuring driven by a multi-agent audit. No behavioural
+change to the emitted nft (verified by 6 golden snapshots that
+remained byte-identical across the entire pass). Test count grew
+from 688 to 981.
+
+- **`compiler/verdicts.py`** — new module. Replaces the undocumented
+  `Rule.verdict_args="prefix:target"` string wire format with a
+  typed discriminated union of 17 frozen dataclasses
+  (Snat/Dnat/Masquerade/Redirect/Notrack/CtHelper/Mark/Connmark/
+  RestoreMark/SaveMark/Dscp/Classify/EcnClear/Counter/NamedCounter/
+  Nflog/Audit). Producers in `compiler/{ir,nat,tc,docker,accounting}.py`
+  now construct typed instances directly. The emitter dispatches by
+  `type(verdict_args)` instead of string-prefix parsing.
+- **`Rule.log_level: str | None`** — new field. Carries the syslog
+  level for `Verdict.LOG` rules; replaces the special-case
+  `verdict_args="log_level:info"` string overload.
+- **`compiler/ir.py` → `compiler/ir/` package** — 3427 LOC god-module
+  split into `__init__.py` (build orchestrator), `_data.py` (data
+  model), `spec_rewrite.py` (token rewriters), `rules.py` (macro
+  expansion + `_add_rule`), `_build.py` (per-table stage functions).
+  All previously-importable symbols re-exported from the package
+  for backward compatibility. Module-level macro registries
+  (`_CUSTOM_MACROS`) and DNS deprecation-warned set moved onto
+  `FirewallIR` as instance fields, restoring per-build isolation.
+- **`runtime/cli.py` → `runtime/cli/` package** — 2929 LOC god-module
+  split into `__init__.py`, `_common.py`, `apply_cmds.py`,
+  `config_cmds.py`, `debug_cmds.py`, `generate_cmds.py`,
+  `plugin_cmds.py`. Public import path
+  `from shorewall_nft.runtime.cli import …` unchanged.
+- **`compiler/sysctl.py`** (new) — `generate_sysctl_script` moved
+  here from `runtime/sysctl.py` (eliminated `verify/` → `runtime/`
+  upward import).
+- **`nft/capability_check.py`** (new) — moved from
+  `compiler/capability_check.py`; the module probes nft kernel
+  capabilities at compile time and naturally lives next to
+  `nft/capabilities.py`.
+- **`verify/constants.py`** (new) — single source of truth for the
+  3-namespace test topology names (`NS_SRC`, `NS_FW`, `NS_DST`,
+  `DEFAULT_SRC`). `tc_validate.py` no longer imports the private
+  `_ns` from `simulate.py`; uses
+  `shorewall_nft_netkit.netns_shell.run_shell_in_netns` instead.
+- **`compiler.ir.expand_line_for_tokens`** — public rename of the
+  former `_expand_line_for_tokens` (called cross-module by `nat.py`
+  and `tc.py`; the leading underscore was misleading).
+- **`compiler.ir.is_ipv6_spec`** — public utility consolidating three
+  near-duplicate IPv6-detection helpers (`_is_v6` in proxyarp,
+  `_is_ipv6` and `_is_ipv6_addr` in ir).
+- **`compiler.ir.split_nft_zone_pair`** — extracted helper covering
+  four inline `chain_name.split("-", 1)` sites in `optimize.py`
+  and `nft/emitter.py`.
+- **Plugin entry points** — `plugins/manager.py` discovers third-party
+  plugins via `importlib.metadata` entry points under group
+  `shorewall_nft.plugins`. Built-ins remain registered in-tree.
+  See `docs/shorewall-nft/plugins.md` for the third-party
+  registration pattern.
+- **Golden-snapshot framework** — `tests/golden/` with 6 cases
+  (minimal, fastaccept_no, ipv6_basic, nat_dnat, vmap_dispatch,
+  complex). Regenerate with `UPDATE_GOLDEN=1 pytest tests/golden/`.
+- **`tests/fixtures/ref-ha-minimal/`** — anonymised three-zone
+  fixture (RFC 5737/3849 addresses) replacing silent
+  `/etc/shorewall` skips in `test_triangle`, `test_nat`,
+  `test_cli_integration`. Production-scale assertions and merge-
+  collision tests gated behind `SHOREWALL_NFT_PROD_DIR`.
+- **`tests/verify/`** — 163 new direct unit tests across five
+  previously-untested modules (connstate, iptables_parser,
+  netns_topology, tc_validate, slave_worker) — no netns/root
+  required.
+- **CLI doc sync** — `docs/cli/commands.md` + `docs/reference/commands.json`
+  gained the six previously-undocumented subcommands (`apply-tc`,
+  `generate-conntrackd`, four `config` subcommands), the five
+  missing `simulate` flags, the `migrate --output` description,
+  per-subcommand "How to verify success" sections for seven
+  commands, and inline `routefilter` documentation in
+  `tools/man/shorewall-nft-interfaces.5`.
+
+### Fixed (REDIRECT action)
+
+- **`REDIRECT` rules emit `redirect to :<port>` instead of malformed
+  `dnat to`** — latent bug present since the monorepo split
+  (2026-04-12). REDIRECT rules in the `rules` file were silently
+  routed through the DNAT processor, which produced
+  `verdict_args=DnatVerdict(target="")` (empty target). The fix adds
+  a typed `RedirectVerdict(port: int)` (17th SpecialVerdict variant)
+  and a REDIRECT-specific DEST-column parsing branch in `nat.py`.
+  Verified against shorewall-perl 5.2.6.1: nft `redirect to :<port>`
+  is the direct equivalent of `iptables -j REDIRECT --to-port <port>`.
+  Five regression tests added in `tests/test_nat.py::TestRedirect`.
+
 ### Added (W1–W9 nfsets, man pages, Prometheus metrics, VRRP collector)
 
 - **`nfsets` config file** — named dynamic nft sets with four backends
