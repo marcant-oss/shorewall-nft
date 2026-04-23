@@ -27,6 +27,11 @@ from shorewall_nft.compiler.ir import (
     Rule,
     Verdict,
 )
+from shorewall_nft.compiler.verdicts import (
+    CounterVerdict,
+    NamedCounterVerdict,
+    NflogVerdict,
+)
 from shorewall_nft.config.parser import ConfigLine
 
 
@@ -114,20 +119,20 @@ def process_accounting(ir: FirewallIR, acct_lines: list[ConfigLine]) -> None:
         # Action
         if action == "COUNT":
             rule.verdict = Verdict.ACCEPT
-            rule.verdict_args = "counter:"
+            rule.verdict_args = CounterVerdict()
         elif action == "DONE":
             rule.verdict = Verdict.RETURN
         elif action.startswith("NFACCT("):
             obj_name = action[7:].rstrip(")")
             rule.verdict = Verdict.ACCEPT
-            rule.verdict_args = f"named_counter:{obj_name}"
+            rule.verdict_args = NamedCounterVerdict(name=obj_name)
         elif action.startswith("ACCOUNT("):
             params = action[8:].rstrip(")")
             rule.verdict = Verdict.ACCEPT
-            rule.verdict_args = f"account:{params}"
+            rule.verdict_args = CounterVerdict(params=params)
         elif action == "NFLOG":
             rule.verdict = Verdict.ACCEPT
-            rule.verdict_args = "nflog:"
+            rule.verdict_args = NflogVerdict()
         else:
             # Jump to named chain
             rule.verdict = Verdict.JUMP
