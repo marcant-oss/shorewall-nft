@@ -102,7 +102,7 @@ class TestResult:
     ms: int = 0
 
 
-def _ns(ns: str, cmd: str, timeout: int = 10) -> subprocess.CompletedProcess:
+def ns(ns: str, cmd: str, timeout: int = 10) -> subprocess.CompletedProcess:
     """Run a shell command inside a network namespace.
 
     Exec-reduction Phase B: instead of shelling out via
@@ -134,7 +134,7 @@ def _ns(ns: str, cmd: str, timeout: int = 10) -> subprocess.CompletedProcess:
 
 def _ns_check(ns: str, cmd: str, timeout: int = 10) -> None:
     """Run a command inside a namespace, raise on failure."""
-    r = _ns(ns, cmd, timeout)
+    r = ns(ns, cmd, timeout)
     if r.returncode != 0:
         raise RuntimeError(f"Command failed in {ns}: {cmd}\n{r.stderr}")
 
@@ -636,7 +636,7 @@ class SimTopology:
         failed to load — every probe appeared to fail even though the
         FW was empty.
         """
-        r = _ns(NS_FW, f"nft -f {nft_script_path}", timeout=30)
+        r = ns(NS_FW, f"nft -f {nft_script_path}", timeout=30)
         if r.returncode != 0:
             # Any non-zero nft return aborts simulate — a half-loaded
             # ruleset makes every probe look like a DROP. Previously
@@ -657,21 +657,21 @@ class SimTopology:
         In single-pair mode they stay in NS_DST as before.
         """
         listener_ns = NS_SRC if self.zones else NS_DST
-        _ns(listener_ns,
+        ns(listener_ns,
             "iptables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port 65000 2>/dev/null || true")
-        _ns(listener_ns,
+        ns(listener_ns,
             "iptables -t nat -A PREROUTING -p udp -j REDIRECT --to-port 65001 2>/dev/null || true")
-        _ns(listener_ns,
+        ns(listener_ns,
             "ip6tables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port 65000 2>/dev/null || true")
-        _ns(listener_ns,
+        ns(listener_ns,
             "ip6tables -t nat -A PREROUTING -p udp -j REDIRECT --to-port 65001 2>/dev/null || true")
 
         # TCP listener — dual-stack via ncat if available, else two nc instances
-        _ns(listener_ns, "nc -l -k -p 65000 >/dev/null 2>&1 &")
-        _ns(listener_ns, "nc -l -k -p 65000 -s ::0 >/dev/null 2>&1 &")
+        ns(listener_ns, "nc -l -k -p 65000 >/dev/null 2>&1 &")
+        ns(listener_ns, "nc -l -k -p 65000 -s ::0 >/dev/null 2>&1 &")
 
         # UDP echo server — single python process binds both families
-        _ns(listener_ns, """python3 -c "
+        ns(listener_ns, """python3 -c "
 import socket, threading
 def echo(fam, addr):
     s = socket.socket(fam, socket.SOCK_DGRAM)
@@ -735,7 +735,7 @@ def run_tcp_test(src_ip: str, dst_ip: str, port: int, family: int = 4,
     """Send a TCP connect test. Returns (verdict, ms)."""
     start = time.monotonic_ns()
     flag = "-6" if family == 6 else "-4"
-    r = _ns(ns_name, f"nc {flag} -z -w 2 -s {src_ip} {dst_ip} {port} 2>/dev/null",
+    r = ns(ns_name, f"nc {flag} -z -w 2 -s {src_ip} {dst_ip} {port} 2>/dev/null",
             timeout=5)
     ms = (time.monotonic_ns() - start) // 1_000_000
     verdict = "ACCEPT" if r.returncode == 0 else "DROP"
@@ -747,7 +747,7 @@ def run_udp_test(src_ip: str, dst_ip: str, port: int, family: int = 4,
     """Send a UDP echo test. Returns (verdict, ms)."""
     start = time.monotonic_ns()
     flag = "-6" if family == 6 else "-4"
-    r = _ns(ns_name,
+    r = ns(ns_name,
             f"echo PING | timeout 2 nc {flag} -u -w 1 -s {src_ip} {dst_ip} {port} 2>/dev/null",
             timeout=5)
     ms = (time.monotonic_ns() - start) // 1_000_000
@@ -760,7 +760,7 @@ def run_icmp_test(src_ip: str, dst_ip: str, family: int = 4,
     """Send an ICMP echo request. Returns (verdict, ms)."""
     start = time.monotonic_ns()
     cmd = "ping6" if family == 6 else "ping"
-    r = _ns(ns_name, f"{cmd} -c 1 -W 2 -I {src_ip} {dst_ip} 2>/dev/null",
+    r = ns(ns_name, f"{cmd} -c 1 -W 2 -I {src_ip} {dst_ip} 2>/dev/null",
             timeout=5)
     ms = (time.monotonic_ns() - start) // 1_000_000
     verdict = "ACCEPT" if r.returncode == 0 else "DROP"
@@ -1379,9 +1379,9 @@ def run_simulation(
         # Start nft trace in background for debugging
         if trace:
             # Enable tracing on the forward chain
-            _ns(NS_FW,
+            ns(NS_FW,
                 "nft add rule inet shorewall forward meta nftrace set 1 2>/dev/null || true")
-            _ns(NS_FW,
+            ns(NS_FW,
                 "nft add rule inet shorewall input meta nftrace set 1 2>/dev/null || true")
             trace_proc = _start_trace(trace_log)
 
