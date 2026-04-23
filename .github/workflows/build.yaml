@@ -37,6 +37,7 @@ jobs:
           pip install \
             -e "packages/shorewall-nft[dev]" \
             -e "packages/shorewalld[dev]"
+          pip install "git+https://github.com/marcant-oss/shorewall-nft-simlab.git"
 
       - name: Run unit tests — core
         run: |
