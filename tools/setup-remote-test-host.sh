@@ -702,23 +702,23 @@ if [ -n "$FW_HOST" ]; then
             ;;
         key_exists_no_auth)
             info "SSH key exists but no auth to $FW_HOST, running ssh-copy-id..."
-            ssh "$REMOTE" 'ssh-copy-id -o ConnectTimeout=5 -o StrictHostKeyChecking=no "'"$FW_HOST"'" 2>/dev/null || {
+            # shellcheck disable=SC1073,SC1072,SC1078
+            _copy_cmd="ssh-copy-id -o ConnectTimeout=5 -o StrictHostKeyChecking=no \"${FW_HOST}\" 2>/dev/null"
+            ssh "$REMOTE" "$_copy_cmd" || {
                 echo "ERROR: ssh-copy-id to $FW_HOST failed" >&2
-                echo "  Ensure password authentication is enabled or run manually:" >&2
-                echo "  ssh root@tester01 'ssh-copy-id root@fw-primary'" >&2
+                echo "  Ensure password authentication is enabled or run manually" >&2
                 exit 1
             }
             info "SSH key copied to $FW_HOST"
             ;;
         no_key)
             info "No SSH key on $REMOTE, generating ed25519 key..."
-            ssh "$REMOTE" '
-                ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519 </dev/null
-                ssh-copy-id -o ConnectTimeout=5 -o StrictHostKeyChecking=no "'"$FW_HOST"'" 2>/dev/null || {
-                    echo "ERROR: ssh-copy-id to $FW_HOST failed after keygen" >&2
-                    exit 1
-                }
-            '
+            # shellcheck disable=SC1073,SC1072,SC1078
+            _keygen_cmd="ssh-keygen -t ed25519 -N \"\" -f ~/.ssh/id_ed25519 </dev/null && ssh-copy-id -o ConnectTimeout=5 -o StrictHostKeyChecking=no \"${FW_HOST}\" 2>/dev/null"
+            ssh "$REMOTE" "$_keygen_cmd" || {
+                echo "ERROR: ssh-copy-id to $FW_HOST failed after keygen" >&2
+                exit 1
+            }
             info "SSH key generated and copied to $FW_HOST"
             ;;
         *)
