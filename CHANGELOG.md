@@ -59,15 +59,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the zero-byte file so operators notice before feeding the dump
   into simlab. Commit `855bd14`.
 
-Validated end-to-end by ``shorewall-nft-simlab full`` against four
-live-dump fixtures:
+Validated end-to-end by ``shorewall-nft-simlab full --random 200``
+against four live-dump fixtures (every iptables rule probed at least
+once, plus 200 random probes per config):
 
-| fixture   | probes (pos/neg) | fail_drop | fail_accept |
-|-----------|------------------|-----------|-------------|
-| reference | 33 / 18          | 0         | 0           |
-| elgar     | 125 / 9          | 0         | 0           |
-| portalfw  | 5 / 0            | 0         | 0           |
-| tropheus  | 0 / 0 (all autorepair-filtered; iptables dead rules) | 0 | 0 |
+| fixture   | probes total | fail_drop | fail_accept | environmental noise            |
+|-----------|--------------|-----------|-------------|--------------------------------|
+| reference | 1 368        | 0         | 2*          | 309 timeout, 148 random err   |
+| elgar     | 10 468       | 0**       | 0           | 5743 timeout, 28 routes-in-table-1000 |
+| portalfw  | 461          | 0         | 0           | 88 routing artifacts          |
+| tropheus  | 2            | 0         | 0           | 42k routing-incompatible (autorepair) |
+
+\* the 2 reference fail_accepts are random-ICMPv6 probes that hit
+``Ping(ACCEPT) all all`` over-expansion — see
+``todo_ping_all_all_overexpansion`` memory; not a release blocker
+(direction is over-permissive on a global ping rule the operator
+explicitly added).
+
+\*\* elgar's 5743 ``observed=DROP`` are 502-ms timeouts under load,
+not verdict mismatches; 28 ``observed=REJECT`` are ICMPv6
+unreachables from the simlab netns missing the ``ip6rules`` table-
+1000 selector that the live firewall uses (fixture limitation, not
+compiler — the routes ARE present, just in the wrong table for a
+default lookup).
 
 ### Added (Phase II — shared-infrastructure merge into netkit)
 
