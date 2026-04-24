@@ -1006,6 +1006,17 @@ def _sample_hosts(
 
     Falls back to full enumeration for tiny subnets (≤ n hosts) where the
     loop overhead would dominate.
+
+    Probe-class C — boundary IPs. The first ~5 entries of the result are
+    deterministic boundary addresses (first host, last host, network,
+    broadcast for v4 / network-anycast for v6). The remaining entries
+    are random samples. Boundary picks catch CIDR off-by-one bugs in
+    the compiler's address-set membership: a /28 like 217.14.160.32/28
+    has hosts .33-.46 with .32 as network and .47 as broadcast — a
+    rule that accidentally includes .32 or .47 is benign here but in
+    other emit paths (set membership, NAT-pool reservation) the same
+    off-by-one is a real bug. Boundary probes surface those at probe
+    cost ~0.
     """
     import ipaddress as _ia
     n_total = net.num_addresses
@@ -1017,9 +1028,31 @@ def _sample_hosts(
     n_hosts = n_total - 2          # exclude network + broadcast
     if n_hosts <= n:
         return [str(h) for h in net.hosts()]
+
+    # Boundary entries first — deterministic, regardless of seed.
+    # These exercise the four "interesting" addresses in any CIDR:
+    # first host, last host, network address, broadcast / all-ones.
     base = int(net.network_address)
+    last = int(net.broadcast_address)
+    if net.version == 6:
+        addr_cls = _ia.IPv6Address
+    else:
+        addr_cls = _ia.IPv4Address
+    boundary_offsets = [
+        1,                      # first host
+        n_total - 2,            # last host (=broadcast - 1 for v4)
+        0,                      # network address
+        n_total - 1,            # broadcast / all-ones
+    ]
     seen: set[int] = set()
     out: list[str] = []
+    for offset in boundary_offsets:
+        if 0 <= offset < n_total and offset not in seen:
+            seen.add(offset)
+            out.append(str(addr_cls(base + offset)))
+            if len(out) >= n:
+                return out
+    # Fill remaining slots with random samples.
     attempts = 0
     while len(out) < n and attempts < n * 8:
         attempts += 1
@@ -1027,10 +1060,7 @@ def _sample_hosts(
         if offset in seen:
             continue
         seen.add(offset)
-        if net.version == 6:
-            out.append(str(_ia.IPv6Address(base + offset)))
-        else:
-            out.append(str(_ia.IPv4Address(base + offset)))
+        out.append(str(addr_cls(base + offset)))
     return out
 
 
