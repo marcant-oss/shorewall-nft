@@ -89,7 +89,16 @@ _try() {
     local errfile="${outfile}.err"
     if "$@" > "$outfile" 2>"$errfile"; then
         rm -f "$errfile"
-        printf '%s: captured\n' "$label" >> "$MANIFEST"
+        if [[ -s "$outfile" ]]; then
+            printf '%s: captured\n' "$label" >> "$MANIFEST"
+        else
+            # Exit 0 but no output — e.g. iptables-save on iptables-nft under
+            # an unprivileged uid silently produces nothing. Flag it so
+            # operators notice before feeding the dump to simlab.
+            printf '%s: skipped-empty (likely unprivileged)\n' "$label" \
+                >> "$MANIFEST"
+            rm -f "$outfile"
+        fi
     else
         local rc=$?
         printf '%s: skipped-permission (rc=%d)\n' "$label" "$rc" >> "$MANIFEST"
