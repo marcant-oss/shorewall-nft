@@ -258,6 +258,106 @@ class MarkGeometry:
 
 
 @dataclass
+class Provider:
+    """A routing provider (ISP).
+
+    Moved here from compiler/providers.py so FirewallIR can carry a
+    properly-typed ``list[Provider]`` field without a circular import.
+    """
+    name: str
+    number: int
+    mark: int           # raw numeric mark value (0 = no mark)
+    interface: str
+    duplicate: str | None = None   # routing table to copy
+    gateway: str | None = None
+    copy: list[str] = field(default_factory=list)
+    # Parsed OPTIONS
+    track: bool = False
+    balance: int = 0       # 0 = not balanced; >0 = weight
+    fallback: int = 0      # 0 = not fallback; -1 = bare fallback; >0 = weighted fallback
+    loose: bool = False
+    optional: bool = False
+    persistent: bool = False
+    tproxy: bool = False
+    # Derived / assigned
+    table: str = ""         # routing table id (number or name)
+
+
+@dataclass
+class Route:
+    """A static route for a provider.
+
+    Moved here from compiler/providers.py so FirewallIR can carry a
+    properly-typed ``list[Route]`` field without a circular import.
+    """
+    provider: str
+    dest: str
+    gateway: str | None = None
+    device: str | None = None
+    persistent: bool = False
+
+
+@dataclass
+class RoutingRule:
+    """An ip rule for policy routing.
+
+    Moved here from compiler/providers.py so FirewallIR can carry a
+    properly-typed ``list[RoutingRule]`` field without a circular import.
+    """
+    source: str | None = None
+    dest: str | None = None
+    provider: str = ""
+    priority: int = 0
+    mark: str | None = None    # fwmark value, e.g. "0x100/0xff"
+    persistent: bool = False
+
+
+@dataclass
+class TcInterface:
+    """A simple-device TC entry from the tcinterfaces file.
+
+    Moved here from compiler/tc.py so FirewallIR can carry a
+    properly-typed ``list[TcInterface]`` field without a circular import.
+
+    Maps to ``process_simple_device`` in upstream Tc.pm.
+    Upstream format: INTERFACE TYPE IN_BANDWIDTH OUT_BANDWIDTH
+    where TYPE is 'external' (→ nfct-src) | 'internal' (→ dst) | '-'.
+    OUT_BANDWIDTH accepts burst:latency:peak:minburst suffixes (colon-separated).
+    """
+    interface: str
+    flow_type: str = "-"          # '-' | 'nfct-src' | 'dst'
+    in_bandwidth: str = ""
+    out_bandwidth: str = ""
+    out_burst: str = "10kb"       # default upstream burst
+    out_latency: str = "200ms"    # default upstream latency
+    out_peak: str = ""
+    out_minburst: str = ""
+    qdisc: str = "htb"            # 'htb' | 'hfsc' | 'cake'
+    overhead: str = ""
+    mtu: str = ""
+    mpu: str = ""
+
+
+@dataclass
+class TcPri:
+    """A single tcpri DSCP-to-priority mapping row.
+
+    Moved here from compiler/tc.py so FirewallIR can carry a
+    properly-typed ``list[TcPri]`` field without a circular import.
+
+    Maps to ``process_tc_priority`` in upstream Tc.pm.
+    Upstream format: BAND PROTO PORT ADDRESS INTERFACE HELPER
+    BAND is 1-3 (Linux prio band).
+    """
+    band: int                    # 1–3
+    proto: str = "-"
+    port: str = "-"
+    address: str = "-"
+    interface: str = "-"
+    helper: str = "-"
+
+
+@dataclass
 class FirewallIR:
     """Complete intermediate representation of the firewall."""
     zones: ZoneModel = field(default_factory=ZoneModel)
@@ -309,15 +409,15 @@ class FirewallIR:
     # Multi-ISP provider state — populated by build_ir() from the
     # providers / routes / rtrules config files.  Channel-2 consumers
     # (generate-iproute2-rules CLI command) read these after build_ir().
-    providers: list = field(default_factory=list)
-    routes: list = field(default_factory=list)
-    rtrules: list = field(default_factory=list)
+    providers: list[Provider] = field(default_factory=list)
+    routes: list[Route] = field(default_factory=list)
+    rtrules: list[RoutingRule] = field(default_factory=list)
 
     # TC simple-device shaping — populated by build_ir() from tcinterfaces
     # and tcpri config files.  Channel-2 consumers (generate-tc, apply_tcinterfaces)
     # read these after build_ir().
-    tcinterfaces: list = field(default_factory=list)
-    tcpris: list = field(default_factory=list)
+    tcinterfaces: list[TcInterface] = field(default_factory=list)
+    tcpris: list[TcPri] = field(default_factory=list)
 
     # Macro registry: populated by _load_standard_macros (bundled Shorewall
     # macros) and _load_custom_macros (user macros override).  Per-compile

@@ -42,6 +42,7 @@ from shorewall_nft.compiler.ir import (
     Verdict,
     expand_line_for_tokens,
 )
+from shorewall_nft.compiler.ir._data import TcInterface, TcPri
 from shorewall_nft.compiler.verdicts import (
     ClassifyVerdict,
     ConnmarkVerdict,
@@ -54,6 +55,10 @@ from shorewall_nft.config.parser import ConfigLine
 from shorewall_nft.config.zones import ZoneModel
 
 logger = logging.getLogger("shorewall_nft.compiler.tc")
+
+# Re-export so existing ``from shorewall_nft.compiler.tc import TcInterface, TcPri``
+# imports continue to work unchanged.
+__all__ = ["TcInterface", "TcPri"]
 
 
 @dataclass
@@ -96,47 +101,6 @@ class TcConfig:
     devices: list[TcDevice] = field(default_factory=list)
     classes: list[TcClass] = field(default_factory=list)
     filters: list[TcFilter] = field(default_factory=list)
-
-
-# ── Simple-device (tcinterfaces) structures ─────────────────────────────────
-
-@dataclass
-class TcInterface:
-    """A simple-device TC entry from the tcinterfaces file.
-
-    Maps to ``process_simple_device`` in upstream Tc.pm.
-    Upstream format: INTERFACE TYPE IN_BANDWIDTH OUT_BANDWIDTH
-    where TYPE is 'external' (→ nfct-src) | 'internal' (→ dst) | '-'.
-    OUT_BANDWIDTH accepts burst:latency:peak:minburst suffixes (colon-separated).
-    """
-    interface: str
-    flow_type: str = "-"          # '-' | 'nfct-src' | 'dst'
-    in_bandwidth: str = ""
-    out_bandwidth: str = ""
-    out_burst: str = "10kb"       # default upstream burst
-    out_latency: str = "200ms"    # default upstream latency
-    out_peak: str = ""
-    out_minburst: str = ""
-    qdisc: str = "htb"            # 'htb' | 'hfsc' | 'cake'
-    overhead: str = ""
-    mtu: str = ""
-    mpu: str = ""
-
-
-@dataclass
-class TcPri:
-    """A single tcpri DSCP-to-priority mapping row.
-
-    Maps to ``process_tc_priority`` in upstream Tc.pm.
-    Upstream format: BAND PROTO PORT ADDRESS INTERFACE HELPER
-    BAND is 1-3 (Linux prio band).
-    """
-    band: int                    # 1–3
-    proto: str = "-"
-    port: str = "-"
-    address: str = "-"
-    interface: str = "-"
-    helper: str = "-"
 
 
 # ── TC mode helpers ──────────────────────────────────────────────────────────

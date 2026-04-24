@@ -11,9 +11,12 @@ Two output channels (as documented in WP-B1):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
+from shorewall_nft.compiler.ir._data import Provider, Route, RoutingRule
 from shorewall_nft.config.parser import ConfigLine
+
+# Re-export so existing ``from shorewall_nft.compiler.providers import Provider``
+# imports continue to work unchanged.
+__all__ = ["Provider", "Route", "RoutingRule"]
 
 # ── Provider OPTIONS recognised by shorewall-nft ──────────────────────
 
@@ -27,49 +30,6 @@ _VALID_OPTIONS: frozenset[str] = frozenset({
     "tproxy",
     "local",
 })
-
-
-@dataclass
-class Provider:
-    """A routing provider (ISP)."""
-    name: str
-    number: int
-    mark: int           # raw numeric mark value (0 = no mark)
-    interface: str
-    duplicate: str | None = None   # routing table to copy
-    gateway: str | None = None
-    copy: list[str] = field(default_factory=list)
-    # Parsed OPTIONS
-    track: bool = False
-    balance: int = 0       # 0 = not balanced; >0 = weight
-    fallback: int = 0      # 0 = not fallback; -1 = bare fallback; >0 = weighted fallback
-    loose: bool = False
-    optional: bool = False
-    persistent: bool = False
-    tproxy: bool = False
-    # Derived / assigned
-    table: str = ""         # routing table id (number or name)
-
-
-@dataclass
-class Route:
-    """A static route for a provider."""
-    provider: str
-    dest: str
-    gateway: str | None = None
-    device: str | None = None
-    persistent: bool = False
-
-
-@dataclass
-class RoutingRule:
-    """An ip rule for policy routing."""
-    source: str | None = None
-    dest: str | None = None
-    provider: str = ""
-    priority: int = 0
-    mark: str | None = None    # fwmark value, e.g. "0x100/0xff"
-    persistent: bool = False
 
 
 # ── Parsers ────────────────────────────────────────────────────────────
