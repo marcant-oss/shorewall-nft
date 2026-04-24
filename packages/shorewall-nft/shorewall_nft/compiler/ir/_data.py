@@ -265,6 +265,13 @@ class FirewallIR:
     # Default is the upstream defaults (8-bit TC, 8-bit total, low routes).
     mark_geometry: MarkGeometry = field(default_factory=MarkGeometry.default)
 
+    # Multi-ISP provider state — populated by build_ir() from the
+    # providers / routes / rtrules config files.  Channel-2 consumers
+    # (generate-iproute2-rules CLI command) read these after build_ir().
+    providers: list = field(default_factory=list)
+    routes: list = field(default_factory=list)
+    rtrules: list = field(default_factory=list)
+
     # Macro registry: populated by _load_standard_macros (bundled Shorewall
     # macros) and _load_custom_macros (user macros override).  Per-compile
     # state — moved here from module-level _CUSTOM_MACROS so repeated

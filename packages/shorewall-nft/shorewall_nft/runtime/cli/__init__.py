@@ -179,6 +179,7 @@ cli.add_command(_apply_tc_cmd)
 # ──────────────────────────────────────────────────────────────────────
 from shorewall_nft.runtime.cli.generate_cmds import (  # noqa: E402
     generate_conntrackd,
+    generate_iproute2_rules,
     generate_set_loader,
     generate_sysctl,
     generate_systemd,
@@ -190,6 +191,7 @@ cli.add_command(generate_systemd)
 cli.add_command(generate_conntrackd)
 cli.add_command(generate_tc)
 cli.add_command(generate_set_loader)
+cli.add_command(generate_iproute2_rules)
 
 from shorewall_nft.runtime.cli.config_cmds import (  # noqa: E402
     config_group as _config_group,

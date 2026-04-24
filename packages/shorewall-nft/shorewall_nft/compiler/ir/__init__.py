@@ -239,27 +239,24 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
         process_accounting(ir, config.accounting)
 
     # Process providers (multi-ISP routing)
+    from shorewall_nft.compiler.providers import (
+        emit_provider_marks,
+        parse_providers,
+        parse_routes,
+        parse_rtrules,
+    )
     if config.providers:
-        from shorewall_nft.compiler.providers import parse_providers
         providers = parse_providers(config.providers)
-        # Provider marks → mangle rules for policy routing
+        ir.providers = providers
+        # Channel 1: nft mangle-prerouting mark rules
         if providers:
-            if "mangle-prerouting" not in ir.chains:
-                ir.add_chain(Chain(
-                    name="mangle-prerouting",
-                    chain_type=ChainType.ROUTE,
-                    hook=Hook.PREROUTING,
-                    priority=-150,
-                ))
-            for prov in providers:
-                if prov.mark:
-                    mangle = ir.chains["mangle-prerouting"]
-                    mangle.rules.append(Rule(
-                        matches=[Match(field="iifname", value=prov.interface)],
-                        verdict=Verdict.ACCEPT,
-                        verdict_args=MarkVerdict(value=prov.mark),
-                        comment=f"provider:{prov.name}",
-                    ))
+            emit_provider_marks(ir, providers)
+
+    if config.routes:
+        ir.routes = parse_routes(config.routes)
+
+    if config.rtrules:
+        ir.rtrules = parse_rtrules(config.rtrules)
 
     # Process tunnels
     if config.tunnels:

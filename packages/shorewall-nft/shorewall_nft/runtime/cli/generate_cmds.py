@@ -126,3 +126,33 @@ def generate_tc(directory, config_dir, config_dir_v4, config_dir_v6,
         click.echo(emit_tc_commands(tc))
     else:
         click.echo("No TC configuration found.")
+
+
+@click.command("generate-iproute2-rules")
+@click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
+@config_options
+def generate_iproute2_rules(directory, config_dir, config_dir_v4, config_dir_v6,
+                             no_auto_v4, no_auto_v6):
+    """Generate iproute2 routing setup script for multi-ISP providers.
+
+    Reads the providers, routes, and rtrules config files and emits a
+    shell script that configures ip rule / ip route for policy routing.
+    The script is written to stdout; redirect to a file or pipe into sh.
+    """
+    from shorewall_nft.compiler.ir import build_ir
+    from shorewall_nft.compiler.providers import emit_iproute2_setup
+    from shorewall_nft.config.parser import load_config
+
+    primary, secondary, skip = _resolve_config_paths(
+        directory, config_dir, config_dir_v4, config_dir_v6,
+        no_auto_v4, no_auto_v6)
+    config = load_config(primary, config6_dir=secondary,
+                         skip_sibling_merge=skip)
+    ir = build_ir(config)
+    script = emit_iproute2_setup(
+        ir.providers,
+        ir.routes,
+        ir.rtrules,
+        config.settings,
+    )
+    click.echo(script, nl=False)

@@ -1,0 +1,3 @@
+#NAME	NUMBER	MARK	DUPLICATE	INTERFACE	GATEWAY		OPTIONS			COPY
+isp1	1	0x01	-		eth0		203.0.113.1	track,balance=2		-
+isp2	2	0x02	-		eth1		198.51.100.1	track,balance=1		-
