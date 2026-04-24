@@ -40,3 +40,12 @@ ignore = ["E501", "E701", "E731", "E741", "F601", "F841"]
 "**/tests/**" = ["E402", "E702", "I001"]
 # Generated protobuf stubs — not human-authored, ignore all style rules.
 "packages/shorewalld/shorewalld/proto/*_pb2.py" = ["E", "F", "I"]
+# Package __init__.py shims for the WP4.2 (cli.py split) and WP4.3
+# (ir.py split) refactors carry many ``from .submodule import X``
+# lines that are intentionally unused locally — they preserve the
+# historical ``from shorewall_nft.runtime.cli import X`` /
+# ``from shorewall_nft.compiler.ir import X`` import paths after
+# the split. Late module-level imports are also intentional
+# (registration order matters).
+"packages/shorewall-nft/shorewall_nft/compiler/ir/__init__.py" = ["F401", "E402"]
+"packages/shorewall-nft/shorewall_nft/runtime/cli/__init__.py" = ["F401", "E402"]

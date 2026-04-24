@@ -27,8 +27,8 @@ from shorewall_nft.compiler.ir import (
     Match,
     Rule,
     Verdict,
-    expand_line_for_tokens,
     _has_set_token,
+    expand_line_for_tokens,
 )
 from shorewall_nft.compiler.verdicts import DnatVerdict, RedirectVerdict, SnatVerdict
 from shorewall_nft.config.parser import ConfigLine

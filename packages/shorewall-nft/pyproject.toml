@@ -77,3 +77,9 @@ ignore = ["E501", "E701", "E731", "E741", "F601", "F841"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E402", "E702", "I001"]
+# Package __init__.py shims that re-export the public API of a split
+# package — many `from .submodule import X` lines that are intentionally
+# unused locally to keep the historical import paths working after the
+# WP4.2 (cli.py split) and WP4.3 (ir.py split) refactors.
+"shorewall_nft/compiler/ir/__init__.py" = ["F401", "E402"]
+"shorewall_nft/runtime/cli/__init__.py" = ["F401", "E402"]

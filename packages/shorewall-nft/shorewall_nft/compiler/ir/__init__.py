@@ -8,6 +8,36 @@ from __future__ import annotations
 
 import logging
 
+from shorewall_nft.compiler.ir._data import (
+    _MAC_RE,
+    Chain,
+    ChainType,
+    FirewallIR,
+    Hook,
+    Match,
+    Rule,
+    Verdict,
+    _is_mac_addr,
+    _parse_rate_limit,
+    is_ipv6_spec,
+    split_nft_zone_pair,
+)
+from shorewall_nft.compiler.ir.spec_rewrite import (
+    _AND_MULTISET_RE,
+    _BRACKET_SET_RE,
+    _has_set_token,
+    _normalise_bracket_flags,
+    _rewrite_bracket_spec,
+    _rewrite_dns_spec,
+    _rewrite_dnsr_spec,
+    _rewrite_nfset_spec,
+    _rewrite_spec_for_family,
+    _spec_contains_bracket_ipset,
+    _spec_contains_dns_token,
+    _spec_contains_dnsr_token,
+    _spec_contains_nfset_token,
+    expand_line_for_tokens,
+)
 from shorewall_nft.compiler.verdicts import (
     AuditVerdict,
     CtHelperVerdict,
@@ -34,55 +64,8 @@ from shorewall_nft.nft.nfsets import (
     build_nfset_registry,
     nfset_to_set_name,
 )
-from shorewall_nft.compiler.ir._data import (
-    Chain,
-    ChainType,
-    FirewallIR,
-    Hook,
-    Match,
-    Rule,
-    Verdict,
-    _MAC_RE,
-    _is_mac_addr,
-    _parse_rate_limit,
-    is_ipv6_spec,
-    split_nft_zone_pair,
-)
-from shorewall_nft.compiler.ir.spec_rewrite import (
-    _AND_MULTISET_RE,
-    _BRACKET_SET_RE,
-    _has_set_token,
-    _normalise_bracket_flags,
-    _rewrite_bracket_spec,
-    _rewrite_dns_spec,
-    _rewrite_dnsr_spec,
-    _rewrite_nfset_spec,
-    _rewrite_spec_for_family,
-    _spec_contains_bracket_ipset,
-    _spec_contains_dns_token,
-    _spec_contains_dnsr_token,
-    _spec_contains_nfset_token,
-    expand_line_for_tokens,
-)
 
 _log = logging.getLogger(__name__)
-
-from shorewall_nft.compiler.ir.rules import (
-    _MACRO_RE,
-    _NATIVE_HANDLED_MACROS,
-    _RFC1918_RANGES,
-    _SLASH_MACRO_RE,
-    _add_rule,
-    _expand_macro,
-    _expand_zone_list,
-    _load_custom_macros,
-    _load_standard_macros,
-    _parse_verdict,
-    _parse_zone_spec,
-    _process_rules,
-    _sentinel_to_addr,
-    _zone_pair_chain_name,
-)
 
 from shorewall_nft.compiler.ir._build import (
     _ROUTESTOPPED_VALID_OPTIONS,
@@ -103,6 +86,22 @@ from shorewall_nft.compiler.ir._build import (
     _process_scfilter,
     _process_stoppedrules,
     _set_self_zone_policies,
+)
+from shorewall_nft.compiler.ir.rules import (
+    _MACRO_RE,
+    _NATIVE_HANDLED_MACROS,
+    _RFC1918_RANGES,
+    _SLASH_MACRO_RE,
+    _add_rule,
+    _expand_macro,
+    _expand_zone_list,
+    _load_custom_macros,
+    _load_standard_macros,
+    _parse_verdict,
+    _parse_zone_spec,
+    _process_rules,
+    _sentinel_to_addr,
+    _zone_pair_chain_name,
 )
 
 

@@ -171,8 +171,8 @@ def start(directory, netns, shorewalld_socket, instance_name,
     nft_iface = None
     with prog.step("Probing kernel capabilities") as s:
         try:
-            from shorewall_nft.nft.capability_check import check_capabilities, format_errors
             from shorewall_nft.nft.capabilities import NftCapabilities
+            from shorewall_nft.nft.capability_check import check_capabilities, format_errors
             from shorewall_nft.nft.netlink import NftInterface
             nft_iface = NftInterface()
             caps = NftCapabilities.probe(netns=netns, nft=nft_iface)
@@ -614,8 +614,8 @@ def check(directory, skip_caps, config_dir, config_dir_v4, config_dir_v6,
         click.echo(f"Configuration compiled ({len(ir.chains)} chains).")
 
         if not skip_caps:
-            from shorewall_nft.nft.capability_check import check_capabilities, format_errors
             from shorewall_nft.nft.capabilities import NftCapabilities
+            from shorewall_nft.nft.capability_check import check_capabilities, format_errors
 
             click.echo("Checking kernel capabilities...")
             caps = NftCapabilities.probe()
@@ -778,7 +778,8 @@ def apply_tc(directory, config_dir, config_dir_v4, config_dir_v6,
     namespace via pyroute2's IPRoute(netns=) constructor.  No
     ip-netns-exec fork is used.
     """
-    from shorewall_nft.compiler.tc import apply_tc as _apply_tc_impl, parse_tc_config
+    from shorewall_nft.compiler.tc import apply_tc as _apply_tc_impl
+    from shorewall_nft.compiler.tc import parse_tc_config
     from shorewall_nft.config.parser import load_config
 
     primary, secondary, skip = _resolve_config_paths(

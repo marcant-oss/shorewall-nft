@@ -14,12 +14,10 @@ import click
 from shorewall_nft.runtime.cli._common import (
     _check_loaded_hash,
     _compile,
-    _compile_from_cli,
     _extract_table,
     _resolve_config_paths,
     config_options,
 )
-
 
 # ──────────────────────────────────────────────────────────────────────
 # Dynamic blacklist commands (Shorewall-compatible + extensions)

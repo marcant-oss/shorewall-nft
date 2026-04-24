@@ -19,34 +19,23 @@ import re
 from pathlib import Path
 
 from shorewall_nft.compiler.ir._data import (
-    Chain,
-    ChainType,
     FirewallIR,
-    Hook,
     Match,
     Rule,
     Verdict,
-    _MAC_RE,
     _is_mac_addr,
     _parse_rate_limit,
     is_ipv6_spec,
-    split_nft_zone_pair,
 )
 from shorewall_nft.compiler.ir.spec_rewrite import (
-    _AND_MULTISET_RE,
-    _BRACKET_SET_RE,
-    _has_set_token,
-    _normalise_bracket_flags,
     _rewrite_bracket_spec,
     _rewrite_dns_spec,
     _rewrite_dnsr_spec,
     _rewrite_nfset_spec,
-    _rewrite_spec_for_family,
     _spec_contains_bracket_ipset,
     _spec_contains_dns_token,
     _spec_contains_dnsr_token,
     _spec_contains_nfset_token,
-    expand_line_for_tokens,
 )
 from shorewall_nft.compiler.verdicts import (
     AuditVerdict,
@@ -54,7 +43,6 @@ from shorewall_nft.compiler.verdicts import (
 )
 from shorewall_nft.config.parser import ConfigLine
 from shorewall_nft.config.zones import ZoneModel
-
 
 # Macro pattern: NAME(VERDICT) e.g. SSH(ACCEPT), DNS(DROP):$LOG
 # Name can contain hyphens (e.g. OrgAdmin(ACCEPT))

@@ -26,8 +26,8 @@ class ValidationResult:
 
 def validate_sysctl(config_dir: Path) -> list[ValidationResult]:
     """Validate that sysctl settings match the Shorewall config."""
-    from shorewall_nft.config.parser import load_config
     from shorewall_nft.compiler.sysctl import generate_sysctl_script
+    from shorewall_nft.config.parser import load_config
 
     results: list[ValidationResult] = []
     config = load_config(config_dir)

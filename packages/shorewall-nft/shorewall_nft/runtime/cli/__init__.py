@@ -115,18 +115,44 @@ def cli(ctx, q, verbose, override_json, override_per_file):
 
 from shorewall_nft.runtime.cli.apply_cmds import (  # noqa: E402
     apply_tc as _apply_tc_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     check as _check_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     clear as _clear_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     compile_cmd as _compile_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     load_sets as _load_sets_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     reload as _reload_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     reset as _reset_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     restart as _restart_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     restore as _restore_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     save as _save_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     show as _show_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     start as _start_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     status as _status_cmd,
+)
+from shorewall_nft.runtime.cli.apply_cmds import (
     stop as _stop_cmd,
 )
 
@@ -167,17 +193,25 @@ cli.add_command(generate_set_loader)
 
 from shorewall_nft.runtime.cli.config_cmds import (  # noqa: E402
     config_group as _config_group,
+)
+from shorewall_nft.runtime.cli.config_cmds import (
     merge_config as _merge_config_cmd,
 )
 
 cli.add_command(_config_group)
 cli.add_command(_merge_config_cmd)
 
+from shorewall_nft.runtime.cli.plugin_cmds import (
+    _register_plugin_commands,
+)
+from shorewall_nft.runtime.cli.plugin_cmds import (
+    enrich_cmd as _enrich_cmd,
+)
+from shorewall_nft.runtime.cli.plugin_cmds import (
+    lookup_cmd as _lookup_cmd,
+)
 from shorewall_nft.runtime.cli.plugin_cmds import (  # noqa: E402
     plugins_cmd as _plugins_cmd,
-    lookup_cmd as _lookup_cmd,
-    enrich_cmd as _enrich_cmd,
-    _register_plugin_commands,
 )
 
 cli.add_command(_plugins_cmd)
@@ -187,16 +221,38 @@ _register_plugin_commands(cli)
 
 from shorewall_nft.runtime.cli.debug_cmds import (  # noqa: E402
     allow as _allow_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     blacklist as _blacklist_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     capabilities as _capabilities_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     counters as _counters_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     debug as _debug_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     drop as _drop_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     explain_nft_features as _explain_nft_features_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     migrate as _migrate_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     reject as _reject_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     simulate as _simulate_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     trace as _trace_cmd,
+)
+from shorewall_nft.runtime.cli.debug_cmds import (
     verify as _verify_cmd,
 )
 

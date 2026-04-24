@@ -24,15 +24,15 @@ from shorewall_nft.compiler.ir._data import (
     Verdict,
     is_ipv6_spec,
 )
-from shorewall_nft.compiler.ir.spec_rewrite import (
-    _has_set_token,
-    expand_line_for_tokens,
-)
 from shorewall_nft.compiler.ir.rules import (
     _parse_verdict,
     _parse_zone_spec,
     _sentinel_to_addr,
     _zone_pair_chain_name,
+)
+from shorewall_nft.compiler.ir.spec_rewrite import (
+    _has_set_token,
+    expand_line_for_tokens,
 )
 from shorewall_nft.compiler.verdicts import (
     CtHelperVerdict,

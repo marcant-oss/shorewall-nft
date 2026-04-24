@@ -36,8 +36,8 @@ def generate_set_loader(directory, config_dir, config_dir_v4, config_dir_v6,
 def generate_sysctl(directory, config_dir, config_dir_v4, config_dir_v6,
                     no_auto_v4, no_auto_v6):
     """Generate sysctl configuration script."""
-    from shorewall_nft.config.parser import load_config
     from shorewall_nft.compiler.sysctl import generate_sysctl_script
+    from shorewall_nft.config.parser import load_config
 
     primary, secondary, skip = _resolve_config_paths(
         directory, config_dir, config_dir_v4, config_dir_v6,
