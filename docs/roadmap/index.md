@@ -17,6 +17,7 @@
 | [simlab-alignment-todo.md](simlab-alignment-todo.md) | Standalone TODO (Task #38) — investigate aligning simlab with `simulate.py` so the latter can be retired |
 | [pyroute2-audit-2026-04-24.md](pyroute2-audit-2026-04-24.md) | Baseline audit of where the codebase still shells out to legacy iproute2/iptables tools instead of pyroute2 |
 | [pyroute2-audit-2026-04-24-final.md](pyroute2-audit-2026-04-24-final.md) | Post-Phase-6 audit — verdict: PASS (zero new production shell-outs) |
+| [shorewalld-log-dispatcher-todo.md](shorewalld-log-dispatcher-todo.md) | Standalone TODO — extend WP-E1 with LOGFORMAT/LOGRULENUMBERS + shorewalld as the per-netns nflog dispatcher (replaces ulogd2 plumbing) |
 
 ## See also
 

@@ -148,11 +148,14 @@ class NamedCounterVerdict:
 
 @dataclass(frozen=True)
 class NflogVerdict:
-    """Log via nfnetlink log (currently hardcoded to group 0).
+    """Log via nfnetlink log (nft ``log group N``).
 
-    TODO: make the group configurable once the shorewall-nft config
-    surface exposes nflog_group.
+    ``group`` is the nfnetlink_log group number (0–65535).  The default
+    of 0 matches the previous hard-coded behaviour; the emitter will
+    override it with the ``LOG_GROUP`` setting when LOG_BACKEND is
+    netlink/NFLOG/ULOG.
     """
+    group: int = 0
 
 
 @dataclass(frozen=True)

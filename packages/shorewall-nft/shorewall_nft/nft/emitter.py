@@ -6,6 +6,7 @@ for unified IPv4/IPv6 support.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
 from shorewall_nft.compiler.ir import (
@@ -43,6 +44,73 @@ from shorewall_nft.nft.flowtable import emit_flow_offload_rule
 
 if TYPE_CHECKING:
     from shorewall_nft.nft.capabilities import NftCapabilities  # noqa: F401
+
+
+# ── Log-infrastructure settings ──────────────────────────────────────────────
+
+#: nft log levels recognised by the kernel (same set as syslog priorities).
+_VALID_NFT_LOG_LEVELS = frozenset(
+    {"emerg", "alert", "crit", "err", "warn", "notice", "info", "debug"}
+)
+
+#: Accepted LOG_BACKEND values (case-insensitive, after upper()).
+#: ULOG and NFLOG are legacy aliases for the netlink group backend.
+_KNOWN_LOG_BACKENDS = frozenset({"LOG", "NETLINK", "NFLOG", "ULOG"})
+
+
+@dataclass
+class LogSettings:
+    """Resolved log-infrastructure settings from shorewall.conf.
+
+    ``backend`` is one of ``"LOG"`` (syslog path) or ``"netlink"``
+    (nfnetlink_log group dispatch).  The raw ``LOG_BACKEND`` value is
+    normalised during ``_log_settings_from_ir()``.
+
+    ``default_level`` is the nft log level used when a rule's
+    ``log_level`` field is unset (or not a recognised level string).
+
+    ``group`` is only meaningful when ``backend == "netlink"``.  It
+    maps to the ``log group N`` nft fragment.
+
+    This dataclass is an emit-time concern only.  Validation (invalid
+    backend, non-integer group) is done at ``build_ir()`` time so
+    errors surface at compile time, not at script-generation time.
+
+    Option C (LOGFORMAT / LOGRULENUMBERS / MAXZONENAMELENGTH) is
+    intentionally absent here — it will be slotted in as a separate
+    work package.
+    """
+    backend: str = "LOG"        # "LOG" or "netlink"
+    default_level: str = "info"
+    group: int = 1
+
+
+def _log_settings_from_ir(ir: FirewallIR) -> LogSettings:
+    """Extract and normalise log settings from ``ir.settings``.
+
+    The normalisation mirrors the upstream Config.pm logic:
+      - ``LOG`` → syslog backend
+      - ``netlink`` / ``NFLOG`` → nfnetlink_log group backend
+      - ``ULOG`` → alias for netlink (legacy)
+
+    Validation (unknown backend, non-integer group) is expected to have
+    already been done by ``build_ir()``; this function trusts the values.
+    """
+    raw_backend = ir.settings.get("LOG_BACKEND", "LOG").strip().upper()
+    if raw_backend in ("NETLINK", "NFLOG", "ULOG"):
+        backend = "netlink"
+    else:
+        backend = "LOG"
+
+    raw_level = ir.settings.get("LOG_LEVEL", "info").strip().lower()
+    default_level = raw_level if raw_level in _VALID_NFT_LOG_LEVELS else "info"
+
+    try:
+        group = int(ir.settings.get("LOG_GROUP", "1"))
+    except (TypeError, ValueError):
+        group = 1
+
+    return LogSettings(backend=backend, default_level=default_level, group=group)
 
 
 def emit_nft(ir: FirewallIR, static_nft: str | None = None,
@@ -279,16 +347,21 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
                          "if the driver does not support it.")
         lines.extend(emit_flowtable(ft).splitlines())
 
+    # Resolve log-infrastructure settings once for the whole emit pass.
+    log_settings = _log_settings_from_ir(ir)
+
     # Emit base chains first, then zone-pair chains
     base_chains = [c for c in ir.chains.values() if c.is_base_chain]
     other_chains = [c for c in ir.chains.values() if not c.is_base_chain]
 
     for chain in sorted(base_chains, key=lambda c: _hook_order(c.hook)):
-        lines.extend(_emit_chain(chain, ir, indent="\t", debug_ctx=debug_ctx))
+        lines.extend(_emit_chain(chain, ir, indent="\t", debug_ctx=debug_ctx,
+                                 log_settings=log_settings))
         lines.append("")
 
     for chain in sorted(other_chains, key=lambda c: c.name):
-        lines.extend(_emit_chain(chain, ir, indent="\t", debug_ctx=debug_ctx))
+        lines.extend(_emit_chain(chain, ir, indent="\t", debug_ctx=debug_ctx,
+                                 log_settings=log_settings))
         lines.append("")
 
     # Include static.nft content inside the table
@@ -454,6 +527,7 @@ def emit_arp_nft(ir: FirewallIR) -> str:
     lines.append("delete table arp filter")
     lines.append("")
     lines.append("table arp filter {")
+    log_settings = _log_settings_from_ir(ir)
     for chain in sorted(ir.arp_chains.values(),
                         key=lambda c: _hook_order(c.hook)):
         lines.append(f"\tchain {chain.name} {{")
@@ -465,7 +539,8 @@ def emit_arp_nft(ir: FirewallIR) -> str:
             f"{chain.priority};{policy_str}")
         for idx, rule in enumerate(chain.rules):
             for rule_str in _emit_rule_lines(rule, chain_name=chain.name,
-                                             rule_idx=idx):
+                                             rule_idx=idx,
+                                             log_settings=log_settings):
                 lines.append(f"\t\t{rule_str}")
         lines.append("\t}")
         lines.append("")
@@ -501,6 +576,7 @@ def emit_stopped_nft(ir: FirewallIR) -> str:
     lines.append("")
     lines.append("table inet shorewall_stopped {")
 
+    log_settings = _log_settings_from_ir(ir)
     for chain in sorted(ir.stopped_chains.values(),
                         key=lambda c: _hook_order(c.hook)):
         lines.append(f"\tchain {chain.name} {{")
@@ -512,7 +588,8 @@ def emit_stopped_nft(ir: FirewallIR) -> str:
             f"{chain.priority};{policy_str}")
         for idx, rule in enumerate(chain.rules):
             for rule_str in _emit_rule_lines(rule, chain_name=chain.name,
-                                             rule_idx=idx):
+                                             rule_idx=idx,
+                                             log_settings=log_settings):
                 lines.append(f"\t\t{rule_str}")
         lines.append("\t}")
         lines.append("")
@@ -523,7 +600,8 @@ def emit_stopped_nft(ir: FirewallIR) -> str:
 
 
 def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
-                debug_ctx: "_DebugContext | None" = None) -> list[str]:
+                debug_ctx: "_DebugContext | None" = None,
+                log_settings: "LogSettings | None" = None) -> list[str]:
     """Emit a single chain definition."""
     lines: list[str] = []
 
@@ -569,7 +647,8 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
         # Emit ct state rules first (before dispatch)
         for idx, rule in enumerate(chain_rules_to_emit):
             for rule_str in _emit_rule_lines(rule, debug_ctx=debug_ctx,
-                                             chain_name=chain.name, rule_idx=idx):
+                                             chain_name=chain.name, rule_idx=idx,
+                                             log_settings=log_settings):
                 lines.append(f"{indent}\t{rule_str}")
 
         if chain_rules_to_emit or emitted_dnat_map:
@@ -590,7 +669,8 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
     if not chain.is_base_chain:
         for idx, rule in enumerate(chain.rules):
             rule_stmts = _emit_rule_lines(rule, debug_ctx=debug_ctx,
-                                          chain_name=chain.name, rule_idx=idx)
+                                          chain_name=chain.name, rule_idx=idx,
+                                          log_settings=log_settings)
             if rule_stmts:
                 if rule.comment and debug_ctx is None:
                     # In normal mode, emit ?COMMENT tag as a shell comment.
@@ -1082,12 +1162,13 @@ _TYPED_VERDICT_EMITTERS: dict[type, Callable] = {
     EcnClearVerdict: lambda _v: "ip ecn set not-ect",
     CounterVerdict: lambda _v: "counter accept",
     NamedCounterVerdict: lambda v: f'counter name "{v.name}" accept',
-    NflogVerdict: lambda _v: "log group 0",
+    NflogVerdict: lambda v: f"log group {v.group}",
     AuditVerdict: lambda v: f'log prefix "AUDIT:{v.base_action}: " accept',
 }
 
 def _emit_rule_lines(rule: Rule, debug_ctx: "_DebugContext | None" = None,
-                     chain_name: str = "", rule_idx: int = 0) -> list[str]:
+                     chain_name: str = "", rule_idx: int = 0,
+                     log_settings: "LogSettings | None" = None) -> list[str]:
     """Emit a rule as one or more nft statement strings.
 
     For plain rate-limit rules this returns a single element list.
@@ -1114,23 +1195,30 @@ def _emit_rule_lines(rule: Rule, debug_ctx: "_DebugContext | None" = None,
         stripped = _copy.copy(rule)
         stripped.rate_limit = None  # type: ignore[attr-defined]
         verdict_stmt = _emit_rule(stripped, debug_ctx=debug_ctx,
-                                  chain_name=chain_name, rule_idx=rule_idx)
+                                  chain_name=chain_name, rule_idx=rule_idx,
+                                  log_settings=log_settings)
         result = [meter_stmt]
         if verdict_stmt:
             result.append(verdict_stmt)
         return result
     single = _emit_rule(rule, debug_ctx=debug_ctx,
-                        chain_name=chain_name, rule_idx=rule_idx)
+                        chain_name=chain_name, rule_idx=rule_idx,
+                        log_settings=log_settings)
     return [single] if single else []
 
 
 def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
-               chain_name: str = "", rule_idx: int = 0) -> str:
+               chain_name: str = "", rule_idx: int = 0,
+               log_settings: "LogSettings | None" = None) -> str:
     """Emit a single rule as nft syntax.
 
     In debug mode (debug_ctx provided), the rule gets:
       - `counter name "r_<chain>_<idx>"` before its verdict
       - `comment "<source_ref>"` at the end
+
+    ``log_settings`` carries the resolved LOG_LEVEL / LOG_BACKEND /
+    LOG_GROUP from shorewall.conf.  When None, the function falls back to
+    the static defaults (``info`` level, ``LOG`` backend).
     """
     parts: list[str] = []
 
@@ -1236,17 +1324,30 @@ def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
     # Verdict
     if rule.verdict == Verdict.LOG:
         prefix = rule.log_prefix or ""
-        level = ""
+        # Determine the effective log level:
+        #   1. per-rule log_level (strip Limit tags like "info:LOGIN,12,60")
+        #   2. global LOG_LEVEL from shorewall.conf (log_settings.default_level)
+        #   3. hardcoded default "info"
         if rule.log_level is not None:
-            # Strip Limit tags like "info:LOGIN,12,60" → "info"
-            level = rule.log_level.split(":")[0] if ":" in rule.log_level else rule.log_level
-        # Valid nft log levels
-        valid_levels = {"emerg", "alert", "crit", "err", "warn", "notice", "info", "debug"}
-        level_str = f" level {level}" if level in valid_levels else ""
-        if prefix:
-            parts.append(f'log{level_str} prefix "{prefix} "')
+            raw_level = (rule.log_level.split(":")[0]
+                         if ":" in rule.log_level else rule.log_level)
         else:
-            parts.append(f"log{level_str}" if level_str else "log")
+            raw_level = log_settings.default_level if log_settings else "info"
+        level = raw_level if raw_level in _VALID_NFT_LOG_LEVELS else "info"
+
+        # Dispatch by backend.
+        effective_backend = log_settings.backend if log_settings else "LOG"
+        if effective_backend == "netlink":
+            # nfnetlink_log backend: nft `log group N` — no level, no prefix.
+            group = log_settings.group if log_settings else 1
+            parts.append(f"log group {group}")
+        else:
+            # Standard syslog (LOG) backend.
+            level_str = f" level {level}"
+            if prefix:
+                parts.append(f'log{level_str} prefix "{prefix} "')
+            else:
+                parts.append(f"log{level_str}")
     elif rule.verdict == Verdict.REJECT:
         parts.append("reject")
     elif rule.verdict == Verdict.DROP:

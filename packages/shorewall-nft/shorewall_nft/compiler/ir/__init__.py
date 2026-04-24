@@ -111,12 +111,49 @@ from shorewall_nft.compiler.ir.rules import (
 )
 
 
+def _validate_log_settings(settings: dict) -> None:
+    """Validate LOG_BACKEND and LOG_GROUP at build_ir() time.
+
+    Accepted LOG_BACKEND values (case-insensitive):
+      ``LOG``     — standard syslog path (nft ``log level ...``)
+      ``netlink`` — nfnetlink_log (nft ``log group N``)
+      ``NFLOG``   — alias for netlink (upstream Shorewall compat)
+      ``ULOG``    — legacy alias for netlink (upstream Shorewall compat)
+
+    Raises ValueError for any other value so the error surfaces at
+    compile time, not at script-generation time.
+    """
+    raw_backend = settings.get("LOG_BACKEND", "LOG")
+    if raw_backend is not None:
+        normalised = raw_backend.strip().upper()
+        accepted = {"LOG", "NETLINK", "NFLOG", "ULOG"}
+        if normalised not in accepted:
+            raise ValueError(
+                f"Invalid LOG_BACKEND value {raw_backend!r}. "
+                f"Accepted values: {', '.join(sorted(accepted))}"
+            )
+
+    raw_group = settings.get("LOG_GROUP")
+    if raw_group is not None:
+        try:
+            int(raw_group)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid LOG_GROUP value {raw_group!r}: must be an integer "
+                f"in the range 0–65535"
+            ) from exc
+
+
 def build_ir(config: ShorewalConfig) -> FirewallIR:
     """Build the complete IR from a parsed config."""
     zones = build_zone_model(config)
     ir = FirewallIR(zones=zones, settings=config.settings)
     ir.mark_geometry = MarkGeometry.from_settings(config.settings)
     ir._fastaccept = config.settings.get("FASTACCEPT", "Yes").lower() in ("yes", "1")
+
+    # Validate log-infrastructure settings early so errors surface at
+    # compile time rather than at nft script-generation time.
+    _validate_log_settings(config.settings)
 
     # Seed DNS set registry with global defaults from shorewall.conf;
     # per-name overrides from the ``dnsnames`` config file win over
