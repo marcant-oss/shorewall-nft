@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (simlab live-state collector + `--data` integration)
+
+- **`tools/simlab-collect.sh`** — small bash helper that captures a
+  firewall's live address / route / policy-rule / link / netfilter
+  snapshot into a directory compatible with simlab's `--data DIR`.
+  Two-tier output: Tier 1 (rtnetlink reads, dynamic-routing daemon
+  RIB) is fully unprivileged and works under any uid; Tier 2
+  (iptables-save, ip6tables-save, nft list ruleset, ipset save,
+  conntrack -L) requires CAP_NET_ADMIN and is skipped with a clear
+  manifest note when run as a non-root user. Per-capture status is
+  recorded in `manifest.txt` so operators can tell at a glance what
+  ran and what was skipped. New man page
+  `shorewall-nft-simlab-collect.1`.
+- **`shorewall-nft simulate --data DIR`** — when set, delegates to
+  shorewall-nft-simlab via the new `api.run_simulation_from_config()`
+  entry point. The DIR is consumed in simlab's expected layout
+  (typically produced by the collector). When `--data` is absent the
+  in-tree `verify/simulate.py` veth-based validator runs as before;
+  no regression. `--iptables` becomes optional in `--data` mode (the
+  ruleset comes from `<data>/iptables.txt`).
+- **shorewall-nft-simlab `api.run_simulation_from_config()`** — thin
+  programmatic entry point wrapping the existing `cmd_full` pipeline.
+  Returns a flat `list[SimResult]` extracted from simlab's
+  `report.json` so the calling shorewall-nft CLI can render results
+  in its native format. Eliminates simlab follow-up #76 (FwState
+  synthesis from config — never needed; live state is captured
+  instead).
+
 ### Added
 
 - **shorewalld NFLOG log dispatcher (MVP)** — shorewalld can now

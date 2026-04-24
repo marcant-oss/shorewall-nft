@@ -1,0 +1,155 @@
+.TH SHOREWALL-NFT-SIMLAB-COLLECT 1 "2026-04-24" "shorewall-nft 1.10.2" "General Commands"
+.SH NAME
+simlab-collect.sh \- capture a firewall's live topology + netfilter snapshot for shorewall-nft-simlab
+
+.SH SYNOPSIS
+.B tools/simlab-collect.sh
+[\fB\-\-output\fR \fIDIR\fR]
+[\fB\-\-host\fR \fINAME\fR]
+[\fB\-h\fR | \fB\-\-help\fR]
+
+.SH DESCRIPTION
+Captures a directory compatible with
+.B shorewall-nft simulate \-\-data
+(and the underlying
+.BR shorewall\-nft\-simlab (1)).
+Designed to run
+.I on the live firewall
+as a normal user: Tier 1 captures (addresses, routes, policy rules,
+link metadata, bird / FRR RIB) are read from rtnetlink or world-
+readable files and require no special privilege. Tier 2 captures
+(iptables-save / ip6tables-save / nft / ipset / conntrack) require
+CAP_NET_ADMIN; when the script runs as non-root those captures are
+skipped with a note in
+.IR manifest.txt .
+
+The script never modifies any kernel or filesystem state.
+
+.SH OPTIONS
+.TP
+.BR \-\-output " " \fIDIR\fR
+Directory to create and populate.  Default:
+.BI "./simlab-dump-<host>-<UTC>" .
+.TP
+.BR \-\-host " " \fINAME\fR
+Hostname label for
+.IR manifest.txt .
+Default:
+.BR hostname\ -s .
+.TP
+.BR \-h ", " \-\-help
+Show the usage help and exit.
+
+.SH OUTPUT FILES
+.SS Tier 1 \(em unprivileged
+.TP
+.B ip4add \fR/\fB ip6add
+Output of
+.B ip addr show
+and
+.BR "ip -6 addr show" .
+Consumed by simlab's
+.B load_fw_state
+to build its TUN/TAP topology.
+.TP
+.B ip4routes \fR/\fB ip6routes
+Main routing table (v4) and all-table (v6) dumps.
+.TP
+.B ip4rules \fR/\fB ip6rules
+Policy-routing rule table dumps.
+.TP
+.B ip4routes-all
+Per-table v4 route breakdown (all routing tables combined).
+.TP
+.B rt_tables
+Copy of
+.IR /etc/iproute2/rt_tables ;
+symbolic names for the numeric table IDs referenced in
+.IR ip[46]rules .
+.TP
+.B ip-link-details
+.B "ip -details link show"
+\(em includes device kind (gre, gretap, vlan, bond, veth, \&...),
+master, flags.
+.TP
+.B bird-routes.txt \fR/\fB frr-routes.txt
+Best-effort dump of bird / FRR pre-FIB RIB. Missing if the routing
+daemon is absent or the caller lacks socket permissions.
+
+.SS Tier 2 \(em privileged (skipped when run as non-root)
+.TP
+.B iptables.txt \fR/\fB ip6tables.txt
+Output of
+.BR iptables\-save " / " ip6tables\-save .
+Uses the
+.I "iptables-save(8)"
+syntax expected by simlab's rule-derivation pipeline.
+.TP
+.B ebtables.save \fR/\fB arptables.save
+Bridge-layer and ARP filter dumps (rare but captured when the
+relevant binaries are installed).
+.TP
+.B nft\-ruleset.nft
+Output of
+.BR "nft list ruleset" :
+the complete native nftables ruleset including sets, maps and
+flowtables.
+.TP
+.B ipset.save
+Classic
+.BR ipset (8)
+storage (distinct from nft sets).
+.TP
+.B conntrack.txt
+.B "conntrack -L"
+\(em a snapshot of active flows. Diagnostic only; not consumed by
+simlab.
+
+.SS Metadata
+.TP
+.B manifest.txt
+One
+.BI "LABEL : STATUS"
+line per capture
+.RB "(" captured ", " skipped\-permission ", " skipped\-binary\-absent ")"
+followed by host / timestamp / kernel / effective-UID / collector
+version lines.
+
+.SH EXAMPLES
+.TP
+Unprivileged snapshot (default):
+.nf
+.RI "$ ./tools/simlab-collect.sh --output /tmp/fw-snapshot"
+.fi
+.TP
+Full snapshot including netfilter dumps:
+.nf
+.RI "$ sudo ./tools/simlab-collect.sh --output /tmp/fw-snapshot"
+.fi
+.TP
+Capture a per-VRF netns:
+.nf
+.RI "$ sudo ip netns exec fw1 ./tools/simlab-collect.sh --output /tmp/fw1"
+.fi
+.TP
+Feed the snapshot to
+.B "shorewall-nft simulate" :
+.nf
+.RI "$ shorewall-nft simulate --config-dir /etc/shorewall46 --data /tmp/fw-snapshot"
+.fi
+
+.SH EXIT STATUS
+Exits 0 unless
+.B mkdir
+or the manifest-write fails.  Individual capture failures are
+recorded in the manifest and do not affect the exit status.
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-simlab (1),
+.BR iptables\-save (8),
+.BR nft (8),
+.BR conntrack (8),
+.BR ipset (8),
+.BR ip\-rule (8),
+.BR ip\-route (8).

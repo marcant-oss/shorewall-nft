@@ -381,8 +381,8 @@ def migrate(directory, iptables, output, dry_run,
 
 @click.command()
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
-@click.option("--iptables", type=click.Path(exists=True, path_type=Path), required=True,
-              help="iptables-save dump (ground truth).")
+@click.option("--iptables", type=click.Path(exists=True, path_type=Path), required=False,
+              help="iptables-save dump (ground truth). Required unless --data is used.")
 @click.option("--target", default="203.0.113.5", help="Target IP for tests.")
 @click.option("--targets", default=None,
               help="Comma-separated list of target IPs, or @FILE with one IP "
@@ -413,12 +413,27 @@ def migrate(directory, iptables, output, dry_run,
 @click.option("-v", "--verbose", is_flag=True, help="Show all test results.")
 @click.option("--parallel", "-j", default=4, help="Parallel test threads.")
 @click.option("--no-trace", is_flag=True, help="Disable nft trace logging.")
+@click.option("--data", "data_dir",
+              type=click.Path(exists=True, file_okay=False, path_type=Path),
+              default=None,
+              help="Delegate to shorewall-nft-simlab using a live-state dump "
+                   "directory (produced by tools/simlab-collect.sh). "
+                   "When set, the in-tree veth-based simulator is bypassed "
+                   "and probes run against a TUN/TAP topology synthesised "
+                   "from the dump. Requires shorewall-nft-simlab installed.")
 @config_options
 def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
              src_iface, dst_iface, all_zones, max_tests, seed, verbose,
-             parallel, no_trace,
+             parallel, no_trace, data_dir,
              config_dir, config_dir_v4, config_dir_v6, no_auto_v4, no_auto_v6):
-    """Run packet-level simulation in 3 network namespaces."""
+    """Run packet-level simulation in 3 network namespaces.
+
+    With ``--data DIR`` the command delegates to shorewall-nft-simlab.
+    The DIR is expected to match simlab's layout (ip4add / ip4routes /
+    ip6add / ip6routes + iptables.txt + optional ip6tables.txt), which
+    is exactly what ``tools/simlab-collect.sh`` produces from a live
+    firewall host.
+    """
     from shorewall_nft.verify.simulate import (
         DST_IFACE_DEFAULT,
         SRC_IFACE_DEFAULT,
@@ -429,6 +444,52 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
         directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     config_dir = primary
+
+    # ── Simlab delegation path ──────────────────────────────────────
+    # When --data is given, skip the in-tree veth-based validator and
+    # ask shorewall-nft-simlab to run probes against a TUN/TAP
+    # topology built from the live-state snapshot.
+    if data_dir is not None:
+        try:
+            from shorewall_nft_simlab.api import run_simulation_from_config
+        except ImportError:
+            click.echo(
+                "error: --data requires shorewall-nft-simlab to be "
+                "installed (pip install shorewall-nft-simlab).", err=True)
+            raise SystemExit(2)
+
+        click.echo(f"Simulating {config_dir} via simlab against {data_dir}")
+        click.echo()
+        sim_results = run_simulation_from_config(
+            config_dir=config_dir,
+            fw_state_dir=data_dir,
+            max_per_pair=max_tests,
+            seed=seed,
+            verbose=verbose,
+        )
+        passed = sum(1 for r in sim_results if r.passed)
+        failed = sum(1 for r in sim_results if not r.passed)
+        total = len(sim_results)
+        click.echo()
+        click.echo(f"Results: {passed} passed, {failed} failed ({total} total)")
+        if verbose or failed:
+            for r in sim_results:
+                if not r.passed or verbose:
+                    click.echo(
+                        f"  {'PASS' if r.passed else 'FAIL'}  "
+                        f"{r.category:>10}  {r.inject_iface} -> {r.expect_iface}  "
+                        f"expect={r.expected} got={r.observed}  "
+                        f"{r.elapsed_ms:.1f}ms  {r.desc}"
+                    )
+        if failed:
+            raise SystemExit(1)
+        return
+
+    # --iptables is required unless --data is set (checked above).
+    if iptables is None:
+        click.echo("error: --iptables is required (unless --data is set).",
+                   err=True)
+        raise SystemExit(2)
 
     def _parse_list(val: str | None) -> list[str] | None:
         if not val:

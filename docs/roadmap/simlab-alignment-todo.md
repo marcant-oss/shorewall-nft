@@ -1,13 +1,24 @@
 # TODO — Simlab alignment with `(config_dir, iptables_dump)` model
 
-**Status**: analysis complete (2026-04-24). Full decision + follow-up
-tasks in `docs/testing/simlab-alignment-analysis.md`.
+**Status**: SHIPPED (2026-04-24). Tasks #73, #74, #75, #76 closed
+together via the live-state collector approach.
 
-**Decision**: Option 1 (conservative migration via `--data DIR`
-delegation, simulate.py stays as default backend). Follow-up tasks
-#73 (fix `cli` symbol), #74 (add `api.py` + wire `--data`),
-#75 (rename `simulate.ns()` → `exec_in_ns()`), #76 (deferred —
-`FwState` synthesis from config for eventual simulate.py deletion).
+**Implementation**:
+* `tools/simlab-collect.sh` — unprivileged Tier 1 / sudo Tier 2
+  collector. Writes simlab's `--data DIR` layout from rtnetlink
+  reads + (when root) `iptables-save`/`nft list ruleset`/`ipset save`
+  dumps.
+* `shorewall_nft_simlab/api.py::run_simulation_from_config()` —
+  programmatic entry point wrapping `cmd_full`.
+* `shorewall-nft simulate --data DIR` — delegates to simlab when set;
+  preserves the in-tree veth-based validator as default.
+* Task #76 (FwState synthesis from config) is OBSOLETE — live state
+  capture via the collector covers VRRP / BGP / runtime MTUs that
+  config synthesis could never reach.
+
+**Decision** (kept for context): Option 1 (conservative migration via
+`--data DIR` delegation, `simulate.py` stays as default backend).
+Full analysis in `docs/testing/simlab-alignment-analysis.md`.
 
 **Original investigation brief** (kept for context):
 
