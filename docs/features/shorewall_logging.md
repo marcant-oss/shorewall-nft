@@ -109,6 +109,20 @@ Syslog may also write to your system console. See [Shorewall FAQ 16](../referenc
 
 ## Configuring a Separate Log for Shorewall Messages (ulogd)
 
+> **shorewall-nft alternative:** operators already running
+> [`shorewalld`](../shorewalld/index.md) per netns can skip the `ulogd2`
+> plumbing entirely — enable `LOG_DISPATCH=shorewalld` +
+> `LOG_NFLOG_GROUP=<N>` in `shorewalld.conf` and point the firewall
+> at the same group (`nft log group <N>` / shorewall-nft
+> `LOG_BACKEND=netlink,<N>`). shorewalld subscribes inside each
+> managed netns and surfaces matches as a Prometheus counter plus
+> any combination of plain-file / unix-socket JSON / systemd-journald
+> / `/dev/log` sinks. Full reference:
+> [`docs/shorewalld/index.md` § NFLOG log dispatcher](../shorewalld/index.md#nflog-log-dispatcher).
+> The pure-ulogd2 path described below remains supported for
+> deployments that have existing ulogd2 stacks or operators who
+> prefer process isolation.
+
 There are a couple of limitations to syslogd-based logging:
 
 1.  If you give, for example, kern.info its own log destination then that destination will also receive all kernel messages of levels 5 (notice) through 0 (emerg).
@@ -359,6 +373,31 @@ instead of `nft log level X` rules. This allows per-group log sinks
 (e.g. a dedicated `nflog` group consumed by a shorewalld instance or
 `ulogd2`).
 
-The planned Option C extension (LOGFORMAT + LOGRULENUMBERS + shorewalld
-as the per-netns nflog dispatcher, replacing ulogd2 plumbing) is tracked
-as Task #69 in `docs/roadmap/shorewalld-log-dispatcher-todo.md`.
+### shorewalld as NFLOG dispatcher (MVP shipped 2026-04-24)
+
+The Option C "shorewalld absorbs per-netns nflog dispatch" work
+landed as the `log-dispatcher-mvp` branch. Activation is a single
+`shorewalld.conf` pair:
+
+```
+LOG_DISPATCH=shorewalld
+LOG_NFLOG_GROUP=<N>       # same N as LOG_BACKEND=NFLOG + LOG_GROUP=N
+```
+
+With those two knobs set, every per-netns `shorewalld` worker
+subscribes to `nfnetlink_log` group `N` inside its netns and
+surfaces matches as `shorewall_log_total{chain,disposition,netns}`
+on the Prometheus endpoint. Up to four additive external sinks are
+available: plain-text file (`LOG_DISPATCH_FILE`), unix-socket JSON
+fan-out (`LOG_DISPATCH_SOCKET`), systemd-journald
+(`LOG_DISPATCH_JOURNALD=yes`), RFC 3164 syslog
+(`LOG_DISPATCH_SYSLOG=/dev/log`). Each sink has its own bounded
+queue with drop-on-full semantics — a slow SIEM or journald consumer
+cannot stall firewall event logging.
+
+Full operator reference:
+[`docs/shorewalld/index.md` § NFLOG log dispatcher](../shorewalld/index.md#nflog-log-dispatcher).
+
+The original design doc (including Wazuh ECS schema, sampling, and
+multi-group-per-netns as follow-up work) is in
+`docs/roadmap/shorewalld-log-dispatcher-todo.md`.

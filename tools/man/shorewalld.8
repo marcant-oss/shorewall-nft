@@ -12,7 +12,7 @@ shorewalld \- Prometheus exporter and DNS-driven nft-set daemon for shorewall-nf
 .B shorewalld
 is the companion daemon for
 .BR shorewall\-nft (8).
-It provides two independent services:
+It provides three independent services:
 
 .TP
 .B Prometheus exporter
@@ -44,6 +44,27 @@ ACCEPT  fw  net:dns:github.com  tcp  443
 .fi
 .RE
 The compiler declares the nft sets; shorewalld keeps them populated.
+
+.TP
+.B NFLOG log dispatcher
+Subscribes to an
+.B nfnetlink_log
+group inside every managed netns and surfaces matches as a
+labelled Prometheus counter plus optional sinks (plain file, unix
+socket, systemd-journald, /dev/log).  Activated by
+.B LOG_DISPATCH=shorewalld
+together with
+.BI LOG_NFLOG_GROUP= N
+(must match the
+.I N
+in
+.BI \[dq]nft log group "  " N \[dq]
+/ the shorewall\-nft
+.BI LOG_BACKEND=netlink, N
+directive).  Every sink is drop-on-full; a slow downstream consumer
+never stalls the firewall event path.  Replaces the per-netns
+.BR ulogd2 (8)
+plumbing for operators already running shorewalld per netns.
 
 Running
 .B shorewalld
@@ -304,6 +325,67 @@ lower latency on sparse traffic.  Also configurable via
 .B BATCH_WINDOW_SECONDS
 in
 .IR shorewalld.conf .
+.TP
+.BI \-\-log\-dispatch " MODE"
+NFLOG log-dispatcher activation.  One of
+.BR shorewalld ,
+.BR ulogd2 ,
+.B none
+(default).
+.B shorewalld
+turns on the per-netns
+.B nfnetlink_log
+subscription (requires
+.BR CAP_NET_ADMIN );
+.B ulogd2
+signals operator intent ("my own ulogd2 unit handles this") and
+behaves like
+.B none
+for shorewalld itself.
+Requires
+.B \-\-log\-nflog\-group
+to be set.
+.TP
+.BI \-\-log\-nflog\-group " N"
+nfnetlink_log group number to subscribe to when
+.BR \-\-log\-dispatch = shorewalld .
+Must match the
+.I N
+in the nft
+.BI "log group " N
+directive (or shorewall-nft
+.BI LOG_BACKEND=netlink, N ).
+.TP
+.BI \-\-log\-dispatch\-file " PATH"
+Optional plain-text append-only sink.  Format:
+.IR "<ts> netns=<X> chain=<Y> disposition=<Z> [rule=<N>]" .
+Opened with
+.B O_NONBLOCK
+so a slow disk drops events rather than stalling the hot path.
+.TP
+.BI \-\-log\-dispatch\-socket " PATH"
+Optional unix-socket fan-out sink.  Any client connected over
+AF_UNIX/SOCK_STREAM receives newline-JSON events
+(schema_version=1: ts, netns, chain, disposition, rule_num).
+Multi-subscriber; slow clients are disconnected, not throttled.
+.TP
+.B \-\-log\-dispatch\-journald
+Forward events to
+.BR systemd-journald (8)
+via
+.IR /run/systemd/journal/socket
+with structured fields
+.RB ( SHOREWALL_CHAIN ,
+.BR SHOREWALL_DISPOSITION ,
+.BR SHOREWALL_NETNS ,
+.BR SHOREWALL_RULE_NUM ).
+Priority maps from disposition (DROP/REJECT = 4, ACCEPT = 6,
+else = 5).
+.TP
+.BI \-\-log\-dispatch\-syslog " PATH"
+Forward events to a syslog daemon as RFC 3164 datagrams (typical:
+.IR /dev/log ).
+LOCAL0 facility; severity maps as for journald.
 
 .SH tap SUBCOMMAND
 .B shorewalld tap
@@ -399,8 +481,37 @@ STATE_DIR=/var/lib/shorewalld
 LOG_LEVEL=info
 LOG_TARGET=journal
 LOG_FORMAT=structured
+
+# NFLOG log dispatcher (see section below).
+LOG_DISPATCH=shorewalld
+LOG_NFLOG_GROUP=1
+LOG_DISPATCH_FILE=/var/log/shorewall-nft.log
+LOG_DISPATCH_SOCKET=/run/shorewalld/log.sock
+LOG_DISPATCH_JOURNALD=yes
+LOG_DISPATCH_SYSLOG=/dev/log
 .fi
 .RE
+
+.SS NFLOG log dispatcher keys
+.B LOG_DISPATCH
+(shorewalld | ulogd2 | none; default
+.BR none )
+— activate the per-netns
+.B nfnetlink_log
+subscription.  When set to
+.BR shorewalld ,
+.B LOG_NFLOG_GROUP
+(positive integer) selects the kernel group to subscribe to.
+Sinks are additive — any combination of
+.BR LOG_DISPATCH_FILE ,
+.BR LOG_DISPATCH_SOCKET ,
+.BR LOG_DISPATCH_JOURNALD ,
+.B LOG_DISPATCH_SYSLOG
+may be set; leaving all of them unset yields a counter-only
+dispatcher (Prometheus families still emitted).  Each sink has its
+own bounded queue and contributes a
+.BI shorewall_log_dropped_total{reason=sink_ X }
+counter so backpressure is operator-visible.
 
 .SH PROMETHEUS METRICS
 Endpoint:
@@ -569,6 +680,39 @@ reason values:
 (SNMP walk timed out),
 .B snmp_parse
 (unexpected SNMP OID value).
+
+.SS NFLOG log-dispatcher metrics (when LOG_DISPATCH=shorewalld)
+.TP
+.B shorewall_log_total{chain,disposition,netns}
+Counter.  NFLOG events observed by shorewalld, one row per
+.RI ( chain , " disposition" , " netns" )
+triple.  Monotonic.  Driven by the LOGFORMAT prefix: a rule like
+.BI \[dq]nft log group " N " prefix " \[dq]Shorewall:net-fw:DROP:\[dq] \[dq]"
+increments
+.BR shorewall_log_total{chain=\[dq]net-fw\[dq],disposition=\[dq]DROP\[dq],netns=\[dq]fw\[dq]} .
+.TP
+.B shorewall_log_events_total
+Counter (no labels).  Grand total of events received by the
+dispatcher; matches the sum over
+.BR shorewall_log_total .
+Useful on dashboards before the operator has indexed the triple
+space.
+.TP
+.B shorewall_log_dropped_total{reason}
+Counter.  Events dropped because a sink's bounded queue was full at
+.BR put_nowait .
+Label values:
+.BR sink_file ,
+.BR sink_socket ,
+.BR sink_journald ,
+.BR sink_syslog .
+Non-zero means the named sink is slower than the event rate; take
+action (faster consumer, larger kernel buffer, or drop the sink).
+.sp
+Worker-side drops (kernel-to-worker buffer overflow or parent
+SEQPACKET full, where the event never reaches the parent dispatcher
+at all) are logged rate-limited but NOT reflected in this counter:
+the parent simply never received the event.
 
 .SH FILES
 .TP
