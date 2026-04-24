@@ -15,6 +15,19 @@ This module turns the parsed config into runnable shell snippets:
 * optional ``ip route add <addr>/32 dev <iface>`` lines for the
   HAVEROUTE=no case
 
+Additionally, ``emit_proxyarp_nft`` / ``emit_proxyndp_nft`` install
+nft filter rules that complement the kernel proxy mechanism:
+
+* **proxyarp (IPv4)**: one ``arp daddr ip <addr> iifname <ext> accept``
+  rule per entry in the ``arp filter`` table, so nftables explicitly
+  passes the ARP requests through to the kernel's proxy_arp handler.
+* **proxyndp (IPv6)**: one ``ip6 daddr <addr> nexthdr icmpv6 icmpv6
+  type { nd-neighbor-solicit, nd-neighbor-advert } iifname <ext>
+  accept`` rule per entry in the inet filter ``input`` chain, ahead
+  of the generic NDP accept rules.  This makes the proxied addresses
+  visible in the nft ruleset for auditing and lets firewall operators
+  add address-specific logging if needed.
+
 The shell snippets are emitted via the new
 ``shorewall-nft generate-proxyarp`` / ``generate-proxyndp`` CLI
 subcommands, and the runtime ``start`` command applies them
@@ -27,14 +40,24 @@ Config formats::
     ADDRESS  INTERFACE  EXTERNAL  HAVEROUTE  PERSISTENT
     # proxyndp
     ADDRESS  INTERFACE  EXTERNAL  HAVEROUTE  PERSISTENT
+
+Upstream reference (Perl): Proxyarp.pm at tag 5.2.6.1 — the Perl module
+exclusively manages routes / neigh entries / sysctls; it does not emit
+iptables rules. The nft filter rules above are a shorewall-nft extension
+that makes the proxy traffic policy explicit in the ruleset rather than
+relying solely on the kernel's implicit proxy_arp behaviour.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from shorewall_nft.compiler.ir import is_ipv6_spec
 from shorewall_nft.config.parser import ConfigLine
+
+if TYPE_CHECKING:
+    from shorewall_nft.compiler.ir._data import FirewallIR
 
 
 @dataclass
@@ -397,3 +420,110 @@ def emit_proxyarp_script(
                 f"dev {e.iface}")
     lines.append("")
     return "\n".join(lines)
+
+
+def emit_proxyarp_nft(ir: "FirewallIR", entries: list[ProxyArpEntry]) -> None:
+    """Inject ARP filter rules for IPv4 proxy ARP entries into *ir*.
+
+    For each IPv4 proxy ARP entry an ``arp daddr ip <addr> iifname
+    <ext_iface> accept`` rule is added to the ``arp-input`` chain in
+    ``ir.arp_chains``.  This makes the kernel's proxy_arp behaviour
+    explicit in the nft ruleset — the firewall accepts incoming ARP
+    requests for proxied addresses on the external interface, allowing
+    the kernel's proxy_arp handler to generate replies.
+
+    IPv6 entries (detected via :func:`is_ipv6_spec`) are silently skipped
+    — those are handled by :func:`emit_proxyndp_nft`.
+
+    The ``arp-input`` base chain is created if absent (idempotent with
+    the arprules path which also creates it — whichever runs first wins,
+    the second call finds the chain already present).
+
+    Upstream deviation: upstream Proxyarp.pm emits no iptables rules;
+    this function is a shorewall-nft extension that makes proxy ARP
+    policy visible in the compiled ruleset.
+    """
+    from shorewall_nft.compiler.ir._data import (
+        Chain,
+        ChainType,
+        Hook,
+        Match,
+        Rule,
+        Verdict,
+    )
+
+    ipv4_entries = [e for e in entries if not is_ipv6_spec(e.address)]
+    if not ipv4_entries:
+        return
+
+    # Ensure the arp-input base chain exists.  If arprules already
+    # created it we reuse it; otherwise create a minimal accept-policy
+    # chain here (proxy ARP is cooperative, not restrictive).
+    if "arp-input" not in ir.arp_chains:
+        ir.arp_chains["arp-input"] = Chain(
+            name="arp-input",
+            chain_type=ChainType.FILTER,
+            hook=Hook.INPUT,
+            priority=0,
+            policy=Verdict.ACCEPT,
+        )
+    arp_input = ir.arp_chains["arp-input"]
+
+    for e in ipv4_entries:
+        addr = e.address.split("/", 1)[0]
+        rule = Rule(verdict=Verdict.ACCEPT)
+        rule.matches.append(Match(field="arp daddr ip", value=addr))
+        rule.matches.append(Match(field="iifname", value=e.ext_iface))
+        rule.comment = f"proxyarp {addr} via {e.ext_iface}"
+        arp_input.rules.append(rule)
+
+
+def emit_proxyndp_nft(ir: "FirewallIR", entries: list[ProxyArpEntry]) -> None:
+    """Inject NDP filter rules for IPv6 proxy NDP entries into *ir*.
+
+    For each IPv6 proxy NDP entry an::
+
+        ip6 daddr <addr> nexthdr icmpv6
+        icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert }
+        iifname <ext_iface> accept
+
+    rule is prepended to the ``input`` base chain in ``ir.chains``.
+    These rules fire before the generic NDP accept rules already
+    emitted by ``_create_base_chains``, making proxied addresses
+    explicit in the compiled ruleset for auditing.
+
+    IPv4 entries are silently skipped — those are handled by
+    :func:`emit_proxyarp_nft`.
+
+    Upstream deviation: upstream Proxyarp.pm emits no iptables rules;
+    this function is a shorewall-nft extension.
+    """
+    from shorewall_nft.compiler.ir._data import Match, Rule, Verdict
+
+    ipv6_entries = [e for e in entries if is_ipv6_spec(e.address)]
+    if not ipv6_entries:
+        return
+
+    # The inet filter ``input`` chain must already exist (created by
+    # _create_base_chains before build_ir calls us).  If for some reason
+    # it is absent we skip silently rather than crashing — the kernel's
+    # proxy_ndp sysctl still works without the explicit nft rule.
+    if "input" not in ir.chains:
+        return
+
+    input_chain = ir.chains["input"]
+
+    for e in ipv6_entries:
+        addr = e.address.split("/", 1)[0]
+        rule = Rule(verdict=Verdict.ACCEPT)
+        rule.matches.append(Match(field="ip6 daddr", value=addr))
+        rule.matches.append(Match(field="nexthdr", value="icmpv6"))
+        rule.matches.append(
+            Match(
+                field="icmpv6 type",
+                value="{ nd-neighbor-solicit, nd-neighbor-advert }",
+            )
+        )
+        rule.matches.append(Match(field="iifname", value=e.ext_iface))
+        rule.comment = f"proxyndp {addr} via {e.ext_iface}"
+        input_chain.rules.append(rule)

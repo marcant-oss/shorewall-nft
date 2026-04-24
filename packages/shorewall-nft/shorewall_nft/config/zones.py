@@ -17,6 +17,9 @@ class Interface:
     zone: str
     broadcast: str | None = None
     options: list[str] = field(default_factory=list)
+    # Parsed option values for options that take a value (e.g. mss=1452).
+    # Keys match the option name without the "=" suffix.
+    option_values: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -26,6 +29,25 @@ class Host:
     interface: str
     addresses: list[str] = field(default_factory=list)
     options: list[str] = field(default_factory=list)
+    # Parsed option values for options that take a value (e.g. mss=1452).
+    option_values: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class IpsecOptions:
+    """Parsed IPsec zone OPTIONS (zones file, ipsec/ipsec4/ipsec6 zones).
+
+    Upstream reference: Zones.pm ``parse_zone_option_list`` / ``process_zone``.
+    Each field corresponds to a known ipsec option token.
+    """
+    mss: int | None = None
+    strict: bool = False
+    next: bool = False            # ``next`` keyword: use next SA
+    reqid: int | None = None
+    spi: int | None = None
+    proto: str | None = None      # ``esp`` | ``ah`` | ``comp``
+    mode: str | None = None       # ``tunnel`` | ``transport``
+    mark: int | None = None
 
 
 # Valid Shorewall zone types
@@ -44,6 +66,8 @@ class Zone:
     options: list[str] = field(default_factory=list)
     in_options: list[str] = field(default_factory=list)
     out_options: list[str] = field(default_factory=list)
+    # Parsed IPsec options for ipsec/ipsec4/ipsec6 zones.
+    ipsec_options: IpsecOptions | None = None
 
     @property
     def is_firewall(self) -> bool:
@@ -103,6 +127,11 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
         if ":" in zone_type:
             zone_type, parent = zone_type.split(":", 1)
 
+        # Parse IPsec OPTIONS for ipsec zones
+        ipsec_opts: IpsecOptions | None = None
+        if zone_type in ("ipsec", "ipsec4", "ipsec6"):
+            ipsec_opts = _parse_ipsec_options(options)
+
         zone = Zone(
             name=name,
             zone_type=zone_type,
@@ -110,6 +139,7 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
             options=options,
             in_options=in_options,
             out_options=out_options,
+            ipsec_options=ipsec_opts,
         )
         model.zones[name] = zone
 
@@ -122,7 +152,9 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
         zone_name = cols[0]
         iface_name = cols[1]
         broadcast = cols[2] if len(cols) > 2 else None
-        options = _parse_options(cols[3]) if len(cols) > 3 else []
+        raw_options_str = cols[3] if len(cols) > 3 else ""
+        options = _parse_options(raw_options_str)
+        option_values = _parse_option_values(raw_options_str)
 
         # Shorewall bridge-port syntax: "bridge:port" means the interface
         # is a port on a bridge. Linux kernel interface names cannot
@@ -140,6 +172,7 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
             zone=zone_name,
             broadcast=broadcast,
             options=options,
+            option_values=option_values,
         )
 
         if zone_name in model.zones:
@@ -152,7 +185,9 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
         # Format: ZONE HOST(S) [OPTIONS]
         # HOST(S) is interface:address[,address...]
         host_spec = cols[1] if len(cols) > 1 else ""
-        options = _parse_options(cols[2]) if len(cols) > 2 else []
+        raw_options_str = cols[2] if len(cols) > 2 else ""
+        options = _parse_options(raw_options_str)
+        option_values = _parse_option_values(raw_options_str)
 
         if ":" in host_spec:
             iface, addr_str = host_spec.split(":", 1)
@@ -166,6 +201,7 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
             interface=iface,
             addresses=addresses,
             options=options,
+            option_values=option_values,
         )
 
         if zone_name in model.zones:
@@ -182,3 +218,72 @@ def _parse_options(text: str) -> list[str]:
     if not text or text == "-":
         return []
     return [o.strip() for o in text.split(",") if o.strip()]
+
+
+def _parse_option_values(text: str) -> dict[str, str]:
+    """Parse key=value pairs from a comma-separated options string.
+
+    Returns a dict of ``{key: value}`` for options that use ``key=value``
+    syntax (e.g. ``mss=1452``, ``sourceroute=0``). Simple flag options
+    without ``=`` are not included.
+    """
+    if not text or text == "-":
+        return {}
+    result: dict[str, str] = {}
+    for tok in text.split(","):
+        tok = tok.strip()
+        if "=" in tok:
+            key, _, val = tok.partition("=")
+            result[key.strip()] = val.strip()
+    return result
+
+
+def _parse_ipsec_options(options: list[str]) -> IpsecOptions:
+    """Parse IPsec zone OPTIONS tokens into an :class:`IpsecOptions` struct.
+
+    Upstream reference: ``Zones.pm::parse_zone_option_list`` — all tokens
+    listed below are recognised in the Perl 5.2.6.1 source.
+
+    Token grammar:
+      ``strict``           — enforce strict policy matching
+      ``next``             — advance to next SA
+      ``mss=N``            — TCP MSS clamp value (N >= 500)
+      ``reqid=N``          — IPsec SA request-id
+      ``spi=N``            — Security Parameter Index
+      ``proto=esp|ah|comp``— IPsec protocol
+      ``mode=tunnel|transport`` — IPsec encapsulation mode
+      ``mark=N``           — packet mark (hex or decimal)
+    """
+    opts = IpsecOptions()
+    for tok in options:
+        if tok == "strict":
+            opts.strict = True
+        elif tok == "next":
+            opts.next = True
+        elif tok.startswith("mss="):
+            try:
+                opts.mss = int(tok.split("=", 1)[1])
+            except ValueError:
+                pass
+        elif tok.startswith("reqid="):
+            try:
+                opts.reqid = int(tok.split("=", 1)[1])
+            except ValueError:
+                pass
+        elif tok.startswith("spi="):
+            try:
+                raw = tok.split("=", 1)[1]
+                opts.spi = int(raw, 0)
+            except ValueError:
+                pass
+        elif tok.startswith("proto="):
+            opts.proto = tok.split("=", 1)[1].lower()
+        elif tok.startswith("mode="):
+            opts.mode = tok.split("=", 1)[1].lower()
+        elif tok.startswith("mark="):
+            try:
+                raw = tok.split("=", 1)[1]
+                opts.mark = int(raw, 0)
+            except ValueError:
+                pass
+    return opts

@@ -78,6 +78,7 @@ from shorewall_nft.compiler.ir._build import (
     _process_conntrack,
     _process_dhcp_interfaces,
     _process_ecn,
+    _process_host_options,
     _process_interface_options,
     _process_nfacct,
     _process_notrack,
@@ -188,6 +189,24 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     if getattr(config, "arprules", None):
         _process_arprules(ir, config.arprules)
 
+    # Process proxyarp / proxyndp — emit nft filter rules that make
+    # the kernel's proxy_arp / proxy_ndp mechanism visible in the
+    # compiled ruleset.  The sysctl + neigh-table apply path runs at
+    # start time (in apply_cmds.py); these rules are the compile-time
+    # counterpart.
+    from shorewall_nft.compiler.proxyarp import (
+        emit_proxyarp_nft,
+        emit_proxyndp_nft,
+        parse_proxyarp,
+    )
+    _proxy_entries = (
+        parse_proxyarp(getattr(config, "proxyarp", None) or []) +
+        parse_proxyarp(getattr(config, "proxyndp", None) or [])
+    )
+    if _proxy_entries:
+        emit_proxyarp_nft(ir, _proxy_entries)
+        emit_proxyndp_nft(ir, _proxy_entries)
+
     # Process nfacct (named counter objects in the inet table)
     if getattr(config, "nfacct", None):
         _process_nfacct(ir, config.nfacct)
@@ -254,8 +273,11 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
             rule.verdict_args = MarkVerdict(value=entry.band)
             _chain.rules.append(rule)
 
-    # Add interface-level protections (tcpflags, nosmurfs) and DHCP
+    # Add interface-level protections (tcpflags, nosmurfs, mss=) and DHCP
     _process_interface_options(ir, zones)
+
+    # Per-host option rules (tcpflags, nosmurfs, mss=, blacklist)
+    _process_host_options(ir, zones)
 
     # DHCP: interfaces with 'dhcp' option get automatic UDP 67,68 ACCEPT
     _process_dhcp_interfaces(ir, zones)

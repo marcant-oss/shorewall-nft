@@ -1047,4 +1047,71 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             if time_match:
                 rule.time_match = time_match
 
+            # WP-D3: IPsec policy match injection.
+            # When the source or destination zone is an ipsec/ipsec4/ipsec6
+            # zone, prepend the appropriate ``policy in|out ipsec ...``
+            # match to enforce that traffic really arrived/leaves via the
+            # configured SA. Upstream reference: Zones.pm — the ipsec zone
+            # type triggers POLICY_MATCH guards around all zone-pair rules.
+            _inject_ipsec_policy_match(rule, sz, dz, zones)
+
             chain.rules.append(rule)
+
+
+def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
+                                direction: str) -> str | None:
+    """Build the ``policy in|out ipsec ...`` nft clause for *zone_name*.
+
+    Returns ``None`` when the zone is not an ipsec zone (no clause needed).
+
+    ``direction`` must be ``"in"`` (traffic *from* the zone) or ``"out"``
+    (traffic *to* the zone).
+
+    The returned string is the complete inline nft expression, e.g.::
+
+        policy in ipsec reqid 10 proto esp mode tunnel
+    """
+    z = zones.zones.get(zone_name)
+    if z is None:
+        return None
+    if z.zone_type not in ("ipsec", "ipsec4", "ipsec6"):
+        return None
+
+    parts = [f"policy {direction} ipsec"]
+    opts = z.ipsec_options
+    if opts is not None:
+        if opts.reqid is not None:
+            parts.append(f"reqid {opts.reqid}")
+        if opts.spi is not None:
+            parts.append(f"spi {opts.spi:#x}")
+        if opts.proto:
+            parts.append(f"proto {opts.proto}")
+        if opts.mode:
+            parts.append(f"mode {opts.mode}")
+        if opts.mark is not None:
+            parts.append(f"mark {opts.mark:#x}")
+    return " ".join(parts)
+
+
+def _inject_ipsec_policy_match(rule: "Rule", src_zone: str, dst_zone: str,
+                                zones: ZoneModel) -> None:
+    """Prepend IPsec ``policy in/out ipsec`` inline matches to *rule*.
+
+    When the source zone is an ipsec zone, insert ``policy in ipsec ...``
+    at the front of the rule's match list (traffic arrived *in* via the
+    tunnel). When the destination zone is an ipsec zone, append
+    ``policy out ipsec ...`` (traffic must leave *out* via the tunnel).
+    Prepending keeps the policy match as the first discriminator, which
+    is the most efficient order for the kernel's rule evaluator.
+
+    Upstream analogue: Shorewall wraps every rule in an ipsec zone-pair
+    chain with an ``-m policy`` match. We express the same with
+    ``policy in|out ipsec`` which is the nft equivalent.
+    """
+    in_clause = _build_ipsec_policy_clause(src_zone, zones, "in")
+    out_clause = _build_ipsec_policy_clause(dst_zone, zones, "out")
+
+    if in_clause:
+        rule.matches.insert(0, Match(field="inline", value=in_clause))
+    if out_clause:
+        rule.matches.append(Match(field="inline", value=out_clause))

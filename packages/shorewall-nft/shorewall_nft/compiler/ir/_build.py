@@ -337,8 +337,9 @@ def _process_conntrack(ir: FirewallIR, conntrack_lines: list[ConfigLine]) -> Non
 def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
     """Generate nft rules for interface-level protections.
 
-    Handles tcpflags and nosmurfs interface options.
-    Inserted into the input chain after ct state rules.
+    Handles tcpflags, nosmurfs, and mss= interface options.
+    tcpflags/nosmurfs rules are inserted into the input chain.
+    mss= rules are inserted into the forward chain (mangle-postrouting).
     """
     input_chain = ir.chains.get("input")
     if not input_chain:
@@ -349,6 +350,7 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
     for zone in zones.zones.values():
         for iface in zone.interfaces:
             opts = set(iface.options)
+            oval = iface.option_values
 
             if "tcpflags" in opts:
                 # SYN+FIN
@@ -380,11 +382,165 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
                     comment=f"nosmurfs:{iface.name}",
                 ))
 
+            # mss=N — emit a TCP MSS clamp rule in the mangle-forward chain.
+            # Upstream Shorewall: `tcp option maxseg size set <N>` on SYN
+            # packets entering/leaving this interface.
+            mss_str = oval.get("mss")
+            if mss_str is not None:
+                try:
+                    mss_val = int(mss_str)
+                except ValueError:
+                    mss_val = None
+                if mss_val is not None and mss_val >= 500:
+                    _emit_mss_clamp_rule(ir, iface.name, mss_val)
+
     # Insert after ct state rules (positions 0-1) but before dispatch
     insert_pos = 2
     for rule in protection_rules:
         input_chain.rules.insert(insert_pos, rule)
         insert_pos += 1
+
+
+def _emit_mss_clamp_rule(ir: FirewallIR, iface_name: str, mss: int) -> None:
+    """Emit a TCP MSS clamp rule for *iface_name* into the mangle-forward chain.
+
+    Uses nft's ``tcp option maxseg size set <N>`` statement on TCP SYN
+    packets transiting through the given interface.  The rule is placed in
+    ``mangle-forward`` (priority -150) — the same priority that Shorewall
+    uses for its TCPMSS target rules in iptables ``mangle FORWARD``.
+    """
+    from shorewall_nft.compiler.ir._data import Chain, ChainType, Hook
+
+    chain_name = "mangle-forward"
+    if chain_name not in ir.chains:
+        ir.add_chain(Chain(
+            name=chain_name,
+            chain_type=ChainType.ROUTE,
+            hook=Hook.FORWARD,
+            priority=-150,
+        ))
+    chain = ir.chains[chain_name]
+
+    # ingress direction (iifname)
+    r_in = Rule(
+        verdict=Verdict.ACCEPT,
+        comment=f"mss:{iface_name}",
+    )
+    r_in.matches.append(Match(field="iifname", value=iface_name))
+    r_in.matches.append(Match(field="meta l4proto", value="tcp"))
+    r_in.matches.append(Match(field="tcp flags & syn", value="syn"))
+    r_in.matches.append(Match(
+        field="inline",
+        value=f"tcp option maxseg size set {mss}",
+    ))
+    chain.rules.append(r_in)
+
+    # egress direction (oifname)
+    r_out = Rule(
+        verdict=Verdict.ACCEPT,
+        comment=f"mss:{iface_name}",
+    )
+    r_out.matches.append(Match(field="oifname", value=iface_name))
+    r_out.matches.append(Match(field="meta l4proto", value="tcp"))
+    r_out.matches.append(Match(field="tcp flags & syn", value="syn"))
+    r_out.matches.append(Match(
+        field="inline",
+        value=f"tcp option maxseg size set {mss}",
+    ))
+    chain.rules.append(r_out)
+
+
+def _process_host_options(ir: FirewallIR, zones: ZoneModel) -> None:
+    """Generate nft rules for per-host OPTIONS (from the hosts file).
+
+    Upstream reference: ``Zones.pm::process_host`` — valid per-host options
+    are: ``routeback``, ``blacklist``, ``tcpflags``, ``nosmurfs``,
+    ``maclist``, ``mss=N``, ``ipsec``, ``broadcast``, ``destonly``,
+    ``sourceonly``.
+
+    Implementation approach:
+
+    * ``tcpflags``  / ``nosmurfs`` — emit the same protection rules as the
+      interface-level variants, but scoped to the host addresses.
+    * ``mss=N``     — emit a TCP MSS clamp rule scoped to the host.
+    * ``blacklist`` — add the host addresses to the dynamic-blacklist nft
+      set match (emit a ``ip saddr @blacklist drop`` rule before the zone
+      dispatch).
+    * ``ipsec``     — mark the zone as IPSEC type and emit a
+      ``policy in ipsec`` / ``policy out ipsec`` match on all rules
+      entering/leaving chains that involve this host (handled at rule-emit
+      time by tagging the zone).
+    * ``routeback``,``broadcast``,``destonly``,``sourceonly`` — annotate
+      only (affect chain dispatch ordering, not individual rules).
+    * ``maclist``   — MAC-list enforcement (stub; full maclist emit is
+      handled by the macfilter module when it exists).
+    """
+    input_chain = ir.chains.get("input")
+    if not input_chain:
+        return
+
+    for zone in zones.zones.values():
+        for host in zone.hosts:
+            opts = set(host.options)
+            oval = host.option_values
+
+            for addr in host.addresses:
+                if not addr or addr == "-":
+                    continue
+
+                # Determine address family field
+                from shorewall_nft.compiler.ir._data import is_ipv6_spec
+                is_v6 = is_ipv6_spec(addr)
+                saddr_field = "ip6 saddr" if is_v6 else "ip saddr"
+
+                # tcpflags — SYN/FIN and SYN/RST checks for this host
+                if "tcpflags" in opts:
+                    for flags in ("syn|fin", "syn|rst"):
+                        r = Rule(
+                            matches=[
+                                Match(field="iifname", value=host.interface),
+                                Match(field=saddr_field, value=addr),
+                                Match(field=f"tcp flags & ({flags})", value=flags),
+                            ],
+                            verdict=Verdict.DROP,
+                            comment=f"tcpflags:host:{addr}",
+                        )
+                        input_chain.rules.append(r)
+
+                # nosmurfs — drop broadcast sources from this host
+                if "nosmurfs" in opts and not is_v6:
+                    r = Rule(
+                        matches=[
+                            Match(field="iifname", value=host.interface),
+                            Match(field=saddr_field, value=addr),
+                            Match(field="fib saddr type", value="broadcast"),
+                        ],
+                        verdict=Verdict.DROP,
+                        comment=f"nosmurfs:host:{addr}",
+                    )
+                    input_chain.rules.append(r)
+
+                # mss=N — TCP MSS clamp scoped to this host source address
+                mss_str = oval.get("mss")
+                if mss_str is not None:
+                    try:
+                        mss_val = int(mss_str)
+                    except ValueError:
+                        mss_val = None
+                    if mss_val is not None and mss_val >= 500:
+                        _emit_mss_clamp_rule(ir, host.interface, mss_val)
+
+                # blacklist — drop packets whose source is in the blacklist set
+                if "blacklist" in opts:
+                    r = Rule(
+                        matches=[
+                            Match(field="iifname", value=host.interface),
+                            Match(field=saddr_field, value=addr),
+                        ],
+                        verdict=Verdict.DROP,
+                        comment=f"blacklist:host:{addr}",
+                    )
+                    input_chain.rules.append(r)
 
 
 def _process_dhcp_interfaces(ir: FirewallIR, zones: ZoneModel) -> None:

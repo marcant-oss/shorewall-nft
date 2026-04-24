@@ -59,51 +59,106 @@ def generate_sysctl_script(config: ShorewalConfig) -> str:
 
     # Per-interface settings from interface options
     zones = build_zone_model(config)
-    per_iface: dict[str, dict[str, str]] = {}
+    per_iface_v4: dict[str, dict[str, str]] = {}  # net.ipv4.conf.<iface>.*
+    per_iface_v6: dict[str, dict[str, str]] = {}  # net.ipv6.conf.<iface>.*
 
     for zone in zones.zones.values():
         for iface in zone.interfaces:
             opts = set(iface.options)
+            oval = iface.option_values  # key=value pairs already parsed
             iface_name = iface.name
-            if iface_name not in per_iface:
-                per_iface[iface_name] = {}
+            if iface_name not in per_iface_v4:
+                per_iface_v4[iface_name] = {}
+            if iface_name not in per_iface_v6:
+                per_iface_v6[iface_name] = {}
+
+            v4 = per_iface_v4[iface_name]
+            v6 = per_iface_v6[iface_name]
 
             # routefilter → rp_filter, mirroring Shorewall:
             #   routefilter         → 1 (strict)
             #   routefilter=1       → 1 (strict, explicit)
             #   routefilter=2       → 2 (loose)
-            #   noroutefilter       → 0 (off)
-            for opt in opts:
-                if opt == "routefilter":
-                    per_iface[iface_name]["rp_filter"] = "1"
-                elif opt.startswith("routefilter="):
-                    val = opt.split("=", 1)[1].strip() or "1"
-                    if val in ("0", "1", "2"):
-                        per_iface[iface_name]["rp_filter"] = val
+            #   noroutefilter / routefilter=0 → 0 (off)
+            if "routefilter" in oval:
+                val = oval["routefilter"]
+                if val in ("0", "1", "2"):
+                    v4["rp_filter"] = val
+            elif "routefilter" in opts:
+                v4["rp_filter"] = "1"
             if "noroutefilter" in opts:
-                per_iface[iface_name]["rp_filter"] = "0"
+                v4["rp_filter"] = "0"
 
-            # logmartians
-            for opt in opts:
-                if opt.startswith("logmartians"):
-                    if "=" in opt:
-                        val = opt.split("=")[1]
-                        per_iface[iface_name]["log_martians"] = val
-                    else:
-                        per_iface[iface_name]["log_martians"] = "1"
+            # logmartians → log_martians
+            if "logmartians" in oval:
+                v4["log_martians"] = oval["logmartians"]
+            elif "logmartians" in opts:
+                v4["log_martians"] = "1"
 
             # arp_filter
-            if "arp_filter" in opts:
-                per_iface[iface_name]["arp_filter"] = "1"
+            if "arp_filter" in oval:
+                v4["arp_filter"] = oval["arp_filter"]
+            elif "arp_filter" in opts:
+                v4["arp_filter"] = "1"
 
-    if per_iface:
-        lines.append("# Per-interface settings")
-        for iface_name, params in sorted(per_iface.items()):
-            for param, value in sorted(params.items()):
-                # Use the interface name without dots for sysctl path
-                sysctl_iface = iface_name.replace(".", "/")
-                lines.append(f"sysctl -w net.ipv4.conf.{sysctl_iface}.{param}={value}")
-        lines.append("")
+            # arp_ignore (values 1-3, 8 per upstream)
+            if "arp_ignore" in oval:
+                v4["arp_ignore"] = oval["arp_ignore"]
+
+            # sourceroute → accept_source_route
+            if "sourceroute" in oval:
+                v4["accept_source_route"] = oval["sourceroute"]
+            elif "sourceroute" in opts:
+                v4["accept_source_route"] = "1"
+
+            # proxyarp → proxy_arp
+            if "proxyarp" in oval:
+                v4["proxy_arp"] = oval["proxyarp"]
+            elif "proxyarp" in opts:
+                v4["proxy_arp"] = "1"
+
+            # forward → forwarding (IPv4)
+            if "forward" in oval:
+                v4["forwarding"] = oval["forward"]
+            elif "forward" in opts:
+                v4["forwarding"] = "1"
+
+            # accept_ra → IPv6 accept_ra
+            if "accept_ra" in oval:
+                v6["accept_ra"] = oval["accept_ra"]
+            elif "accept_ra" in opts:
+                v6["accept_ra"] = "1"
+
+    if per_iface_v4:
+        has_content = any(p for p in per_iface_v4.values())
+        if has_content:
+            lines.append("# Per-interface IPv4 settings")
+            for iface_name, params in sorted(per_iface_v4.items()):
+                if not params:
+                    continue
+                for param, value in sorted(params.items()):
+                    # Dots in interface names become slashes in /proc paths
+                    sysctl_iface = iface_name.replace(".", "/")
+                    lines.append(
+                        f"printf '%s\\n' {value!r} "
+                        f"> /proc/sys/net/ipv4/conf/{sysctl_iface}/{param}"
+                    )
+            lines.append("")
+
+    if per_iface_v6:
+        has_content = any(p for p in per_iface_v6.values())
+        if has_content:
+            lines.append("# Per-interface IPv6 settings")
+            for iface_name, params in sorted(per_iface_v6.items()):
+                if not params:
+                    continue
+                for param, value in sorted(params.items()):
+                    sysctl_iface = iface_name.replace(".", "/")
+                    lines.append(
+                        f"printf '%s\\n' {value!r} "
+                        f"> /proc/sys/net/ipv6/conf/{sysctl_iface}/{param}"
+                    )
+            lines.append("")
 
     # Conntrack
     nf_conntrack_max = settings.get("CONNTRACK_MAX", "")

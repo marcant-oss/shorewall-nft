@@ -1,3 +1,4 @@
 #ZONE	INTERFACE	BROADCAST	OPTIONS
-net	eth0		detect		tcpflags,nosmurfs
-loc	eth1		detect		tcpflags
+net	eth0		detect		tcpflags,nosmurfs,mss=1452,routefilter=1,logmartians=1,sourceroute=0
+loc	eth1		detect		tcpflags,arp_filter,forward=0,accept_ra=0,optional
+vpn	ipsec0		-		-

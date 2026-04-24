@@ -1,0 +1,4 @@
+#ZONE	HOST(S)			OPTIONS
+# Per-host options examples for WP-D2 coverage
+loc	eth1:10.0.1.5		tcpflags,nosmurfs
+loc	eth1:10.0.1.10		mss=1400,routeback

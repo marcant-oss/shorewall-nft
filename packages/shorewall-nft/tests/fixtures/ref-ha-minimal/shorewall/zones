@@ -1,4 +1,6 @@
-#ZONE	TYPE
+#ZONE	TYPE	OPTIONS
 fw	firewall
 net	ipv4
 loc	ipv4
+# IPsec tunnel zone — exercises WP-D3 policy match injection
+vpn	ipsec	proto=esp,mode=tunnel,reqid=1
