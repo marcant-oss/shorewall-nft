@@ -76,6 +76,7 @@ from shorewall_nft.compiler.ir._build import (
     _create_base_chains,
     _prepend_ct_state_to_zone_pair_chains,
     _process_arprules,
+    _process_blacklist,
     _process_blrules,
     _process_conntrack,
     _process_dhcp_interfaces,
@@ -290,6 +291,10 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
 
     # DHCP: interfaces with 'dhcp' option get automatic UDP 67,68 ACCEPT
     _process_dhcp_interfaces(ir, zones)
+
+    # Process legacy blacklist file (simple address/proto/port drop list)
+    if getattr(config, "blacklist", None):
+        _process_blacklist(ir, config.blacklist)
 
     # Process blrules (blacklist rules)
     if config.blrules:

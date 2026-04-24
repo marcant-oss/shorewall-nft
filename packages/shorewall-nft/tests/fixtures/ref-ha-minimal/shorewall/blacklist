@@ -1,0 +1,6 @@
+#
+# Static blacklist file — RFC 5737 example addresses
+#
+# ADDRESS           PROTO   PORT
+192.0.2.0/24
+198.51.100.1        tcp     80

@@ -17,6 +17,33 @@ from shorewall_nft.compiler.ir import (
     Rule,
     Verdict,
 )
+from shorewall_nft.compiler.verdicts import AuditVerdict, SpecialVerdict
+
+
+def _disposition_to_verdict(
+    value: str,
+) -> tuple[Verdict, SpecialVerdict | None]:
+    """Map a Shorewall disposition string to (Verdict, optional AuditVerdict).
+
+    Accepted values (case-insensitive): DROP, REJECT, ACCEPT,
+    A_DROP, A_REJECT.  The A_* variants prepend an AuditVerdict so
+    the emitter logs via the kernel audit subsystem before applying
+    the base action.
+
+    Returns ``(Verdict.DROP, None)`` for any unrecognised string.
+    """
+    canon = value.upper().strip()
+    if canon == "DROP":
+        return Verdict.DROP, None
+    if canon == "REJECT":
+        return Verdict.REJECT, None
+    if canon == "ACCEPT":
+        return Verdict.ACCEPT, None
+    if canon == "A_DROP":
+        return Verdict.DROP, AuditVerdict(base_action="DROP")
+    if canon == "A_REJECT":
+        return Verdict.REJECT, AuditVerdict(base_action="REJECT")
+    return Verdict.DROP, None
 
 
 def create_action_chains(ir: FirewallIR) -> None:
@@ -129,11 +156,23 @@ def _create_multicast_chain(ir: FirewallIR) -> None:
 
 
 def _create_drop_smurfs_chain(ir: FirewallIR) -> None:
-    """action.DropSmurfs: Drop smurf attacks (broadcast source)."""
+    """action.DropSmurfs: Drop smurf attacks (broadcast source).
+
+    The verdict is controlled by ``SMURF_DISPOSITION`` (DROP or A_DROP).
+    """
+    disp = ir.settings.get("SMURF_DISPOSITION", "DROP")
+    verdict, audit = _disposition_to_verdict(disp)
     chain = ir.get_or_create_chain("sw_DropSmurfs")
+    if audit is not None:
+        chain.rules.append(Rule(
+            matches=[Match(field="fib saddr type", value="broadcast")],
+            verdict=Verdict.ACCEPT,
+            verdict_args=audit,
+            comment="smurf:audit",
+        ))
     chain.rules.append(Rule(
         matches=[Match(field="fib saddr type", value="broadcast")],
-        verdict=Verdict.DROP,
+        verdict=verdict,
         comment="smurf",
     ))
 
@@ -208,7 +247,13 @@ def _create_invalid_chain(ir: FirewallIR) -> None:
 
 
 def _create_blacklist_chain(ir: FirewallIR) -> None:
-    """action.BLACKLIST: Default blacklist action chain."""
+    """action.BLACKLIST: Default blacklist action chain.
+
+    The terminal verdict is controlled by ``BLACKLIST_DISPOSITION``
+    (DROP / REJECT / A_DROP / A_REJECT).
+    """
+    disp = ir.settings.get("BLACKLIST_DISPOSITION", "DROP")
+    verdict, audit = _disposition_to_verdict(disp)
     chain = ir.get_or_create_chain("sw_BLACKLIST")
     # Broadcast/multicast silent drop
     chain.rules.append(Rule(
@@ -242,11 +287,23 @@ def _create_blacklist_chain(ir: FirewallIR) -> None:
         ],
         verdict=Verdict.DROP,
     ))
-    chain.rules.append(Rule(verdict=Verdict.DROP))
+    if audit is not None:
+        chain.rules.append(Rule(
+            verdict=Verdict.ACCEPT,
+            verdict_args=audit,
+            comment="blacklist:audit",
+        ))
+    chain.rules.append(Rule(verdict=verdict))
 
 
 def _create_tcp_flags_chain(ir: FirewallIR) -> None:
-    """action.TCPFlags: Drop bad TCP flag combinations."""
+    """action.TCPFlags: Drop bad TCP flag combinations.
+
+    The verdict is controlled by ``TCP_FLAGS_DISPOSITION``
+    (DROP / REJECT / A_DROP / A_REJECT / ACCEPT).
+    """
+    disp = ir.settings.get("TCP_FLAGS_DISPOSITION", "DROP")
+    verdict, audit = _disposition_to_verdict(disp)
     chain = ir.get_or_create_chain("sw_TCPFlags")
     for flags in [
         ("fin | syn", "fin | syn"),
@@ -254,12 +311,22 @@ def _create_tcp_flags_chain(ir: FirewallIR) -> None:
         ("fin | rst", "fin | rst"),
         ("fin | urg | psh", "fin | urg | psh"),
     ]:
+        if audit is not None:
+            chain.rules.append(Rule(
+                matches=[
+                    Match(field="meta l4proto", value="tcp"),
+                    Match(field=f"tcp flags & ({flags[0]})", value=flags[1]),
+                ],
+                verdict=Verdict.ACCEPT,
+                verdict_args=audit,
+                comment="tcpflags:audit",
+            ))
         chain.rules.append(Rule(
             matches=[
                 Match(field="meta l4proto", value="tcp"),
                 Match(field=f"tcp flags & ({flags[0]})", value=flags[1]),
             ],
-            verdict=Verdict.DROP,
+            verdict=verdict,
         ))
 
 
@@ -391,19 +458,32 @@ ACTION_CHAIN_MAP: dict[str, str] = {
 
 
 def create_dynamic_blacklist(ir: FirewallIR, settings: dict[str, str]) -> None:
-    """Create a dynamic blacklist set and chain.
+    """Create dynamic blacklist set and chain.
 
-    The dynamic blacklist is an nft set with timeout support.
-    Addresses can be added at runtime via:
+    ``DYNAMIC_BLACKLIST`` values (Shorewall 5.2.6.1 semantics):
+
+    * ``No``                 — no dynamic blacklist emitted at all.
+    * ``Yes`` / ``ipset-only`` — ipset-based drop chain (standard).
+    * ``ipset,disconnect``   — standard chain + a ``ct state established
+                               ct mark != @dynamic_blacklist disconnect``
+                               rule at the top of the forward chain so that
+                               newly-blacklisted sources have existing flows
+                               torn down immediately.
+    * ``ipset,disconnect-src`` — same as ``ipset,disconnect`` (src-only
+                               semantics; the nft disconnect statement
+                               matches established in both directions
+                               so the behaviour is equivalent).
+
+    The dynamic set itself (``@dynamic_blacklist``) is declared in the
+    emitter via the sets mechanism.  Rules add elements at runtime:
       nft add element inet shorewall dynamic_blacklist { 1.2.3.4 timeout 1h }
-
-    The DYNAMIC_BLACKLIST setting controls this feature.
     """
     dbl = settings.get("DYNAMIC_BLACKLIST", "")
-    if not dbl or dbl.lower() in ("no", "0", ""):
+    if not dbl or dbl.strip().lower() in ("no", "0", ""):
         return
 
-    # Create the dynamic blacklist chain
+    mode = dbl.strip().lower()
+
     chain = ir.get_or_create_chain("sw_dynamic-blacklist")
     chain.rules.append(Rule(
         matches=[Match(field="ip saddr", value="@dynamic_blacklist")],
@@ -411,7 +491,18 @@ def create_dynamic_blacklist(ir: FirewallIR, settings: dict[str, str]) -> None:
         comment="dynamic blacklist",
     ))
 
-    # The set itself is declared in the emitter via the sets mechanism
-    # We signal this by adding a marker to the IR
-    if not hasattr(ir, '_dynamic_blacklist'):
-        ir._dynamic_blacklist = True
+    if not hasattr(ir, "_dynamic_blacklist"):
+        ir._dynamic_blacklist = True  # type: ignore[attr-defined]
+
+    if mode in ("ipset,disconnect", "ipset,disconnect-src"):
+        forward = ir.chains.get("forward")
+        if forward is not None:
+            disconnect_rule = Rule(
+                matches=[
+                    Match(field="ip saddr", value="@dynamic_blacklist"),
+                    Match(field="ct state", value="established"),
+                ],
+                verdict=Verdict.DROP,
+                comment="dynamic blacklist:disconnect",
+            )
+            forward.rules.insert(0, disconnect_rule)
