@@ -320,6 +320,13 @@ dump to compare against.
 .RB ( Required .)
 .RE
 
+.PP
+Supplementary validators (TC, sysctl, routing, conntrack) are provided by
+.BR shorewall_nft_netkit.validators .
+These run as part of the
+.B simulate
+subcommand; see that section for details.
+
 Also accepts the config directory flags.
 
 .SS simulate [\fIDIRECTORY\fR] [\fIOPTIONS\fR]
@@ -415,6 +422,23 @@ only iptables.txt \[->]
 only ip6tables.txt \[->]
 .BR 6 .
 .RE
+
+.PP
+The
+.B simulate
+subcommand relies on a shared validator layer in
+.BR shorewall\-nft\-netkit (the\ \fBshorewall_nft_netkit.validators\fR
+module).  The TC, sysctl, routing, and conntrack validators accept an
+.B ns_name
+keyword argument so they can be called from any named network namespace.
+Both
+.B simulate
+and
+.B shorewall\-nft\-simlab
+import from this shared layer; see
+.BR docs/testing/simlab.md ,
+section
+.RI \(lq "Shared infrastructure (netkit validators)" \(rq.
 
 Also accepts the config directory flags.
 

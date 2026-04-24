@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase II — shared-infrastructure merge into netkit)
+
+- **`shorewall_nft_netkit.validators`** — new package in
+  `shorewall-nft-netkit` that hosts the shared TC / sysctl / routing /
+  conntrack validator layer.  Both `verify/simulate.py` and
+  `shorewall-nft-simlab` (in Phase III) will import from here.
+- **`ns_name` parameter** on all validator functions
+  (`validate_tc`, `validate_sysctl`, `validate_routing`,
+  `validate_nft_loaded`, `run_all_validations`,
+  `run_small_conntrack_probe`, `run_connstate_tests` and the
+  individual `test_*` helpers).  Default is `"shorewall-next-sim-fw"`
+  for backward compatibility.
+- **Socket-based TCP/UDP/ICMP injector** in
+  `run_small_conntrack_probe`: replaces the old
+  `ns(NS_SRC, "nc …")` call with `socket.create_connection()` so the
+  validator works without a separate NS_SRC namespace.
+- **Back-compat re-export shims**: `shorewall_nft.verify.tc_validate`
+  and `shorewall_nft.verify.connstate` remain importable with the same
+  public API — existing callers are unaffected.
+
+### Changed (Phase II)
+
+- `docs/testing/simlab.md`: added "Shared infrastructure (netkit
+  validators)" section describing the `ns_name` parameter, the
+  `validation_warnings` report key (to be wired in Phase III), and
+  migration guidance for callers.
+- `tools/man/shorewall-nft.8`: added cross-reference to the
+  `shorewall_nft_netkit.validators` surface in the `verify` and
+  `simulate` subcommand sections.
+- `packages/shorewall-nft-netkit/CLAUDE.md`: documented the new
+  `validators/` module, its API, and why it lives in netkit.
+
 ### Added (Phase I — dual-stack v4/v6 production parity)
 
 - **`--family {4,6,both}`** global flag on `shorewall-nft-simlab`

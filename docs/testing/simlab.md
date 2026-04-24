@@ -444,6 +444,74 @@ IPv6 probes run at the same quality level as IPv4:
   unique v6 destination before the real batch so neighbor cache entries
   are warm and the first real batch does not flood the NDP path.
 
+## Shared infrastructure (netkit validators)
+
+Both `simulate.py` and simlab consume a shared validator layer that lives in
+`shorewall-nft-netkit/shorewall_nft_netkit/validators/`.  Moving the
+validators there (Phase II of the dual-stack plan) means:
+
+- Any runtime that imports from `shorewall_nft_netkit` can run the same
+  validators without duplicating code.
+- Every validator accepts `ns_name` as a keyword argument, so it can operate
+  inside any named network namespace — not just the fixed `simulate.py`
+  names.
+- The socket-based TCP/UDP/ICMP injector in `run_small_conntrack_probe`
+  runs in the **calling process's network namespace**, removing the
+  dependency on a separate NS_SRC namespace.
+
+### API surface
+
+```python
+from shorewall_nft_netkit.validators import (
+    validate_tc,          # TC script generation + device check
+    validate_sysctl,      # sysctl conformance vs shorewall config
+    validate_routing,     # IP forwarding + interface presence
+    validate_nft_loaded,  # nft table loaded + base chains present
+    run_all_validations,  # orchestrator (runs all four above)
+    run_small_conntrack_probe,  # 4-probe conntrack sanity check
+    ValidationResult,
+    ConnStateResult,
+)
+```
+
+All functions default `ns_name` to `"shorewall-next-sim-fw"` for
+backward compatibility with `simulate.py` callers that don't pass it.
+
+### `ns_name` parameter
+
+Pass `ns_name=<your_fw_netns>` to run any validator inside a non-default
+namespace:
+
+```python
+results = run_small_conntrack_probe(dst_ip="10.1.2.3", ns_name="simlab-fw")
+warnings = [r for r in results if not r.passed]
+```
+
+### `validation_warnings` in simlab reports (Phase III)
+
+Phase III of the dual-stack plan wires `validate_tc` and
+`run_small_conntrack_probe` into simlab's `cmd_full` post-load hook.
+Results will appear in `report.json` under `validation_warnings`:
+
+```json
+{
+  "validation_warnings": [
+    {"name": "ct:tcp_flow_tracked", "passed": false,
+     "detail": "tcp conntrack entries after probe: 0", "ms": 12}
+  ]
+}
+```
+
+A non-empty `validation_warnings` list means the firewall is running but
+conntrack or TC configuration may not match what the config expects.
+
+### Back-compat shims
+
+The original modules `shorewall_nft.verify.tc_validate` and
+`shorewall_nft.verify.connstate` are now thin re-export shims.  Existing
+callers continue to work unchanged.  New code should import directly from
+`shorewall_nft_netkit.validators`.
+
 ## Known limitations
 
 - **Single NS_FW.** HA pair simulation (two FW namespaces

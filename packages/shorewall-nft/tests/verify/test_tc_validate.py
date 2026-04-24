@@ -6,6 +6,12 @@ validate_nft_loaded) are covered by patching ``_ns`` and ``load_config``/
 ``generate_sysctl_script`` where needed.  The core TC path (validate_tc,
 parse_tc_config, emit_tc_commands) is tested by constructing minimal
 ShorewalConfig/ConfigLine stubs in memory.
+
+Patch targets are in the canonical netkit location
+(``shorewall_nft_netkit.validators.tc_validate``) because the implementation
+moved there in Phase II.  The ``shorewall_nft.verify.tc_validate`` module is a
+thin re-export shim that tests continue to import from — assertions are
+unchanged.
 """
 
 from __future__ import annotations
@@ -30,6 +36,9 @@ from shorewall_nft.verify.tc_validate import (
     validate_sysctl,
     validate_tc,
 )
+
+# Canonical patch target — implementation lives in netkit after Phase II.
+_NS_PATCH = "shorewall_nft_netkit.validators.tc_validate._ns"
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +276,7 @@ class TestValidateRouting:
                 return _completed(0, stdout="0")
             return _completed(0, stdout="0")
 
-        with patch("shorewall_nft.verify.tc_validate._ns", side_effect=_ns_stub):
+        with patch(_NS_PATCH, side_effect=_ns_stub):
             results = validate_routing(None)
 
         named = {r.name: r for r in results}
@@ -281,7 +290,7 @@ class TestValidateRouting:
                 return _completed(0, stdout="lo bond1 bond0.20")
             return _completed(0, stdout="0")
 
-        with patch("shorewall_nft.verify.tc_validate._ns", side_effect=_ns_stub):
+        with patch(_NS_PATCH, side_effect=_ns_stub):
             results = validate_routing(None)
 
         named = {r.name: r for r in results}
@@ -297,7 +306,7 @@ class TestValidateRouting:
                 return _completed(0, stdout="lo bond0.20")
             return _completed(0, stdout="0")
 
-        with patch("shorewall_nft.verify.tc_validate._ns", side_effect=_ns_stub):
+        with patch(_NS_PATCH, side_effect=_ns_stub):
             results = validate_routing(None)
 
         named = {r.name: r for r in results}
@@ -319,7 +328,7 @@ class TestValidateSysctl:
 
         with patch("shorewall_nft.config.parser.load_config", return_value=stub_cfg), \
              patch("shorewall_nft.compiler.sysctl.generate_sysctl_script", return_value=sysctl_script), \
-             patch("shorewall_nft.verify.tc_validate._ns", side_effect=_ns_stub):
+             patch(_NS_PATCH, side_effect=_ns_stub):
             results = validate_sysctl(Path("/fake/config"))
 
         assert len(results) == 1
@@ -335,7 +344,7 @@ class TestValidateSysctl:
 
         with patch("shorewall_nft.config.parser.load_config", return_value=stub_cfg), \
              patch("shorewall_nft.compiler.sysctl.generate_sysctl_script", return_value=sysctl_script), \
-             patch("shorewall_nft.verify.tc_validate._ns", side_effect=_ns_stub):
+             patch(_NS_PATCH, side_effect=_ns_stub):
             results = validate_sysctl(Path("/fake/config"))
 
         assert results[0].passed is False
@@ -350,7 +359,7 @@ class TestValidateSysctl:
 
         with patch("shorewall_nft.config.parser.load_config", return_value=stub_cfg), \
              patch("shorewall_nft.compiler.sysctl.generate_sysctl_script", return_value=sysctl_script), \
-             patch("shorewall_nft.verify.tc_validate._ns", side_effect=_ns_stub):
+             patch(_NS_PATCH, side_effect=_ns_stub):
             results = validate_sysctl(Path("/fake/config"))
 
         assert results[0].passed is False
@@ -372,7 +381,7 @@ class TestValidateSysctl:
 
 class TestValidateNftLoaded:
     def test_no_table_fails_immediately(self):
-        with patch("shorewall_nft.verify.tc_validate._ns",
+        with patch(_NS_PATCH,
                    return_value=_completed(1, stdout="")):
             results = validate_nft_loaded()
         assert len(results) == 1
@@ -392,7 +401,7 @@ class TestValidateNftLoaded:
             "  type nat hook prerouting priority -100;\n"
             "}\n"
         )
-        with patch("shorewall_nft.verify.tc_validate._ns",
+        with patch(_NS_PATCH,
                    return_value=_completed(0, stdout=nft_output)):
             results = validate_nft_loaded()
 
@@ -411,7 +420,7 @@ class TestValidateNftLoaded:
             "  ct state established,related accept\n"
             "}\n"
         )
-        with patch("shorewall_nft.verify.tc_validate._ns",
+        with patch(_NS_PATCH,
                    return_value=_completed(0, stdout=nft_output)):
             results = validate_nft_loaded()
 
