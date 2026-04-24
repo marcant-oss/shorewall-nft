@@ -7,6 +7,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase 6 — upstream-Shorewall config-coverage parity)
+
+Closes the largest remaining gaps between the Python compiler and
+upstream Shorewall (Perl) at tag `5.2.6.1`. Driven by a 2026-04-24
+multi-agent audit; executed via the work-package plan in
+`docs/roadmap/phase6-coverage-plan.md`. Test count grew from 1041
+to 1580 (+539). Zero new production shell-outs (pyroute2-first
+standard, see `docs/PRINCIPLES.md` P9).
+
+- **`snat`** file — full upstream parity: `SNAT(addr)`,
+  `SNAT(a1,a2,…)` round-robin, `SNAT(addr:port-range)`,
+  `:random`/`:persistent`/`:fully-random` flags,
+  `MASQUERADE(port-range)`, `CONTINUE`/`ACCEPT`/`NONAT`,
+  `LOG[:level][:tag]:…` action prefix; column matchers
+  `PROBABILITY`, `MARK`, `USER`, `SWITCH`, `ORIGDEST`, `IPSEC`
+  (each with `!` negation).
+- **`nat`** file — classic 1:1 mapping (`EXTERNAL INTERFACE INTERNAL
+  ALL LOCAL`); emits paired PREROUTING DNAT + POSTROUTING SNAT, plus
+  optional OUTPUT DNAT for `LOCAL=Yes`.
+- **`providers`** — full implementation: `track`, `balance=N`,
+  `fallback=N`, `loose`, `optional`, `persistent`, `primary`,
+  `tproxy`. New CLI `shorewall-nft generate-iproute2-rules`
+  emits the operator shell script; `runtime.apply.apply_iproute2_rules()`
+  is the live-apply path via pyroute2.
+- **`routes`** + **`rtrules`** files — both parsed and emitted.
+- **`tcinterfaces`** — full HTB / HFSC / cake qdisc support;
+  `apply_tcinterfaces()` uses pyroute2 (mirrors `apply_tc()`).
+- **`tcpri`** — DSCP→priority map emitted as nft `meta priority set`
+  vmap.
+- **`synparams`** — per-zone SYN-flood guard chains
+  `synflood-<zone>`; jump-prefix injected on TCP-SYN matches in
+  zone-pair chains.
+- **`blacklist`** standalone file (legacy form) — parsed and emitted
+  as drop rules.
+- **`hosts` OPTIONS** — `routeback`, `blacklist`, `tcpflags`,
+  `nosmurfs`, `maclist`, `mss=N`, `ipsec`, `broadcast`, `destonly`,
+  `sourceonly`.
+- **`interfaces` OPTIONS extras** — `mss=N`, `sourceroute`,
+  `optional`, `proxyarp=1`, `routefilter`, `logmartians`,
+  `arp_filter`, `arp_ignore`, `forward`, `accept_ra`. Sysctl
+  generator switched from `sysctl -w` shell calls to direct
+  `printf > /proc/sys/...` writes.
+- **`zones` IPsec OPTIONS** — `mss=`, `strict`, `next`, `reqid=`,
+  `spi=`, `proto=`, `mode=`, `mark=`. Zone-pair chain emit injects
+  `policy in|out ipsec …` clauses for ipsec zones.
+- **proxyarp / proxyndp nft emit** — explicit `arp …` and
+  `ip6 nexthdr icmpv6 …` filter rules complementing the kernel's
+  implicit `proxy_arp`/`proxy_ndp` mechanism (shorewall-nft
+  extension over upstream).
+- **IP-alias setup** — `ADD_IP_ALIASES`, `ADD_SNAT_ALIASES`,
+  `RETAIN_ALIASES` honoured. `apply_ip_aliases()` /
+  `remove_ip_aliases()` use pyroute2 `IPRoute.addr()` (zero
+  shell-outs). `DETECT_DNAT_IPADDRS` is flag-only honoured;
+  live-discovery branch deferred.
+- **`shorewall.conf` settings honoured** — multi-ISP geometry
+  (`USE_DEFAULT_RT`, `BALANCE_PROVIDERS`, `RESTORE_DEFAULT_ROUTE`,
+  `OPTIMIZE_USE_FIRST`); mark geometry (`WIDE_TC_MARKS`,
+  `HIGH_ROUTE_MARKS`, `TC_BITS`, `MASK_BITS`, `PROVIDER_BITS`,
+  `PROVIDER_OFFSET`, `ZONE_BITS`); TC mode (`TC_ENABLED`,
+  `TC_EXPERT`, `MARK_IN_FORWARD_CHAIN`, `CLEAR_TC`);
+  dispositions (`BLACKLIST_DISPOSITION`, `SMURF_DISPOSITION`,
+  `TCP_FLAGS_DISPOSITION`, `RELATED_DISPOSITION`,
+  `INVALID_DISPOSITION`, `UNTRACKED_DISPOSITION`, with `A_*` audit
+  variants); dynamic blacklist modes (`DYNAMIC_BLACKLIST=No|Yes|
+  ipset-only|ipset,disconnect|ipset,disconnect-src`); rate limiting
+  (`LIMIT:BURST`, `CONNLIMIT`); logging
+  (`LOG_LEVEL`, `LOG_BACKEND={LOG,netlink/NFLOG,ULOG}`,
+  `LOG_GROUP`).
+- **`MarkGeometry` IR dataclass** — typed mark-mask layout populated
+  from settings; replaces hardcoded mask assumptions; foundation
+  for provider/TC mark cohabitation under non-default geometry.
+
+### Added (architecture / process)
+
+- **`docs/PRINCIPLES.md` P8 — Backend-pluggable architecture** —
+  IR + parser stay backend-agnostic so nft can be replaced (or
+  joined) by VPP, BPF/XDP, switchdev without touching `compiler/`
+  or `config/`. Direction, not yet fully implemented.
+- **`docs/PRINCIPLES.md` P9 — Resource-efficient agent execution** —
+  cluster + parallelise + cheapest-model-that-fits is mandatory for
+  multi-step / multi-agent work.
+- **`docs/roadmap/upstream-excerpts/`** — 5855 verbatim Perl LOC
+  from `shorewall.old` at tag `5.2.6.1`, the functions agents need
+  to reference instead of re-reading the full 34k-line module tree.
+- **`docs/roadmap/pyroute2-audit-2026-04-24.md`** + final
+  post-Phase-6 audit — verdict PASS, zero new production
+  shell-outs introduced.
+- **`docs/roadmap/shorewalld-log-dispatcher-todo.md`** — standalone
+  TODO (Task #69) for the Option C extension to logging:
+  LOGFORMAT/LOGRULENUMBERS + shorewalld as the per-netns nflog
+  dispatcher (replaces ulogd2 plumbing).
+- **`docs/roadmap/simlab-alignment-todo.md`** — standalone TODO
+  (Task #38) split out of Phase 6.
+
+### Refactor (pyroute2 migration follow-ups)
+
+- **`verify/connstate.py`** — `conntrack -L` / `conntrack -F` shell
+  calls replaced with `pyroute2.NFCTSocket.dump()` / `.flush()`.
+- **`verify/simulate.py`** — last `iptables`/`ip6tables` REDIRECT
+  calls in production code replaced with nft inet-family table
+  loaded via the existing nft helper. Production grep for
+  `"iptables"`/`"ip6tables"` now returns zero binary-call hits.
+
 ### Added (tools/shorewall-compile.sh)
 
 - **`tools/shorewall-compile.sh`** — bash helper that compiles a

@@ -163,3 +163,23 @@ It should be noted that IPv6 implements a "strong host model" whereas Linux IPv4
 A practical application is shown in the Linux [Vserver article](../legacy/Vserver.md#NDP).
 
 [^1]: Courtesy of Bradey Honsinger
+
+---
+
+## shorewall-nft Phase 6 — nft filter rules for proxyarp / proxyndp
+
+Upstream Shorewall relies solely on the kernel's `proxy_arp` /
+`proxy_ndp` sysctl to make the proxied host appear on the external
+network. shorewall-nft emits explicit nft filter rules **in addition**
+to the kernel sysctl:
+
+- For each `proxyarp` entry: an `arp` family rule allowing ARP
+  request/reply for the proxied address on the external interface.
+- For each `proxyndp` entry: an `ip6 nexthdr icmpv6` rule allowing
+  Neighbor Solicitation and Neighbor Advertisement for the proxied
+  IPv6 address.
+
+This makes the proxy policy visible in `nft list ruleset`, auditable
+via `triangle`, and not silently dependent on sysctl state that may
+drift after a reboot. It is a shorewall-nft extension over upstream
+behaviour.

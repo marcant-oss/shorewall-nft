@@ -76,7 +76,27 @@ This article offers hints about how to accomplish common tasks with Shorewall. T
 
 - `/etc/shorewall/tcrules` - Mark or classify traffic for traffic shaping or multiple providers. Deprecated in Shorewall 4.6.0 in favor of `/etc/shorewall/mangle`. Not supported in Shorewall 5.0.0 and later releases.
 
-- `/etc/shorewall/tcinterfaces` and `/etc/shorewall-tcpri` - Define simple traffic shaping.
+- `/etc/shorewall/tcinterfaces` and `/etc/shorewall/tcpri` - Define simple traffic shaping.
+
+- `/etc/shorewall/snat` - Supersedes `/etc/shorewall/masq` in Shorewall 5.0.14. Defines
+  SNAT and masquerade rules with extended column layout (`PROBABILITY`, `MARK`, `USER`,
+  `SWITCH`, `ORIGDEST`, `IPSEC`). See `man shorewall-nft-snat.5`.
+
+- `/etc/shorewall/routes` - Static routes to be added to provider routing tables (used
+  with `/etc/shorewall/providers`). See `man shorewall-nft-routes.5`.
+
+- `/etc/shorewall/rtrules` - Policy routing rules (`ip rule add`) for directing traffic
+  to provider-specific tables. See `man shorewall-nft-rtrules.5`.
+
+- `/etc/shorewall/synparams` - Per-zone SYN-flood protection parameters. Each entry
+  creates a `synflood-<zone>` chain; TCP-SYN matches in zone-pair chains jump to it.
+
+- `/etc/shorewall/blacklist` - Legacy standalone blacklist (one address/CIDR per line).
+  Parsed and emitted as drop rules. Equivalent to `blrules` entries with DROP disposition.
+
+- `/etc/shorewall/proxyarp` and `/etc/shorewall6/proxyndp` - Proxy ARP / Proxy NDP
+  entries. shorewall-nft also emits explicit nft filter rules alongside the kernel
+  `proxy_arp`/`proxy_ndp` sysctl (shorewall-nft extension over upstream).
 
 - `/etc/shorewall/secmarks` - Added in Shorewall 4.4.13. Attach an SELinux context to selected packets.
 

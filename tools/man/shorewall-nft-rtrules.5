@@ -9,6 +9,16 @@ file defines
 entries that direct traffic from specific sources or marks into a provider's
 routing table.  These rules supplement the provider tracking done by
 .IR shorewall\-nft\-providers (5).
+.PP
+The
+.B live-apply path
+is
+.BR runtime.apply.apply_iproute2_rules() ,
+which uses pyroute2
+.B IPRule
+directly (zero shell-outs).  To generate an equivalent shell script for
+review or offline use, run
+.BR "shorewall\-nft generate\-iproute2\-rules" .
 
 .SH FILE FORMAT
 Location:

@@ -27,15 +27,54 @@ Column	Required	Description
 _
 INTERFACE	yes	Interface name
 TYPE	yes	Interface type (Ethernet, …)
-IN_BANDWIDTH	yes	Ingress bandwidth
-OUT_BANDWIDTH	yes	Egress bandwidth
+IN_BANDWIDTH	yes	Ingress shaping bandwidth (e.g. 100mbit, 10gbit)
+OUT_BANDWIDTH	yes	Egress shaping bandwidth
+OPTIONS	no	Comma-separated qdisc options
 .TE
+
+.SS OPTIONS
+.TP
+.B htb
+Use the HTB (Hierarchical Token Bucket) qdisc.  This is the default for
+most configurations.
+.TP
+.B hfsc
+Use the HFSC (Hierarchical Fair Service Curve) qdisc.  Provides strict
+latency guarantees for real-time traffic classes.
+.TP
+.B cake
+Use the CAKE (Common Applications Kept Enhanced) qdisc.  Single-qdisc
+AQM with built-in FQ and overhead compensation.
+.TP
+.BI overhead= N
+Per-packet overhead in bytes to add when accounting bandwidth (accounts
+for Ethernet/ATM encapsulation).  Typical: 14 (Ethernet), 8 (PPPoE+ETH).
+.TP
+.BI mtu= N
+MTU of the link, used for burst-size calculations.  Default: 1514.
+.TP
+.BI mpu= N
+Minimum packet unit (minimum packet size counted, in bytes).
+.TP
+.B linklayer=atm
+Account for ATM cell padding overhead (53-byte cells).
+.PP
+The live-apply path is
+.BR apply\-tc ;
+this file is also consumed by
+.B generate\-tc
+to produce a portable shell script.
+Both paths use pyroute2 internally — no
+.BR tc (8)
+binary is required.
 
 .SH EXAMPLES
 .RS
 .nf
-#INTERFACE  TYPE      IN_BANDWIDTH  OUT_BANDWIDTH
+#INTERFACE  TYPE      IN_BANDWIDTH  OUT_BANDWIDTH  OPTIONS
 eth0        Ethernet  100mbit       10mbit
+eth1        Ethernet  1gbit         1gbit          htb,overhead=14
+pppoe0      Ethernet  20mbit        5mbit          htb,overhead=8,linklayer=atm
 .fi
 .RE
 

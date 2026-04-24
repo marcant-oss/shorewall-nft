@@ -1,0 +1,83 @@
+.TH SHOREWALL-NFT-SYNPARAMS 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-synparams \- per-zone SYN-flood rate limits for shorewall-nft
+.SH SYNOPSIS
+.I /etc/shorewall/synparams
+.SH DESCRIPTION
+The
+.I synparams
+file sets per-zone SYN-flood protection parameters.  For each zone listed
+the compiler emits a dedicated chain
+.BI synflood- zone
+and inserts a TCP-SYN rate-limit jump at the head of every zone-pair chain
+whose source is that zone.
+.PP
+Packets that exceed the rate limit are dropped; packets within the limit
+pass to the normal rule evaluation.
+.SH COLUMNS
+Location:
+.I /etc/shorewall/synparams
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ZONE	yes	Source zone to protect against
+RATE	yes	Accepted SYN rate (e.g. 100/second, 25/minute)
+BURST	yes	Burst allowance above the steady rate
+SUPPRESS	no	Yes|No — suppress logging of excess SYNs (default: No)
+.TE
+
+.TP
+.B RATE
+Token-bucket fill rate.  Format:
+.IB N / unit
+where
+.I unit
+is
+.BR second ,
+.BR minute ,
+.BR hour ,
+or
+.BR day .
+.TP
+.B BURST
+Maximum burst.  Must be \(>= 1.  Typical value: 5\(en20.
+.TP
+.B SUPPRESS=Yes
+Emit the rate-limit rule without a LOG prefix for dropped SYNs.
+
+.SH EXAMPLES
+.PP
+Protect the firewall from SYN floods from the internet:
+.RS
+.nf
+#ZONE  RATE          BURST
+net    200/second    25
+.fi
+.RE
+.PP
+Stricter limit for an untrusted zone, with excess suppressed:
+.RS
+.nf
+dmz    50/second     10    Yes
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-zones (5),
+.BR shorewall\-nft\-rules (5),
+.BR shorewall\-nft\-policy (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

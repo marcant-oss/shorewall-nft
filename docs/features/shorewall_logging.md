@@ -340,3 +340,25 @@ One final note: I wanted less firewall messages in /var/log/messages so I added 
     }
 
 I log at 'notice' log level if I want the message in `/var/log/messages` and everything goes to `/var/log/shorewall.log`. Don't forget to add /var/log/shorewall.log to logrotate.
+
+---
+
+## shorewall-nft Phase 6 — LOG_LEVEL / LOG_BACKEND / LOG_GROUP (Option B)
+
+As of Phase 6, the following logging-related `shorewall.conf` settings are
+fully honoured by the compiler (Option B implementation):
+
+| setting      | purpose                                                                |
+|--------------|------------------------------------------------------------------------|
+| `LOG_LEVEL`  | Default syslog level for rule-generated log messages (`info`, `debug`, …) |
+| `LOG_BACKEND`| Logging backend: `LOG` (syslog, default), `NFLOG` / `netlink`, `ULOG` |
+| `LOG_GROUP`  | Netlink group number used when `LOG_BACKEND=NFLOG`                     |
+
+When `LOG_BACKEND=NFLOG`, the emitter produces `nft log group N` rules
+instead of `nft log level X` rules. This allows per-group log sinks
+(e.g. a dedicated `nflog` group consumed by a shorewalld instance or
+`ulogd2`).
+
+The planned Option C extension (LOGFORMAT + LOGRULENUMBERS + shorewalld
+as the per-netns nflog dispatcher, replacing ulogd2 plumbing) is tracked
+as Task #69 in `docs/roadmap/shorewalld-log-dispatcher-todo.md`.

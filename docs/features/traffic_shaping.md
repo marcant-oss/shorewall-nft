@@ -1124,3 +1124,27 @@ Pipe to `sh` to apply:
 ```sh
 shorewall-nft generate-tc /etc/shorewall46 | sh
 ```
+
+---
+
+## shorewall-nft Phase 6 — tcinterfaces / tcpri parity
+
+As of Phase 6, shorewall-nft reaches full upstream parity for simple and
+complex TC configuration:
+
+- **`tcinterfaces`** — HTB, HFSC, and cake qdiscs are all supported.
+  `apply_tcinterfaces()` uses pyroute2 (mirrors `apply_tc()`; zero
+  shell-outs).
+- **`tcpri`** — the DSCP→priority map is emitted as a nft
+  `meta priority set … map { … }` vmap (one rule per interface).
+- **`shorewall.conf` TC toggles** honoured:
+  - `TC_ENABLED` — `No` / `Internal` / `Simple` / `Expert`
+  - `TC_EXPERT` — pass-through mode: shorewall-nft skips its own TC
+    emit and relies on a user-supplied `tcstart` script
+  - `MARK_IN_FORWARD_CHAIN` — place TC mark rules in FORWARD instead
+    of PREROUTING
+  - `CLEAR_TC` — tear down existing qdiscs on start/restart
+
+See also `docs/concepts/marks-and-connmark.md` §7 for mark-geometry
+settings (`WIDE_TC_MARKS`, `TC_BITS`) that control how TC marks and
+provider marks coexist in the same 32-bit field.

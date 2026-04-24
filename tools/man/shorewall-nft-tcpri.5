@@ -10,6 +10,19 @@ generates the corresponding
 .BR tc (8)
 commands via
 .BR "shorewall\-nft generate\-tc" .
+.PP
+In addition to explicit band assignments, DSCP-marked traffic can be
+mapped to priority bands: when a row specifies a DSCP value instead of
+a port, the compiler emits an nft
+.B meta priority set
+.I dscp-value
+.B vmap
+rule so that DSCP\(->qdisc-priority translation happens in-kernel at
+classification time without a separate
+.BR tc (8)
+filter.  The DSCP→band map is stored as a named nft verdict map in the
+.I inet shorewall
+table.
 
 .SH FILE FORMAT
 Location:

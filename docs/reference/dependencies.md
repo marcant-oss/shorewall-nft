@@ -15,7 +15,7 @@ future Debian/RPM/Arch packaging.
 |----------------|-------------|---------|--------|--------|------|--------|
 | Python | 3.11 | stdlib `tomllib`, modern `match` | `python3` | `python3` | `python` | `python3` |
 | click | 8.0 | CLI framework | `python3-click` | `python3-click` | `python-click` | `py3-click` |
-| pyroute2 | 0.9 | libnl bindings for nft state reading | `python3-pyroute2` | `python3-pyroute2` | `python-pyroute2` | `py3-pyroute2` |
+| pyroute2 | 0.9 | libnl bindings: nft state reading, IP-alias add/del (`IPRoute.addr()`), conntrack flush/dump (`NFCTSocket`), TC qdisc/class/filter apply, providers live-apply (`ip rule`/`ip route`) | `python3-pyroute2` | `python3-pyroute2` | `python-pyroute2` | `py3-pyroute2` |
 
 ## Python (optional)
 

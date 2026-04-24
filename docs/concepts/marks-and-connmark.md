@@ -384,6 +384,27 @@ For larger deployments replace the switch with a `meta mark map
 | `FLOWTABLE`             | marks must be set **before** `flow add` | offload strips changes |
 | `FASTACCEPT=No` (forced)| ct state est/rel accept in zone chain  | see commit `7e977f70e` |
 
+### Phase 6 — configurable mark geometry (`MarkGeometry`)
+
+The mark-bit layout is no longer hardcoded. `shorewall.conf` settings
+populate the `MarkGeometry` IR dataclass at compile time:
+
+| setting            | purpose                                      | default |
+|--------------------|----------------------------------------------|---------|
+| `WIDE_TC_MARKS`    | widen TC field from 8 to 16 bits             | `No`    |
+| `HIGH_ROUTE_MARKS` | place provider marks in the high 16 bits     | `No`    |
+| `TC_BITS`          | explicit TC field width in bits              | auto    |
+| `MASK_BITS`        | total usable bits                            | `32`    |
+| `PROVIDER_BITS`    | width of the provider mark field             | `8`     |
+| `PROVIDER_OFFSET`  | bit offset of the provider field             | `0`     |
+| `ZONE_BITS`        | width of the zone tag field (CT_ZONE_TAG)    | `8`     |
+
+The compiler derives every mask constant (TC mask, provider mask,
+zone mask) from `MarkGeometry` rather than from hardcoded literals.
+This means TC and provider marks can coexist without collision under
+non-default layouts. See `shorewall_nft/compiler/ir/_data.py` for
+the dataclass definition.
+
 **Flowtable interaction:** once a flow is offloaded via `flow add
 @ft`, the kernel fastpath bypasses every nft hook. That means any
 `meta mark set` / `ct mark set` after the flow add will never run.

@@ -59,7 +59,38 @@ IPv6-only zone.
 Bridge port zone.
 .TP
 .B ipsec[6]
-IPSEC zone.
+IPSEC zone.  The compiler injects
+.B policy in|out ipsec
+clauses into the zone-pair chains for this zone.  See IPsec OPTIONS below.
+
+.SS IPsec OPTIONS (column 3 for ipsec zones)
+These options narrow the IPsec policy match emitted for the zone.
+.TP
+.BI mss= N
+Override MSS for tunnelled traffic.
+.TP
+.B strict
+Require that every packet traverses an IPSEC SA (no clear-text bypass).
+.TP
+.B next
+Match the next IPsec SA in a bundle (nested tunnels).
+.TP
+.BI reqid= N
+Match the SA request ID
+.IR N .
+.TP
+.BI spi= N
+Match the SA SPI value
+.IR N .
+.TP
+.BI proto= PROTO
+Match the IPsec encapsulation protocol (esp, ah, or comp).
+.TP
+.BI mode= MODE
+Match the SA mode (tunnel or transport).
+.TP
+.BI mark= MARK [/ MASK ]
+Match the packet mark (optionally masked).
 
 .SH EXAMPLES
 .PP

@@ -40,6 +40,8 @@ Shorewall — existing configs load unchanged.
 | Config hash drift detection | [config-hash](shorewall-nft/config-hash.md) |
 | Six config-dir modes (merged, dual, v4-only, v6-only, …) | [config-dirs](shorewall-nft/config-dirs.md) |
 | Native network-namespace support | [CLI reference](cli/commands.md) |
+| Phase 6 — upstream Shorewall parity (`snat`, `nat`, `providers`, `routes`, `rtrules`, `tcinterfaces`, `tcpri`, `synparams`, `blacklist`) | [CHANGELOG](../CHANGELOG.md) |
+| Multi-ISP iproute2 setup script (`generate-iproute2-rules`) | [MultiISP](features/MultiISP.md) |
 | DNS-driven nft set population (`dns:` rule syntax) | [shorewalld](shorewalld/index.md) |
 | Named dynamic nft sets (`nfsets` config file — dnstap, resolver, ip-list, ip-list-plain backends) | [nfsets](features/nfsets.md) |
 

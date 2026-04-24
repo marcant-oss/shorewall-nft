@@ -1934,6 +1934,69 @@
       ]
     },
     {
+      "name": "generate-iproute2-rules",
+      "path": "cli generate-iproute2-rules",
+      "help": "Generate iproute2 routing setup script for multi-ISP providers.",
+      "params": [
+        {
+          "kind": "argument",
+          "name": "directory",
+          "required": false
+        },
+        {
+          "kind": "option",
+          "name": "config_dir",
+          "flags": [
+            "-c",
+            "--config-dir"
+          ],
+          "help": "Explicit merged config directory (overrides /etc/shorewall46 default).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir_v4",
+          "flags": [
+            "--config-dir-v4"
+          ],
+          "help": "Explicit IPv4 config directory.",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "config_dir_v6",
+          "flags": [
+            "--config-dir-v6"
+          ],
+          "help": "Explicit IPv6 config directory (use with --config-dir-v4 for dual mode).",
+          "is_flag": false,
+          "default": null
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v4",
+          "flags": [
+            "--no-auto-v4"
+          ],
+          "help": "Disable auto-detection of a v4 sibling directory.",
+          "is_flag": true,
+          "default": false
+        },
+        {
+          "kind": "option",
+          "name": "no_auto_v6",
+          "flags": [
+            "--no-auto-v6"
+          ],
+          "help": "Disable auto-detection of a v6 sibling directory.",
+          "is_flag": true,
+          "default": false
+        }
+      ]
+    },
+    {
       "name": "config",
       "path": "cli config",
       "help": "Structured config I/O (export / import / template / merge).",

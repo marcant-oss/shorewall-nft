@@ -218,3 +218,9 @@ shorewall-nft generate-tc [DIRECTORY]
 
 See [Complex Traffic Shaping](traffic_shaping.md#applying-tc-configuration-with-shorewall-nft)
 for full details on both commands.
+
+**Phase 6 note:** `tcinterfaces` now supports HTB, HFSC, and cake qdiscs
+in addition to the original prio/sfq. The `tcpri` DSCP→priority map is
+emitted as a nft vmap. `TC_ENABLED`, `TC_EXPERT`, `MARK_IN_FORWARD_CHAIN`,
+and `CLEAR_TC` toggles in `shorewall.conf` are all honoured. See
+[traffic_shaping.md — Phase 6](traffic_shaping.md) for details.

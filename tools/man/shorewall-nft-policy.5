@@ -30,9 +30,44 @@ SOURCE	yes	Source zone or \fBall\fR
 DEST	yes	Destination zone or \fBall\fR
 POLICY	yes	Default action (ACCEPT/DROP/REJECT/CONTINUE/QUEUE/NFQUEUE)
 LOG_LEVEL	no	Log level for the default action (info, warn, …)
-BURST	no	Rate-limit burst count
-CONNLIMIT	no	Connection limit per source
+LIMIT	no	Rate limit: \fIrate\fB:\fIburst\fR or named hashlimit
+CONNLIMIT	no	Connection limit per source: \fIcount\fR[:\fImask\fR]
 .TE
+
+.SS LIMIT column
+.TP
+.IB rate : burst
+Simple token-bucket rate limit.
+.I rate
+is
+.IB N / unit
+(e.g.\&
+.BR 100/second );
+.I burst
+is the maximum burst count.  Emits an nft
+.B limit rate
+statement.
+.TP
+.BI LIMIT: name , rate , burst
+Named hashlimit — tracks rate per source IP.
+.I name
+identifies the hashlimit table;
+.I rate
+and
+.I burst
+are as above.  Emits an nft
+.B meter
+element.
+
+.SS CONNLIMIT column
+.TP
+.IB count [: mask ]
+Limit concurrent connections from a source.
+.I count
+is the maximum number of simultaneous connections.  Optional
+.I mask
+(IPv4 CIDR prefix length) groups sources into subnets before counting
+(e.g.\& 24 counts per /24 instead of per host).
 
 .SS Policy actions
 .TP

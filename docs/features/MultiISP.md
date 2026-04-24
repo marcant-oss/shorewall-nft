@@ -1857,3 +1857,28 @@ This results in the following routing rules:
     root@gateway:~# 
 
 [^1]: While we describe a setup using different ISPs in this article, the facility also works with two uplinks from the same ISP.
+
+---
+
+## shorewall-nft Phase 6 — full providers/routes/rtrules parity
+
+As of Phase 6, shorewall-nft reaches full upstream parity with Shorewall Perl
+5.2.6.1 for the multi-ISP stack:
+
+- **`providers`** — all options are honoured: `track`, `balance=N`,
+  `fallback=N`, `loose`, `optional`, `persistent`, `primary`, `tproxy`.
+- **`routes`** and **`rtrules`** — both files are parsed and applied.
+- **`shorewall.conf`** settings respected: `USE_DEFAULT_RT`,
+  `BALANCE_PROVIDERS`, `RESTORE_DEFAULT_ROUTE`, `OPTIMIZE_USE_FIRST`.
+- **Live-apply** — `runtime.apply.apply_iproute2_rules()` configures
+  `ip rule` / `ip route` via pyroute2 (zero shell-outs).
+- **Operator script** — `shorewall-nft generate-iproute2-rules` emits a
+  standalone shell script equivalent (pipe to `sh` or save for later):
+
+  ```bash
+  shorewall-nft generate-iproute2-rules > /etc/shorewall/iproute2-setup.sh
+  sh /etc/shorewall/iproute2-setup.sh
+  ```
+
+See also `docs/concepts/marks-and-connmark.md` §7 (configurable mark
+geometry) and `man shorewall-nft-providers.5`.

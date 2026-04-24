@@ -42,6 +42,44 @@ is a CIDR prefix, a single IP, or
 .B !address
 for negation.
 
+.SS OPTIONS
+.TP
+.B routeback
+Allow packets that arrive and leave via the same interface/hosts entry.
+.TP
+.B blacklist
+Apply the static blacklist to traffic from these hosts.
+.TP
+.B tcpflags
+Check for TCP flag anomalies on traffic from these hosts.
+.TP
+.B nosmurfs
+Drop smurf packets (broadcast-sourced traffic) from these hosts.
+.TP
+.BI maclist[= file ]
+Enable MAC-address filtering for traffic from these hosts.
+.TP
+.BI mss= N
+Clamp TCP MSS to
+.I N
+bytes for connections from these hosts.
+.TP
+.B ipsec
+Require that traffic from these hosts arrives via an IPSEC policy.
+.TP
+.B broadcast
+Include broadcast addresses when computing dispatch rules for these hosts.
+.TP
+.B destonly
+Only match packets destined
+.I to
+these hosts; do not match source-directed traffic.
+.TP
+.B sourceonly
+Only match packets sourced
+.I from
+these hosts; do not match destination-directed traffic.
+
 .SH EXAMPLES
 .PP
 Assign two subnets on the same interface to different zones:

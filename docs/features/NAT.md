@@ -109,3 +109,46 @@ You want the second one by Alexey Kuznetsov.
 </div>
 
 [^1]: Courtesy of Bradey Honsinger
+
+---
+
+## shorewall-nft Phase 6 — `snat` and `nat` file support
+
+### Modern `snat` file (Phase 6, upstream parity)
+
+shorewall-nft now fully supports the modern `/etc/shorewall/snat` file
+introduced in upstream Shorewall 5.0.14 (supercedes `masq`). Column
+layout:
+
+    #ACTION           SOURCE           DEST        PROTO  DPORT  SPORT  ORIGDEST  PROBABILITY  MARK  USER  SWITCH  IPSEC
+
+Supported ACTION variants:
+
+- `SNAT(addr)` — static source NAT to a single address
+- `SNAT(a1,a2,…)` — round-robin across a list of addresses
+- `SNAT(addr:port-range)` — static NAT with port range restriction
+- `MASQUERADE(port-range)` — dynamic NAT using the interface's current IP
+- `CONTINUE` / `ACCEPT` / `NONAT` — policy-only rows
+- `LOG[:level][:tag]:<sub-action>` — log prefix before the NAT action
+
+Column matchers (`PROBABILITY`, `MARK`, `USER`, `SWITCH`, `ORIGDEST`,
+`IPSEC`) all support `!` negation.
+
+`:random`, `:persistent`, `:fully-random` flags are appended to the
+ACTION field.
+
+See `man shorewall-nft-snat.5` for the full column reference.
+
+### Classic `nat` file (Phase 6, upstream parity)
+
+The classic `/etc/shorewall/nat` file (one-to-one mapping) is now also
+fully supported. For each entry shorewall-nft emits:
+
+- a PREROUTING DNAT rule for inbound traffic
+- a POSTROUTING SNAT rule for outbound traffic
+- an optional OUTPUT DNAT rule when `LOCAL=Yes`
+
+`ADD_IP_ALIASES` and `ADD_SNAT_ALIASES` are honoured; IP-alias
+add/delete use pyroute2 `IPRoute.addr()` (zero shell-outs).
+
+See `man shorewall-nft-nat.5` for the full column reference.

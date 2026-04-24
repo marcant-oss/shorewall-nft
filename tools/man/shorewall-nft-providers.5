@@ -35,16 +35,45 @@ OPTIONS	no	Comma-separated options (track, loose, …)
 .SS Options
 .TP
 .B track
-Track connections and ensure replies follow the same provider.
+Track connections via connection marks so that replies follow the same
+provider path (marks all new connections from this provider's interface).
+.TP
+.BI balance= N
+Include this provider in the load-balancing pool with weight
+.IR N .
+Packets are distributed across balanced providers in proportion to their
+weights using
+.B ip route nexthop
+multipath.
+.TP
+.BI fallback= N
+Use this provider as a fallback when all
+.B balance
+providers are unavailable, with preference
+.IR N
+(lower = preferred).
 .TP
 .B loose
-Allow provider to be used even when the interface is down (load-balancing).
+Do not fail at startup when the provider's interface is not up.  Useful
+for providers that come and go (e.g. 4G modems).
 .TP
-.B fallback
-Use as fallback when other providers are down.
+.B optional
+Synonym for
+.B loose
+(upstream Shorewall compatibility alias).
 .TP
+.B persistent
+Maintain per-source-IP provider assignment (sticky sessions) even when
+the provider's interface cycles.
+.TP
+.B primary
+Mark this provider as the primary; it is used first before other
 .B balance
-Include in load-balancing pool.
+providers when the primary is available.
+.TP
+.B tproxy
+Enable transparent proxy support: traffic from this provider is diverted
+to a local listener via nft TPROXY before routing.
 
 .SH EXAMPLES
 .PP

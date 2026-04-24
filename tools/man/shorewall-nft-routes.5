@@ -6,8 +6,17 @@ The
 .I routes
 file defines static routes to be added to provider routing tables defined in
 .IR shorewall\-nft\-providers (5).
-These routes are installed in the named provider table by the firewall
-start script, not by the nft compiler directly.
+Routes are installed in the named provider table at firewall start.
+.PP
+The
+.B live-apply path
+is
+.BR runtime.apply.apply_iproute2_rules() ,
+which uses pyroute2
+.B IPRoute
+directly (zero shell-outs).  The operator-facing generator
+.B shorewall\-nft generate\-iproute2\-rules
+emits the equivalent shell script for human review or offline use.
 
 .SH FILE FORMAT
 Location:

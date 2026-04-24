@@ -41,6 +41,22 @@ shorewall-nft 1.0 → 1.1.
 | `SFILTER_LOG_LEVEL`        | `info`    | Spoofed-source filter drops ARE worth logging — they indicate routing asymmetry you probably want to know about. |
 | `RPFILTER_LOG_LEVEL`       | `info`    | Same rationale. |
 
+**Phase 6 — disposition settings honoured.** All six disposition settings are
+now fully applied by the compiler:
+
+| setting                   | `A_*` audit variant           |
+|---------------------------|-------------------------------|
+| `BLACKLIST_DISPOSITION`   | `A_BLACKLIST_DISPOSITION`     |
+| `SMURF_DISPOSITION`       | `A_SMURF_DISPOSITION`         |
+| `TCP_FLAGS_DISPOSITION`   | `A_TCP_FLAGS_DISPOSITION`     |
+| `RELATED_DISPOSITION`     | `A_RELATED_DISPOSITION`       |
+| `INVALID_DISPOSITION`     | `A_INVALID_DISPOSITION`       |
+| `UNTRACKED_DISPOSITION`   | `A_UNTRACKED_DISPOSITION`     |
+
+Setting a value to `A_DROP` (or similar) generates an additional
+`nft log` + audit rule before the drop. All six are compile-time
+options; there is no runtime switching without a reload.
+
 ### 1a · Why `FASTACCEPT=No` matters
 
 The "fast" in FASTACCEPT means "accept established/related traffic

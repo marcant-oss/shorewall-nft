@@ -282,3 +282,30 @@ When Shorewall is started, the zones vpn\[1-3\] will all be empty and Shorewall 
 and the “down” part will:
 
     /sbin/shorewall delete ipsec0:134.28.54.2 vpn2
+
+---
+
+## shorewall-nft Phase 6 — zones IPsec OPTIONS and per-host `ipsec` OPTION
+
+The `zones` file OPTIONS column now supports the full set of IPsec
+selector fields. For a zone declared with `type ipsec`, these OPTIONS
+are honoured:
+
+| option    | nft policy clause emitted                         |
+|-----------|---------------------------------------------------|
+| `mss=N`   | `tcp flags syn / syn,rst tcp option maxseg size N` |
+| `strict`  | `policy strict` (require all SA attributes to match) |
+| `next`    | `policy next` (match next SA in the chain)        |
+| `reqid=N` | `policy in/out ipsec reqid N`                     |
+| `spi=N`   | `policy in/out ipsec spi N`                       |
+| `proto=P` | `policy in/out ipsec proto P` (esp, ah, comp)     |
+| `mode=M`  | `policy in/out ipsec mode M` (tunnel, transport)  |
+| `mark=N`  | `policy in/out ipsec mark N`                      |
+
+For zone-pair chains, the emitter injects the appropriate
+`policy in|out ipsec …` clauses at the top of each chain involving
+an IPsec zone, mirroring upstream Shorewall behaviour.
+
+The per-host `ipsec` OPTION in `/etc/shorewall/hosts` is also honoured:
+hosts with `ipsec` set generate host-specific `policy` match rules
+rather than inheriting the zone-level defaults.

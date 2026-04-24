@@ -1,11 +1,19 @@
 # Phase 6 — Upstream-Shorewall Config Coverage
 
+**Status: COMPLETE — 2026-04-24** (single-day execution).
+
+15 of 17 WPs landed in 11 cluster commits, +539 tests
+(1041 → 1580 passing), zero new production shell-outs (pyroute2
+audit PASSED). Deferred: WP-F2 secmarks (low-value SELinux niche)
+and WP-E1 Option C (LOGFORMAT + shorewalld nflog dispatcher —
+tracked separately in `shorewalld-log-dispatcher-todo.md`).
+
 **Goal**: close the remaining gaps between shorewall-nft's Python compiler
 and the upstream Shorewall (Perl) compiler at v5.2.6.1 (the version this
 repo originally forked from). Drive the work through self-contained work
 packages (WPs) that a Sonnet agent can execute autonomously.
 
-**Status as of 2026-04-24**: Phases 1–5 (maintainability refactor) are
+**Original status as of 2026-04-24**: Phases 1–5 (maintainability refactor) are
 complete. Two open audit tasks (#44 full snat, #38 simlab alignment)
 plus the gaps surfaced by the 2026-04-24 three-agent coverage audit
 (file inventory, `shorewall.conf` options, per-file column OPTIONS) seed

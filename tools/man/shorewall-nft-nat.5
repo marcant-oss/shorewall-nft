@@ -1,0 +1,81 @@
+.TH SHOREWALL-NFT-NAT 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-nat \- classic 1:1 static NAT for shorewall-nft
+.SH SYNOPSIS
+.I /etc/shorewall/nat
+.SH DESCRIPTION
+The
+.I nat
+file defines one-to-one static NAT mappings.  Each row emits a paired
+PREROUTING DNAT rule (translating the external address to the internal
+one) and a POSTROUTING SNAT rule (translating the internal address back
+to the external one on the way out).
+.PP
+For more complex SNAT (round-robin, probabilistic, masquerade) see
+.BR shorewall\-nft\-snat (5)
+or
+.BR shorewall\-nft\-masq (5).
+For port-selective DNAT inside the
+.I rules
+file see
+.BR shorewall\-nft\-rules (5).
+.SH COLUMNS
+Location:
+.I /etc/shorewall/nat
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+EXTERNAL	yes	External (public) IP address
+INTERFACE	yes	Interface carrying the external address
+INTERNAL	yes	Internal (private) IP to map to/from
+ALL	no	Yes|No — also NAT traffic from all zones (default: No)
+LOCAL	no	Yes|No — add an OUTPUT DNAT for firewall-originated traffic (default: No)
+.TE
+
+.TP
+.B ALL=Yes
+Emits SNAT rules covering traffic between any two zones, not just
+external\(->internal.  Use when the internal host must appear with the
+external address regardless of path.
+.TP
+.B LOCAL=Yes
+Adds an OUTPUT chain DNAT rule so that packets originating on the
+firewall itself are also translated when reaching
+.IR EXTERNAL .
+
+.SH EXAMPLES
+.PP
+1:1 mapping for a DMZ server:
+.RS
+.nf
+#EXTERNAL       INTERFACE  INTERNAL       ALL  LOCAL
+203.0.113.100   eth0       192.168.100.10
+.fi
+.RE
+.PP
+Full 1:1 with outbound and local access:
+.RS
+.nf
+203.0.113.101   eth0       192.168.100.11  Yes  Yes
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-snat (5),
+.BR shorewall\-nft\-masq (5),
+.BR shorewall\-nft\-rules (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

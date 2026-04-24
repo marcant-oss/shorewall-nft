@@ -1,0 +1,146 @@
+.TH SHOREWALL-NFT-SNAT 5 "2026-04-20" "shorewall-nft 1.10.0" "File Formats"
+.SH NAME
+shorewall\-nft\-snat \- source NAT rules for shorewall-nft
+.SH SYNOPSIS
+.I /etc/shorewall/snat
+.SH DESCRIPTION
+The
+.I snat
+file is the modern, featureful SNAT/masquerade configuration file,
+replacing the legacy
+.I masq
+file.  Each row emits one or more rules in the
+.B postrouting
+chain of the
+.I inet shorewall
+nft table.
+.PP
+For classic 1:1 host mapping see
+.BR shorewall\-nft\-nat (5).
+.SH COLUMNS
+Location:
+.I /etc/shorewall/snat
+(or inside a merged
+.IR /etc/shorewall46/ ).
+.PP
+Columns are whitespace-separated.  Lines beginning with
+.B #
+are comments.
+
+.TS
+l l l.
+Column	Required	Description
+_
+ACTION	yes	SNAT action (see below)
+SOURCE	yes	Source address or CIDR
+DEST	yes	Outbound interface or address
+PROTO	no	Protocol filter
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+ORIGDEST	no	Original destination filter
+PROBABILITY	no	Probabilistic match (0.0\(en1.0)
+MARK	no	Connection mark match
+USER	no	User/group match
+SWITCH	no	Runtime switch name
+IPSEC	no	IPSEC policy match
+.TE
+
+.SS ACTION syntax
+.TP
+.BI SNAT( addr )
+Translate the source address to
+.IR addr .
+.TP
+.BI SNAT( a1 , a2 ,\|…\|)
+Round-robin across a list of addresses.
+.TP
+.BI SNAT( addr : port-range )
+Translate to
+.I addr
+and a port drawn from
+.IR port-range .
+.TP
+.B MASQUERADE
+Dynamic masquerade (use the outbound interface's address).
+.TP
+.BI MASQUERADE( port-range )
+Masquerade and restrict source port to
+.IR port-range .
+.TP
+.B CONTINUE
+Skip remaining SNAT rules for this packet.
+.TP
+.B ACCEPT
+Accept without SNAT.
+.TP
+.B NONAT
+Exempt from SNAT (synonym for ACCEPT in the postrouting context).
+.TP
+.BI LOG[: level ][: tag ]: ACTION
+Log the packet (at
+.I level
+severity, with optional
+.IR tag ),
+then apply
+.IR ACTION .
+Example:
+.BR LOG:info:nat:SNAT(203.0.113.10) .
+.PP
+Append modifiers (colon-separated after the address) to
+.B SNAT(…)
+or
+.BR MASQUERADE :
+.TP
+.B :random
+Randomise the source port.
+.TP
+.B :persistent
+Assign a consistent address per client (for round-robin pools).
+.TP
+.B :fully-random
+Fully randomise the port (nft
+.BR fully-random ).
+
+.SH EXAMPLES
+.PP
+Masquerade all outbound traffic on eth0:
+.RS
+.nf
+#ACTION      SOURCE              DEST
+MASQUERADE   192.168.1.0/24      eth0
+.fi
+.RE
+.PP
+Static SNAT to a public address:
+.RS
+.nf
+SNAT(203.0.113.10)   10.0.0.0/8   eth0
+.fi
+.RE
+.PP
+Round-robin across two addresses with persistence:
+.RS
+.nf
+SNAT(203.0.113.10,203.0.113.11):persistent   192.168.1.0/24   eth0
+.fi
+.RE
+.PP
+Exempt VPN traffic from SNAT (allow direct routing):
+.RS
+.nf
+NONAT   192.168.1.0/24   eth0   -   -   -   -   -   -   -   ipsec
+.fi
+.RE
+
+.SH SEE ALSO
+.BR shorewall\-nft (8),
+.BR shorewall\-nft\-nat (5),
+.BR shorewall\-nft\-masq (5),
+.BR shorewall\-nft\-rules (5),
+.BR shorewall\-nft\-nfsets (5)
+
+.SH AUTHOR
+André Valentin <avalentin@marcant.net>
+
+.SH BUGS
+Report bugs to the project issue tracker.

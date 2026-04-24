@@ -563,6 +563,26 @@ to apply the configuration directly via pyroute2 without a
 .BR tc (8)
 binary.
 
+.SS generate\-iproute2\-rules [\fIDIRECTORY\fR]
+Print a shell script of
+.BR ip (8)
+route and rule commands equivalent to what
+.B apply\-tc
+/
+.B start
+would apply via pyroute2 for the
+.IR providers ,
+.IR routes ,
+and
+.I rtrules
+configuration files.  Useful for human review before applying, or as a
+portable fallback when pyroute2 is unavailable.
+.PP
+The live-apply counterpart is
+.BR runtime.apply.apply_iproute2_rules() ,
+which uses pyroute2 directly (zero shell-outs).  Accepts the config
+directory flags.
+
 .SS generate\-set\-loader [\fIDIRECTORY\fR]
 Print a shell script that loads external sets (GeoIP prefix files, ipset
 exports) into nft at startup.  Run this script after

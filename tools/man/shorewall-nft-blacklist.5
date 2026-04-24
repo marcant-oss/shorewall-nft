@@ -4,13 +4,46 @@ shorewall\-nft\-blacklist \- static source address blocklist for shorewall-nft
 .SH DESCRIPTION
 The
 .I blacklist
-file declares a static list of source addresses or prefixes to block.
-Each entry is added to the
-.I shorewall_blacklist
-nft set.  Traffic from listed addresses is dropped before any zone-pair
-rules are evaluated.
-
-This file is for static, compile-time blocklisting.  For dynamic (runtime)
+file is the standalone (legacy) static blocklist.  Each entry is compiled
+into drop rules fired before any zone-pair evaluation.  This form lists
+simple address/prefix/protocol/port tuples.
+.PP
+For rule-syntax blocklist entries (ACTION SOURCE DEST PROTO…) use the
+separate
+.B blrules
+file (see
+.IR shorewall\-nft\-blrules (5)).
+.PP
+Both files are parsed at compile time; the
+.I blacklist
+standalone file takes precedence for plain address drops.
+.PP
+.B Dynamic blacklisting
+is controlled by the
+.B DYNAMIC_BLACKLIST
+setting in
+.IR shorewall.conf :
+.TP
+.B No
+Dynamic blacklisting disabled.
+.TP
+.B Yes
+Runtime blocking via nft set manipulation
+.RB ( "shorewall\-nft drop" / blacklist / allow ).
+.TP
+.B ipset-only
+Use a kernel ipset as the backing store instead of nft sets.
+.TP
+.B ipset,disconnect
+Use ipset and additionally tear down existing conntrack state for
+newly blacklisted addresses.
+.TP
+.B ipset,disconnect-src
+Like
+.B ipset,disconnect
+but only tears down flows where the blacklisted address is the source.
+.PP
+For static compile-time blocking use this file.  For dynamic (runtime)
 blocking use
 .B shorewall\-nft drop
 /

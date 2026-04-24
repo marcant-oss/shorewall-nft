@@ -339,3 +339,20 @@ I've annotated the following output with comments beginning with "\<\<\<\<" and 
     Chain tcpre (2 references)
      pkts bytes target     prot opt in     out     source               destination
     gateway:~ #
+
+---
+
+## shorewall-nft Phase 6 — configurable mark geometry (`MarkGeometry`)
+
+shorewall-nft no longer hardcodes the mark-bit layout. The `MarkGeometry`
+IR dataclass is populated from `shorewall.conf` at compile time and
+determines every mask constant used in mangle-table rule emit:
+
+- `WIDE_TC_MARKS` / `TC_BITS` — width of the TC field
+- `HIGH_ROUTE_MARKS` / `PROVIDER_OFFSET` — where provider marks live
+- `MASK_BITS`, `PROVIDER_BITS`, `ZONE_BITS` — fine-grained layout
+
+This allows TC marks and provider marks to coexist without collision
+under non-default layouts (e.g. WIDE_TC_MARKS=Yes + HIGH_ROUTE_MARKS=Yes).
+See `docs/concepts/marks-and-connmark.md` §7 for the full table of
+settings and their effects.

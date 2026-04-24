@@ -323,3 +323,30 @@ This fully-qualified name of the script file.
 
 finalize_script( \$ )  
 This function closes the temporary file and renames it to the
+
+---
+
+## shorewall-nft architecture notes (Phase 6+)
+
+### MarkGeometry dataclass
+
+`shorewall_nft/compiler/ir/_data.py` contains the `MarkGeometry`
+dataclass. It is populated from `shorewall.conf` settings at the start
+of each compiler run and carries every mask constant used in mangle-table
+emit: `tc_mask`, `provider_mask`, `zone_mask`, and their offsets. All
+mangle-rule generators consume `MarkGeometry` rather than hardcoded
+literals, which means TC marks and provider marks coexist correctly under
+non-default bit layouts (`WIDE_TC_MARKS`, `HIGH_ROUTE_MARKS`, `TC_BITS`,
+`PROVIDER_OFFSET`, `ZONE_BITS`).
+
+### Backend-pluggable design (PRINCIPLES P8)
+
+`docs/PRINCIPLES.md` P8 documents the goal that the IR (Intermediate
+Representation) and config parser stay backend-agnostic. The `compiler/`
+and `config/` packages produce a `FirewallIR` object with no nftables
+knowledge; the `nft/emitter.py` module is the only place that knows
+about nft syntax. This separation means the IR can be consumed by a
+future VPP, BPF/XDP, or switchdev emitter without touching compiler
+logic. This is a design direction, not yet fully implemented: some
+runtime paths (e.g. `apply_tc`) still call nft-specific helpers
+directly.

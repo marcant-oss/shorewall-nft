@@ -76,3 +76,22 @@ Example:
 # Dynamic Zone Contents and Shorewall stop/start/restart
 
 When SAVE_IPSETS=Yes in shorewall.conf, the contents of a dynamic zone survive `shorewall stop/shorewall start` and `shorewall restart`. During `shorewall stop`, the contents of the ipsets are saved in the file `${VARDIR}/ipsets.save` (usually `/var/lib/shorewall/ipsets.save`). During `shorewall start`, the contents of that file are restored to the sets. During both `shorewall start` and `shorewall restart`, any new ipsets required as a result of a configuration change are added.
+
+---
+
+## shorewall-nft Phase 6 — DYNAMIC_BLACKLIST modes and standalone `blacklist` file
+
+As of Phase 6, all `DYNAMIC_BLACKLIST` modes are supported:
+
+| value                       | behaviour                                              |
+|-----------------------------|--------------------------------------------------------|
+| `No`                        | dynamic blacklist disabled                             |
+| `Yes`                       | nft timeout-set blacklist (default)                    |
+| `ipset-only`                | use a classic ipset instead of an nft set              |
+| `ipset,disconnect`          | ipset + actively disconnect matching established flows |
+| `ipset,disconnect-src`      | ipset + disconnect flows by source address             |
+
+The standalone **`blacklist`** file (legacy form, one address/CIDR per
+line) is now also parsed and emitted as drop rules, equivalent to
+entries in `blrules`. This allows configs that predate `blrules` to
+work without modification.

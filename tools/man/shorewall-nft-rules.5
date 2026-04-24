@@ -47,10 +47,10 @@ PROTO	no	Protocol number or name (tcp, udp, icmp, …)
 DPORT	no	Destination port(s) or range
 SPORT	no	Source port(s) or range
 ORIG_DEST	no	Original destination for DNAT rules
-RATE	no	Rate limit (N/unit:burst)
+RATE	no	Rate limit: \fIN/unit\fB:\fIburst\fR or \fBLIMIT:\fIname,rate,burst\fR
 USER	no	User/group match
 MARK	no	Connection mark
-CONNLIMIT	no	Max concurrent connections from src
+CONNLIMIT	no	Max concurrent connections from source: \fIcount\fR[:\fImask\fR]
 TIME	no	Time range match
 HEADERS	no	IPv6 header match
 SWITCH	no	Runtime switch name
@@ -163,6 +163,38 @@ Match any zone.
 .TP
 .BI ! address
 Negated address.
+
+.SS RATE column
+.TP
+.IB N / unit : burst
+Simple token-bucket rate limit applied per rule.
+.I unit
+is
+.BR second ,
+.BR minute ,
+.BR hour ,
+or
+.BR day .
+.I burst
+is the maximum burst above the steady rate.  Example:
+.BR 10/minute:5 .
+.TP
+.BI LIMIT: name , rate , burst
+Named per-source hashlimit (nft
+.BR meter ).
+.I name
+is the meter table name; useful for sharing a limit across multiple rules.
+
+.SS CONNLIMIT column
+.TP
+.IB count [: mask ]
+Limit simultaneous connections from a single source (or subnet when
+.I mask
+is given as an IPv4 prefix length).  Example:
+.B 10
+limits 10 connections per source IP;
+.B 50:24
+limits 50 connections per source /24.
 
 .SH EXAMPLES
 .PP

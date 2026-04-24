@@ -74,6 +74,15 @@
 
 - [**IPv6** Support](../features/IPv6Support.md)
 
+- **Phase 6 — upstream Shorewall parity** (shorewall-nft 1.2+): full
+  implementation of `snat`, `nat`, `providers`, `routes`, `rtrules`,
+  `tcinterfaces`, `tcpri`, `synparams`, and `blacklist` files reaching
+  parity with upstream Shorewall Perl at tag `5.2.6.1`. New CLI
+  `generate-iproute2-rules` emits the operator routing script for
+  multi-ISP deployments. Zero new production shell-outs
+  (pyroute2-first standard). See `CHANGELOG.md` and
+  `docs/roadmap/phase6-coverage-plan.md`.
+
 - Works with a wide range of **Virtualization** Solutions:
 
   - [**KVM**](../features/KVM.md)

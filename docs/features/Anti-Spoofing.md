@@ -31,3 +31,22 @@ A new iptables/ip6tables match (rpfilter) was added in kernel 3.4.4. This match 
 - It produces standard Shorewall/Netfilter log messages controlled by the RPFILTER_LOG_LEVEL option in [shorewall.conf](https://shorewall.org/manpages/shorewall.conf.html) (5)).
 
 - Both the disposition and auditing can be controlled using the RPFILTER_DISPOSITION option in [shorewall.conf](https://shorewall.org/manpages/shorewall.conf.html) (5)).
+
+---
+
+## shorewall-nft Phase 6 — `interfaces` OPTIONS extras
+
+The following per-interface OPTIONS from `shorewall-interfaces(5)` are now
+honoured by the sysctl generator and compiler:
+
+| option          | sysctl or action applied                                     |
+|-----------------|--------------------------------------------------------------|
+| `routefilter`   | `net.ipv4.conf.<iface>.rp_filter=1` (strict RPF)            |
+| `logmartians`   | `net.ipv4.conf.<iface>.log_martians=1`                       |
+| `arp_filter`    | `net.ipv4.conf.<iface>.arp_filter=1`                         |
+| `arp_ignore`    | `net.ipv4.conf.<iface>.arp_ignore=1`                         |
+| `sourceroute`   | `net.ipv4.conf.<iface>.accept_source_route=0` (disable)      |
+
+These are written by the sysctl generator (`shorewall-nft generate-sysctl`)
+using direct `printf > /proc/sys/...` writes (no `sysctl -w`
+shell-outs). See `shorewall_nft/runtime/sysctl.py`.

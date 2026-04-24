@@ -515,6 +515,12 @@ More efficient way to do this:
 
 # SNAT Actions
 
+> **shorewall-nft Phase 6 addition:** The ACTION column of the `snat`
+> file now supports the `LOG[:level][:tag]:<sub-action>` prefix syntax.
+> For example, `LOG:info:track:SNAT(1.2.3.4)` will log a message at
+> level `info` with tag `track` before applying the SNAT rule.
+> See `man shorewall-nft-snat.5` for the full column reference.
+
 Beginning with Shorewall 5.0.14, actions are supported in [shorewall-snat(5](https://shorewall.org/manpages/shorewall-snat.html)); that file supercedes [shorewall-masq(5)](https://shorewall.org/manpages/shorewall-masq.html) which is still supported. The shorewall update command will convert a `masq` file into the equivalent `snat` file. Like actions used out of [shorewall-rules(5)](https://shorewall.org/manpages/shorewall-rules.html), SNAT actions must be declared in [shorewall-actions(5)](https://shorewall.org/manpages/shorewall-actions.html). These mangle actions must have the `nat` option specified on [shorewall-actions(5)](https://shorewall.org/manpages/shorewall-actions.html). Like the actions described in the preceding sections, SNAT actions are defined in a files with names of the form action.\<action\>. Rules in those files have the same format as those in [shorewall-snat(5)](https://shorewall.org/manpages/shorewall-snat.html) with two restrictions:
 
 1.  The plus sign ("+") is not allowed in the ACTION column, so all rules in the action will either be pre-nat or post-nat depending on whether '+' was present in the action's invocation.
