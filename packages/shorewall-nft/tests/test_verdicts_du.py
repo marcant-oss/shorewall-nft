@@ -33,6 +33,7 @@ from shorewall_nft.compiler.verdicts import (
     MasqueradeVerdict,
     NamedCounterVerdict,
     NflogVerdict,
+    NonatVerdict,
     NotrackVerdict,
     RedirectVerdict,
     RestoreMarkVerdict,
@@ -160,7 +161,7 @@ class TestDataclassConstruction:
 
 
 # ---------------------------------------------------------------------------
-# 2. SpecialVerdict union alias covers all 17 variants
+# 2. SpecialVerdict union alias covers all 18 variants
 # ---------------------------------------------------------------------------
 
 class TestSpecialVerdictUnion:
@@ -171,8 +172,8 @@ class TestSpecialVerdictUnion:
         import typing
         args = typing.get_args(SpecialVerdict)
         expected = {
-            SnatVerdict, DnatVerdict, MasqueradeVerdict, RedirectVerdict,
-            NotrackVerdict, CtHelperVerdict,
+            SnatVerdict, DnatVerdict, MasqueradeVerdict, NonatVerdict,
+            RedirectVerdict, NotrackVerdict, CtHelperVerdict,
             MarkVerdict, ConnmarkVerdict, RestoreMarkVerdict, SaveMarkVerdict,
             DscpVerdict, ClassifyVerdict, EcnClearVerdict,
             CounterVerdict, NamedCounterVerdict, NflogVerdict,
@@ -183,9 +184,9 @@ class TestSpecialVerdictUnion:
             f"Missing: {expected - set(args)}"
         )
 
-    def test_count_is_17(self):
+    def test_count_is_18(self):
         import typing
-        assert len(typing.get_args(SpecialVerdict)) == 17
+        assert len(typing.get_args(SpecialVerdict)) == 18
 
 
 # ---------------------------------------------------------------------------

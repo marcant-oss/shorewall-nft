@@ -69,6 +69,13 @@ _COLUMNS: dict[str, list[str]] = {
         "interface", "source", "address", "proto", "port", "ipsec",
         "mark", "user", "switch", "orig_dest", "probability",
     ],
+    "snat": [
+        "action", "source", "dest", "proto", "port", "ipsec",
+        "mark", "user", "switch", "origdest", "probability",
+    ],
+    "nat": [
+        "external", "interface", "internal", "all", "local",
+    ],
     "netmap": [
         "type", "net1", "interface", "net2", "proto", "dport",
     ],

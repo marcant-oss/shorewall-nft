@@ -1,0 +1,28 @@
+#
+# Shorewall - SNAT/Masquerade File
+#
+# For information about entries in this file, type "man shorewall-snat"
+#
+# See https://shorewall.org/manpages/shorewall-snat.html for additional information
+###################################################################################################################
+#ACTION                     SOURCE              DEST    PROTO   PORT   IPSEC  MARK   USER    SWITCH  ORIGDEST   PROBABILITY
+#
+SNAT($PUBLIC_IP)            192.0.2.0/24        eth0    -       -      -      -      -       -       -          -
+# SNAT with port range
+SNAT(198.51.100.1:1024-65535)  192.0.2.0/24    eth0    tcp     -      -      -      -       -       -          -
+# SNAT with persistent flag
+SNAT(198.51.100.2:persistent)  192.0.2.0/24    eth0    -       -      -      -      -       -       -          -
+# SNAT with random flag
+SNAT(198.51.100.3:random)   192.0.2.0/24        eth0    -       -      -      -      -       -       -          -
+# MASQUERADE with port range
+MASQUERADE(1024-65535)      192.0.2.0/24        eth0    tcp     -      -      -      -       -       -          -
+# CONTINUE (skip NAT)
+CONTINUE                    192.0.2.10          eth0    -       -      -      -      -       -       -          -
+# SNAT with MARK column
+SNAT(198.51.100.1)          192.0.2.0/24        eth0    -       -      -      0x10   -       -       -          -
+# SNAT with PROBABILITY column
+SNAT(198.51.100.1)          192.0.2.0/24        eth0    -       -      -      -      -       -       -          0.5
+# SNAT with ORIGDEST column
+SNAT(198.51.100.1)          192.0.2.0/24        eth0    -       -      -      -      -       -       203.0.113.1 -
+# Multi-target round-robin SNAT
+SNAT(198.51.100.1,198.51.100.2)  192.0.2.0/24  eth0    -       -      -      -      -       -       -          -

@@ -1,23 +1,26 @@
-"""NAT rule processing: SNAT (masq), DNAT, Masquerade.
+"""NAT rule processing: SNAT (masq), DNAT, Masquerade, static 1:1 NAT.
 
-Translates Shorewall masq config and DNAT rules into
+Translates Shorewall masq/snat/nat config and DNAT rules into
 nft nat chain rules.
 
-Inputs: ``ConfigLine`` lists from the ``masq``, ``rules`` (DNAT/REDIRECT
-rows), and ``netmap`` config files, plus a ``FirewallIR`` that may already
-contain ``prerouting``/``postrouting`` chains.
+Inputs: ``ConfigLine`` lists from the ``masq``, ``snat``, ``nat``,
+``rules`` (DNAT/REDIRECT rows), and ``netmap`` config files, plus a
+``FirewallIR`` that may already contain ``prerouting``/``postrouting`` chains.
 
 Outputs: ``Rule`` entries appended to the ``prerouting`` chain
 (``verdict_args=DnatVerdict(…)``) and the ``postrouting`` chain
-(``verdict_args=SnatVerdict(…)`` or ``MasqueradeVerdict()``).  Both chains are created
-with ``ChainType.NAT`` and the appropriate hook/priority if they do not
-already exist.
+(``verdict_args=SnatVerdict(…)`` or ``MasqueradeVerdict()``).  Both chains are
+created with ``ChainType.NAT`` and the appropriate hook/priority if they do
+not already exist.
 
 Entry points: ``process_nat(ir, masq_lines, dnat_rules)``,
+``process_static_nat(ir, nat_lines)``,
 ``process_netmap(ir, netmap_lines)``, ``extract_nat_rules(rules)``.
 """
 
 from __future__ import annotations
+
+import re
 
 from shorewall_nft.compiler.ir import (
     Chain,
@@ -33,10 +36,25 @@ from shorewall_nft.compiler.ir import (
 from shorewall_nft.compiler.verdicts import (
     DnatVerdict,
     MasqueradeVerdict,
+    NonatVerdict,
     RedirectVerdict,
     SnatVerdict,
 )
 from shorewall_nft.config.parser import ConfigLine
+
+# ACTION column patterns
+_SNAT_ADDR_RE = re.compile(r'^SNAT\+?\((.+)\)$', re.IGNORECASE)
+_MASQ_RE = re.compile(r'^MASQUERADE\+?(?:\(([^)]*)\))?$', re.IGNORECASE)
+_LOG_RE = re.compile(r'^LOG(?::([^:]+))?(?::([^:]+))?:(.+)$', re.IGNORECASE)
+
+# Flag tokens recognised in SNAT address parameter after stripping
+_SNAT_FLAGS = ("persistent", "random", "fully-random")
+
+# Shorewall SWITCH column: runtime toggle via ct mark bit 0x40000000.
+# Shorewall uses the second-highest bit of a 32-bit ct mark as the
+# per-rule on/off switch. Packets with that bit set in ct mark are
+# treated as "switch enabled". We test with `ct mark & 0x40000000 != 0`.
+_SWITCH_MARK = 0x40000000
 
 
 def process_nat(ir: FirewallIR, masq_lines: list[ConfigLine],
@@ -67,17 +85,233 @@ def process_nat(ir: FirewallIR, masq_lines: list[ConfigLine],
         _process_dnat_line(ir, line)
 
 
+def _parse_snat_action(action_raw: str) -> tuple[SnatVerdict | MasqueradeVerdict | NonatVerdict | None, str | None, str | None]:
+    """Parse the ACTION column of a ``snat`` line.
+
+    Returns ``(verdict_args, log_level, log_tag)`` where ``log_level`` /
+    ``log_tag`` are set when the action is prefixed with ``LOG[:level][:tag]:``.
+    Returns ``(None, None, None)`` when the line should be skipped (CONTINUE /
+    ACCEPT / NONAT without NAT target — all are "skip NAT" semantics).
+    """
+    action_upper = action_raw.upper()
+
+    # Handle LOG prefix: LOG[:level][:tag]:ACTION
+    log_level: str | None = None
+    log_tag: str | None = None
+    inner = action_raw
+    m = _LOG_RE.match(action_raw)
+    if m:
+        log_level = m.group(1) or "info"
+        log_tag = m.group(2)
+        inner = m.group(3)
+        action_upper = inner.upper()
+
+    # CONTINUE / ACCEPT / NONAT → skip NAT (return from NAT table)
+    if action_upper.startswith(("CONTINUE", "ACCEPT", "NONAT")):
+        if log_level is not None:
+            return NonatVerdict(), log_level, log_tag
+        return None, None, None
+
+    # MASQUERADE[(port-range[:random])]
+    mm = _MASQ_RE.match(inner)
+    if mm:
+        param = mm.group(1) or ""
+        port_range: str | None = None
+        flags: list[str] = []
+        if param:
+            # Strip :random flag
+            if param.endswith(":random"):
+                flags.append("random")
+                param = param[:-len(":random")]
+            elif param == "random":
+                flags.append("random")
+                param = ""
+            if param:
+                port_range = param
+        return MasqueradeVerdict(port_range=port_range, flags=tuple(flags)), log_level, log_tag
+
+    # SNAT[(addr[,addr...][:port-range][:flags])]
+    sm = _SNAT_ADDR_RE.match(inner)
+    if sm:
+        addr_part = sm.group(1)
+        return _parse_snat_addr(addr_part), log_level, log_tag
+
+    return None, None, None
+
+
+def _parse_snat_addr(addr_part: str) -> SnatVerdict:
+    """Parse the address parameter of ``SNAT(…)``.
+
+    Handles:
+    - Single address: ``198.51.100.1``
+    - Address with port range: ``198.51.100.1:1024-65535``
+    - Multiple addresses (round-robin): ``198.51.100.1,198.51.100.2``
+    - Flags: ``:persistent``, ``:random``, ``:fully-random`` (suffix)
+    """
+    flags: list[str] = []
+    # Strip recognised flags from the end (may appear multiple times)
+    changed = True
+    while changed:
+        changed = False
+        for flag in _SNAT_FLAGS:
+            if addr_part.endswith(f":{flag}"):
+                flags.insert(0, flag)
+                addr_part = addr_part[:-len(flag) - 1]
+                changed = True
+
+    # Multiple addresses → round-robin
+    addrs = [a.strip() for a in addr_part.split(",") if a.strip()]
+    if len(addrs) > 1:
+        return SnatVerdict(target=addrs[0], targets=tuple(addrs), flags=tuple(flags))
+
+    # Single address — may carry port range after last colon
+    single = addrs[0] if addrs else addr_part
+    port_range: str | None = None
+    # Detect port range: addr:p1-p2 or addr:port
+    # IPv4: split on last colon only if the suffix looks like a port/range
+    # (not part of an IPv6 address and not empty)
+    if ":" in single:
+        # Only interpret a trailing :port or :p1-p2 as a port range if
+        # the last segment contains only digits and an optional '-'.
+        last_colon = single.rfind(":")
+        suffix = single[last_colon + 1:]
+        if re.match(r'^\d+(?:-\d+)?$', suffix):
+            port_range = suffix
+            single = single[:last_colon]
+
+    return SnatVerdict(target=single, port_range=port_range, flags=tuple(flags))
+
+
+def _add_snat_matches(rule: Rule, cols: list[str]) -> None:
+    """Append match conditions for columns 5–10 of a ``snat`` line.
+
+    Column indices (0-based):
+      5  IPSEC
+      6  MARK
+      7  USER
+      8  SWITCH
+      9  ORIGDEST
+      10 PROBABILITY
+    """
+    ipsec     = cols[5] if len(cols) > 5 and cols[5] != "-" else None
+    mark      = cols[6] if len(cols) > 6 and cols[6] != "-" else None
+    user      = cols[7] if len(cols) > 7 and cols[7] != "-" else None
+    switch    = cols[8] if len(cols) > 8 and cols[8] != "-" else None
+    orig_dest = cols[9] if len(cols) > 9 and cols[9] != "-" else None
+    prob      = cols[10] if len(cols) > 10 and cols[10] != "-" else None
+
+    if ipsec:
+        rule.matches.extend(_build_ipsec_matches(ipsec, direction="out"))
+
+    if mark:
+        rule.matches.append(_build_mark_match(mark))
+
+    if user:
+        rule.matches.extend(_build_user_matches(user))
+
+    if switch:
+        # SWITCH column: the value names a shorewall "switch". We model this
+        # as a ct mark bit test using Shorewall's convention: bit 0x40000000
+        # is set when the named switch is "on". This lets operators toggle
+        # rules at runtime without reloading the firewall.
+        val = switch.strip()
+        negate = val.startswith("!")
+        if negate:
+            val = val[1:].strip()
+        rule.matches.append(Match(
+            field="ct mark",
+            value=f"& {_SWITCH_MARK:#010x} != 0" if not negate else f"& {_SWITCH_MARK:#010x} == 0",
+        ))
+
+    if orig_dest:
+        negate = orig_dest.startswith("!")
+        addr = orig_dest.lstrip("!")
+        rule.matches.append(Match(field="ct original ip daddr", value=addr, negate=negate))
+
+    if prob:
+        rule.matches.append(_build_probability_match(prob))
+
+
+def _build_ipsec_matches(ipsec: str, direction: str) -> list[Match]:
+    """Build ``policy in/out ipsec|none`` matches for the IPSEC column."""
+    val = ipsec.strip().lower()
+    if val in ("yes", "ipsec"):
+        return [Match(field=f"policy {direction} ipsec", value="")]
+    if val in ("no", "none"):
+        return [Match(field=f"policy {direction} none", value="")]
+    # Extra options (proto=esp mode=tunnel etc.) — pass as-is for now.
+    return [Match(field=f"policy {direction} ipsec", value=ipsec)]
+
+
+def _build_mark_match(mark: str) -> Match:
+    """Build a ``meta mark`` match for the MARK column.
+
+    Syntax: ``[!]value[/mask]`` or ``[!]value&mask``
+    """
+    negate = mark.startswith("!")
+    m = mark.lstrip("!")
+    # Convert & to / for the emitter's `meta mark and mask == val` path.
+    if "&" in m:
+        val, mask = m.split("&", 1)
+        return Match(field="meta mark", value=f"{val.strip()}/{mask.strip()}", negate=negate)
+    return Match(field="meta mark", value=m.strip(), negate=negate)
+
+
+def _build_user_matches(user: str) -> list[Match]:
+    """Build ``meta skuid`` / ``meta skgid`` matches for the USER column.
+
+    Shorewall USER syntax: ``[!]user`` or ``[!]+group`` or ``[!]user:group``
+    """
+    matches: list[Match] = []
+    negate = user.startswith("!")
+    u = user.lstrip("!")
+    if ":" in u:
+        uname, gname = u.split(":", 1)
+        if uname:
+            matches.append(Match(field="meta skuid", value=uname, negate=negate))
+        if gname:
+            matches.append(Match(field="meta skgid", value=gname, negate=negate))
+    elif u.startswith("+"):
+        matches.append(Match(field="meta skgid", value=u[1:], negate=negate))
+    else:
+        matches.append(Match(field="meta skuid", value=u, negate=negate))
+    return matches
+
+
+def _build_probability_match(prob: str) -> Match:
+    """Build a probability match for the PROBABILITY column.
+
+    Shorewall stores probabilities as fractions (``0.25``).  nft expresses
+    random matching as ``meta random < N`` where N is scaled to 2^32.
+    We use the ``probability`` inline-match field which the emitter maps
+    to ``numgen random mod 100 < percent``.
+    """
+    try:
+        frac = float(prob)
+    except ValueError:
+        frac = 0.5
+    percent = int(frac * 100)
+    return Match(field="probability", value=str(percent))
+
+
 def _process_snat_line(ir: FirewallIR, line: ConfigLine) -> None:
     """Process one ``snat`` config line.
 
     Modern Shorewall column layout::
 
-        ACTION   SOURCE   DEST   PROTO   PORT   IPSEC   MARK   USER   SWITCH   ORIGDEST   PROBABILITY
+        ACTION  SOURCE  DEST  PROTO  PORT  IPSEC  MARK  USER  SWITCH  ORIGDEST  PROBABILITY
 
     ACTION carries:
-      * ``SNAT(addr[,addr...])`` — explicit SNAT target(s)
-      * ``MASQUERADE``           — dynamic masquerade
-      * ``CONTINUE``             — skip (no NAT for this match)
+      * ``SNAT(addr[,addr...])``        — explicit SNAT target(s)
+      * ``SNAT(addr:port-range)``       — SNAT with port range
+      * ``SNAT(addr:random)``           — SNAT with random flag
+      * ``SNAT(addr:persistent)``       — SNAT with persistent flag
+      * ``SNAT(addr:fully-random)``     — SNAT with fully-random flag
+      * ``MASQUERADE``                  — dynamic masquerade
+      * ``MASQUERADE(port-range)``      — masquerade with port range
+      * ``MASQUERADE(port-range:random)``
+      * ``CONTINUE`` / ``ACCEPT`` / ``NONAT`` — skip NAT (return)
+      * ``LOG[:level][:tag]:ACTION``    — log before the action
 
     SOURCE is an IP / zone / interface; DEST is the outbound
     interface. PROTO/PORT/etc. mirror the masq layout.
@@ -91,11 +325,6 @@ def _process_snat_line(ir: FirewallIR, line: ConfigLine) -> None:
     dest_iface = cols[2]
     proto = cols[3] if len(cols) > 3 and cols[3] != "-" else None
     ports = cols[4] if len(cols) > 4 and cols[4] != "-" else None
-    orig_dest = cols[9] if len(cols) > 9 and cols[9] != "-" else None
-
-    action_upper = action_raw.upper()
-    if action_upper.startswith("CONTINUE"):
-        return
 
     # Reject set tokens in the SOURCE column.
     if _has_set_token(source):
@@ -109,48 +338,55 @@ def _process_snat_line(ir: FirewallIR, line: ConfigLine) -> None:
             _process_snat_line(ir, exp_line)
         return
 
-    # Pick the verdict based on the action keyword.
-    if action_upper.startswith("SNAT("):
-        target = action_raw[len("SNAT("):].rstrip(")")
-        verdict_args = SnatVerdict(target=target)
-    elif action_upper.startswith("MASQUERADE"):
-        verdict_args = MasqueradeVerdict()
-    else:
-        raise ValueError(
-            f"snat {line.file}:{line.lineno}: unknown ACTION {action_raw!r} "
-            f"(expected SNAT(addr), MASQUERADE, or CONTINUE)"
-        )
+    verdict_args, log_level, log_tag = _parse_snat_action(action_raw)
+
+    # CONTINUE/ACCEPT/NONAT (without LOG prefix) → skip this line entirely.
+    if verdict_args is None and log_level is None:
+        return
 
     chain = ir.chains["postrouting"]
-    rule = Rule(
-        verdict=Verdict.ACCEPT,  # placeholder, emitter handles snat specially
-        verdict_args=verdict_args,
-        source_file=line.file,
-        source_line=line.lineno,
-        comment=line.comment_tag,
-    )
 
-    # Outbound interface match (DEST column).
-    if dest_iface and dest_iface != "-":
-        rule.matches.append(Match(field="oifname", value=dest_iface))
+    def _make_base_rule() -> Rule:
+        r = Rule(
+            verdict=Verdict.ACCEPT,
+            source_file=line.file,
+            source_line=line.lineno,
+            comment=line.comment_tag,
+        )
+        # Outbound interface match (DEST column).
+        if dest_iface and dest_iface != "-":
+            r.matches.append(Match(field="oifname", value=dest_iface))
+        # Source — interface name OR ip/cidr. Heuristic: if it looks like
+        # an iface name (no dot, no colon, no slash) treat as iifname,
+        # otherwise as a saddr match.
+        if source and source != "-":
+            if _looks_like_iface(source):
+                r.matches.append(Match(field="iifname", value=source))
+            else:
+                r.matches.append(Match(field="ip saddr", value=source))
+        # Protocol and port (cols 3, 4)
+        if proto:
+            r.matches.append(Match(field="meta l4proto", value=proto))
+            if ports:
+                r.matches.append(Match(field=f"{proto} dport", value=ports))
+        # Optional extra columns (IPSEC, MARK, USER, SWITCH, ORIGDEST, PROBABILITY)
+        _add_snat_matches(r, cols)
+        return r
 
-    # Source — interface name OR ip/cidr. Heuristic: if it looks like
-    # an iface name (no dot, no colon, no slash) treat as iifname,
-    # otherwise as a saddr match.
-    if source and source != "-":
-        if _looks_like_iface(source):
-            rule.matches.append(Match(field="iifname", value=source))
-        else:
-            rule.matches.append(Match(field="ip saddr", value=source))
+    # If there is a LOG prefix, prepend a log rule with the same matches.
+    if log_level is not None:
+        log_rule = _make_base_rule()
+        log_rule.verdict = Verdict.LOG
+        log_rule.log_level = log_level
+        log_rule.log_prefix = log_tag or "SNAT"
+        chain.rules.append(log_rule)
 
-    if orig_dest:
-        rule.matches.append(Match(field="ip daddr", value=orig_dest))
+    # NONAT/CONTINUE/ACCEPT with a LOG prefix → return after logging.
+    if verdict_args is None:
+        return
 
-    if proto:
-        rule.matches.append(Match(field="meta l4proto", value=proto))
-        if ports:
-            rule.matches.append(Match(field=f"{proto} dport", value=ports))
-
+    rule = _make_base_rule()
+    rule.verdict_args = verdict_args
     chain.rules.append(rule)
 
 
@@ -397,6 +633,97 @@ def _process_dnat_line(ir: FirewallIR, line: ConfigLine) -> None:
             rule.matches.append(Match(field=f"{proto} dport", value=dport))
 
     chain.rules.append(rule)
+
+
+def process_static_nat(ir: FirewallIR, nat_lines: list[ConfigLine]) -> None:
+    """Process classic 1:1 NAT rules from the ``nat`` config file.
+
+    Shorewall ``nat`` file column layout::
+
+        EXTERNAL  INTERFACE[:digit]  INTERNAL  ALL  LOCAL
+
+    For each row we emit two rules:
+
+    1. PREROUTING ``dnat to INTERNAL`` matching ``ip daddr EXTERNAL``
+       (scoped to *iface* if ``ALL != 'Yes'``).
+    2. POSTROUTING ``snat to EXTERNAL`` matching ``ip saddr INTERNAL``
+       (scoped to *iface* if ``ALL != 'Yes'``).
+
+    If ``LOCAL == 'Yes'``, also emit an OUTPUT-chain DNAT rule so that
+    traffic originating on the firewall itself can reach ``INTERNAL``
+    via the external alias ``EXTERNAL``.
+
+    The ``:digit`` alias suffix on ``INTERFACE`` is stripped — alias
+    creation is runtime work (WP-F3) and not emitted here.
+    """
+    if not nat_lines:
+        return
+
+    _ensure_nat_chains(ir)
+
+    for line in nat_lines:
+        cols = line.columns
+        if len(cols) < 3:
+            continue
+
+        external = cols[0]
+        iface_spec = cols[1]
+        internal = cols[2]
+        all_ints = (cols[3].lower() in ("yes", "1") if len(cols) > 3 and cols[3] not in ("-", "") else False)
+        local_nat = (cols[4].lower() in ("yes", "1") if len(cols) > 4 and cols[4] not in ("-", "") else False)
+
+        # Strip :digit alias suffix from interface name (alias creation is WP-F3)
+        iface = iface_spec.split(":")[0]
+
+        # 1. PREROUTING — dnat to INTERNAL when destination is EXTERNAL
+        pre_rule = Rule(
+            verdict=Verdict.ACCEPT,
+            verdict_args=DnatVerdict(target=internal),
+            source_file=line.file,
+            source_line=line.lineno,
+            comment=line.comment_tag,
+        )
+        pre_rule.matches.append(Match(field="ip daddr", value=external))
+        if not all_ints and iface and iface != "-":
+            pre_rule.matches.append(Match(field="iifname", value=iface))
+        ir.chains["prerouting"].rules.append(pre_rule)
+
+        # 2. POSTROUTING — snat to EXTERNAL when source is INTERNAL
+        post_rule = Rule(
+            verdict=Verdict.ACCEPT,
+            verdict_args=SnatVerdict(target=external),
+            source_file=line.file,
+            source_line=line.lineno,
+            comment=line.comment_tag,
+        )
+        post_rule.matches.append(Match(field="ip saddr", value=internal))
+        if not all_ints and iface and iface != "-":
+            post_rule.matches.append(Match(field="oifname", value=iface))
+        ir.chains["postrouting"].rules.append(post_rule)
+
+        # 3. OUTPUT — dnat to INTERNAL so locally-originated traffic works
+        if local_nat:
+            _ensure_output_chain(ir)
+            out_rule = Rule(
+                verdict=Verdict.ACCEPT,
+                verdict_args=DnatVerdict(target=internal),
+                source_file=line.file,
+                source_line=line.lineno,
+                comment=line.comment_tag,
+            )
+            out_rule.matches.append(Match(field="ip daddr", value=external))
+            ir.chains["nat-output"].rules.append(out_rule)
+
+
+def _ensure_output_chain(ir: FirewallIR) -> None:
+    """Create the nat OUTPUT chain if it does not already exist."""
+    if "nat-output" not in ir.chains:
+        ir.add_chain(Chain(
+            name="nat-output",
+            chain_type=ChainType.NAT,
+            hook=Hook.OUTPUT,
+            priority=-100,
+        ))
 
 
 def process_netmap(ir: FirewallIR, netmap_lines: list[ConfigLine]) -> None:

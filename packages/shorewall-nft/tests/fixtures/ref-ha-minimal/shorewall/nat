@@ -1,0 +1,16 @@
+#
+# Shorewall - Static NAT (1:1) File
+#
+# For information about entries in this file, type "man shorewall-nat"
+#
+# See https://shorewall.org/manpages/shorewall-nat.html for additional information
+###############################################################################
+#EXTERNAL           INTERFACE     INTERNAL            ALL     LOCAL
+#
+# Basic 1:1 NAT: external 203.0.113.50 maps to internal 192.0.2.50
+# iface-scoped (ALL=-), no local OUTPUT rule
+203.0.113.50        eth0          192.0.2.50          -       -
+# ALL=Yes: apply to all interfaces (no iface match in rules)
+203.0.113.51        eth0          192.0.2.51          Yes     -
+# LOCAL=Yes: also emit OUTPUT DNAT so firewall-originated traffic works
+203.0.113.52        eth0          192.0.2.52          -       Yes

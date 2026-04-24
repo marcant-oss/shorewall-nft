@@ -31,6 +31,7 @@ from shorewall_nft.compiler.verdicts import (
     MasqueradeVerdict,
     NamedCounterVerdict,
     NflogVerdict,
+    NonatVerdict,
     NotrackVerdict,
     RedirectVerdict,
     RestoreMarkVerdict,
@@ -1025,12 +1026,42 @@ def _emit_typed_mark(v: MarkVerdict) -> str:
     return f"meta mark set 0x{v.value:08x}"
 
 
+def _emit_snat_verdict(v: SnatVerdict) -> str:
+    """Emit ``snat to …`` for a :class:`SnatVerdict`."""
+    if v.targets:
+        # Round-robin multi-target: numgen inc mod N map { 0:a1, 1:a2, … }
+        n = len(v.targets)
+        entries = ", ".join(f"{i} : {addr}" for i, addr in enumerate(v.targets))
+        return f"snat to numgen inc mod {n} map {{ {entries} }}"
+    # Single target — optionally with port range and flags.
+    addr = v.target
+    if v.port_range:
+        addr = f"{addr}:{v.port_range}"
+    parts = ["snat to", addr]
+    if v.flags:
+        parts.extend(v.flags)
+    return " ".join(parts)
+
+
+def _emit_masquerade_verdict(v: MasqueradeVerdict) -> str:
+    """Emit ``masquerade …`` for a :class:`MasqueradeVerdict`."""
+    parts: list[str] = []
+    if v.port_range:
+        parts.append(f"masquerade to :{v.port_range}")
+    else:
+        parts.append("masquerade")
+    if v.flags:
+        parts.extend(v.flags)
+    return " ".join(parts)
+
+
 # Type-keyed dispatch for new-style typed SpecialVerdict instances.
 # Each handler takes the typed verdict object and returns the nft fragment.
 _TYPED_VERDICT_EMITTERS: dict[type, Callable] = {
-    SnatVerdict: lambda v: f"snat to {v.target}",
+    SnatVerdict: _emit_snat_verdict,
     DnatVerdict: lambda v: f"dnat to {v.target}",
-    MasqueradeVerdict: lambda _v: "masquerade",
+    MasqueradeVerdict: _emit_masquerade_verdict,
+    NonatVerdict: lambda _v: "return",
     RedirectVerdict: lambda v: f"redirect to :{v.port}",
     NotrackVerdict: lambda _v: "notrack",
     CtHelperVerdict: lambda v: f'ct helper set "{v.name}"',
@@ -1072,7 +1103,10 @@ def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
         return rule_str
 
     for match in rule.matches:
-        parts.append(_emit_match(match))
+        # Fields handled by _INLINE_MATCH_EMITTERS are emitted in the second
+        # pass below — skip them here to avoid double-emission.
+        if match.field not in _INLINE_MATCH_EMITTERS:
+            parts.append(_emit_match(match))
 
     # Rate limit
     if rule.rate_limit:
@@ -1339,6 +1373,16 @@ def _emit_match(match: Match) -> str:
     field = match.field
     value = match.value
     negate = "!= " if match.negate else ""
+
+    # IPsec policy matches — nft uses `ipsec in/out exists|missing`.
+    # These come from the IPSEC column in snat/masq files.
+    if field.startswith("policy "):
+        parts = field.split()
+        if len(parts) == 3:
+            _, direction, pol = parts  # e.g. "policy", "out", "ipsec"/"none"
+            exists = "missing" if pol == "none" else "exists"
+            extra = f" {value}" if value.strip() else ""
+            return f"ipsec {direction} {exists}{extra}"
 
     # Strip Shorewall6 angle brackets from IPv6 addresses
     value = value.replace("<", "").replace(">", "")

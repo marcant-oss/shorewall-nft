@@ -18,8 +18,17 @@ from typing import Literal, Union
 
 @dataclass(frozen=True)
 class SnatVerdict:
-    """SNAT to a specific address (or address range)."""
+    """SNAT to a specific address (or address range).
+
+    ``targets``: list of addresses for round-robin SNAT (multi-target).
+    ``port_range``: ``"p1-p2"`` or ``"p"`` appended after ``addr:`` in emit.
+    ``flags``: subset of ``{"random", "persistent", "fully-random"}`` —
+        space-joined and appended after the address in the nft statement.
+    """
     target: str
+    targets: tuple[str, ...] = ()   # non-empty → round-robin map
+    port_range: str | None = None
+    flags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -30,7 +39,23 @@ class DnatVerdict:
 
 @dataclass(frozen=True)
 class MasqueradeVerdict:
-    """Dynamic masquerade (no fixed target)."""
+    """Dynamic masquerade (no fixed target).
+
+    ``port_range``: optional port range ``"p1-p2"`` emitted as
+        ``masquerade to :p1-p2``.
+    ``flags``: subset of ``{"random", "persistent", "fully-random"}``.
+    """
+    port_range: str | None = None
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class NonatVerdict:
+    """Skip NAT for this match (NONAT / ACCEPT / CONTINUE).
+
+    Emitted as ``return`` so the packet continues through the NAT table
+    without being translated.
+    """
 
 
 @dataclass(frozen=True)
@@ -139,7 +164,7 @@ class AuditVerdict:
 # ── Union alias ───────────────────────────────────────────────────────────
 
 SpecialVerdict = Union[
-    SnatVerdict, DnatVerdict, MasqueradeVerdict, RedirectVerdict,
+    SnatVerdict, DnatVerdict, MasqueradeVerdict, NonatVerdict, RedirectVerdict,
     NotrackVerdict, CtHelperVerdict,
     MarkVerdict, ConnmarkVerdict, RestoreMarkVerdict, SaveMarkVerdict,
     DscpVerdict, ClassifyVerdict, EcnClearVerdict,

@@ -43,6 +43,9 @@ class ShorewalConfig:
     #   ACTION SOURCE DEST PROTO PORT IPSEC MARK USER SWITCH ORIGDEST PROBABILITY
     # ACTION carries SNAT(addr[,addr...]), MASQUERADE, or CONTINUE.
     snat: list[ConfigLine] = field(default_factory=list)
+    # Classic 1:1 NAT file: EXTERNAL INTERFACE[:digit] INTERNAL ALL LOCAL
+    # Maps one external IP to one internal IP bidirectionally.
+    nat: list[ConfigLine] = field(default_factory=list)
     conntrack: list[ConfigLine] = field(default_factory=list)
     notrack: list[ConfigLine] = field(default_factory=list)
     blrules: list[ConfigLine] = field(default_factory=list)
@@ -143,7 +146,7 @@ class ConfigParser:
 
         # 3. Parse column-based config files
         for name in ("zones", "interfaces", "hosts", "policy", "rules",
-                     "masq", "snat",
+                     "masq", "snat", "nat",
                      "conntrack", "notrack", "blrules", "routestopped",
                      "stoppedrules",
                      "tcrules", "tcdevices", "tcinterfaces", "tcclasses",
