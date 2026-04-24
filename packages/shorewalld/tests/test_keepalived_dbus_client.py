@@ -38,6 +38,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# dbus-next is an optional [keepalived] extra; skip this whole module when
+# it's not importable (CI [dev]-only install, distro pip installs without
+# the extra). The production code soft-degrades via KeepalivedDbusUnavailable;
+# the tests mirror that by not running at all rather than failing.
+pytest.importorskip("dbus_next", reason="dbus-next not installed (optional [keepalived] extra)")
+
 
 # ---------------------------------------------------------------------------
 # Helpers

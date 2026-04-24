@@ -28,6 +28,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+# pysnmp is an optional [snmp] extra; skip this whole module when it's not
+# importable. Production code soft-degrades via KeepalivedTrapListenerUnavailable;
+# the tests mirror that by not running at all rather than failing.
+pytest.importorskip("pysnmp", reason="pysnmp not installed (optional [snmp] extra)")
+
+
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------
