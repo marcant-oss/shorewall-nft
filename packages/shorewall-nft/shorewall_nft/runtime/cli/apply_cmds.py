@@ -311,6 +311,27 @@ def start(directory, netns, shorewalld_socket, instance_name,
         except Exception as exc:  # noqa: BLE001 — alias apply is best-effort; don't block start
             s.warn(f"skipped ({exc})")
 
+    # ── Step 4c: provider policy routing (iproute2 rules/routes) ─────
+    with prog.step("Provider policy routing") as s:
+        try:
+            from shorewall_nft.runtime.apply import apply_iproute2_rules
+            _providers = getattr(ir, "providers", [])
+            _routes = getattr(ir, "routes", [])
+            _rtrules = getattr(ir, "rtrules", [])
+            if _providers or _routes or _rtrules:
+                _settings = getattr(ir, "settings", {}) or {}
+                applied, _skipped, errs = apply_iproute2_rules(
+                    _providers, _routes, _rtrules, _settings, netns=netns)
+                s.info(
+                    f"{applied} applied"
+                    + (f", {_skipped} skipped" if _skipped else ""))
+                for e in errs:
+                    s.warn(e)
+            else:
+                s.info("none configured")
+        except Exception as exc:  # noqa: BLE001 — policy-routing apply is best-effort; don't block start
+            s.warn(f"skipped ({exc})")
+
     # ── Step 5: tear down leftover shorewall_stopped table ────────────
     with prog.step("Cleanup") as s:
         try:
@@ -440,6 +461,24 @@ def stop(directory, netns, shorewalld_socket, instance_name,
                     click.echo(f"ip-aliases: {n_removed} removed")
     except Exception as e:  # noqa: BLE001 — alias removal is best-effort on stop
         click.echo(f"ip-aliases removal: skipped ({e})", err=True)
+
+    # Remove provider policy routing (ip rules / ip routes).
+    try:
+        from shorewall_nft.runtime.apply import remove_iproute2_rules
+        _settings_stop2 = getattr(ir, "settings", {}) or {} if ir is not None else {}
+        _providers_stop = getattr(ir, "providers", []) if ir is not None else []
+        _routes_stop = getattr(ir, "routes", []) if ir is not None else []
+        _rtrules_stop = getattr(ir, "rtrules", []) if ir is not None else []
+        if _providers_stop or _routes_stop or _rtrules_stop:
+            n_removed, _skipped, _errs = remove_iproute2_rules(
+                _providers_stop, _routes_stop, _rtrules_stop,
+                _settings_stop2, netns=netns)
+            if n_removed:
+                click.echo(f"provider routing: {n_removed} entries removed")
+            for _e in _errs:
+                click.echo(f"provider routing removal: {_e}", err=True)
+    except Exception as e:  # noqa: BLE001 — policy-routing removal is best-effort on stop
+        click.echo(f"provider routing removal: skipped ({e})", err=True)
 
     # Deregister from shorewalld. Determine whether DNS/DNSR sets are
     # present from the compile result if available, else from the

@@ -1,14 +1,16 @@
 """Unit tests for shorewall_nft.verify.connstate.
 
 All tests are pure-logic: no network namespaces, no root, no scapy.
-``ns`` (the only network side-effect) is patched to a stub that returns
-a configurable subprocess.CompletedProcess.
+``ns`` (the subprocess side-effect) is patched to a stub that returns a
+configurable subprocess.CompletedProcess.  ``NFCTSocket`` (used only by
+``run_small_conntrack_probe``) is patched to an in-memory fake that never
+opens a real netlink socket.
 """
 
 from __future__ import annotations
 
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -290,31 +292,47 @@ class TestRunConnstateTests:
 # run_small_conntrack_probe
 # ---------------------------------------------------------------------------
 
+def _make_nfct_mock(entries_per_dump: int = 1) -> MagicMock:
+    """Return a mock for ``NFCTSocket`` that behaves as a context manager.
+
+    ``ct.dump(...)`` returns a fresh list of ``entries_per_dump`` sentinel
+    objects on every call (so repeated calls within one probe run are all
+    independent).  ``ct.flush()`` is a no-op.
+    """
+    ct_instance = MagicMock()
+    ct_instance.dump.side_effect = lambda *_a, **_kw: iter([object()] * entries_per_dump)
+    ct_instance.flush.return_value = None
+    # Support ``with NFCTSocket(...) as ct:`` — __enter__ returns the mock itself.
+    ct_instance.__enter__ = MagicMock(return_value=ct_instance)
+    ct_instance.__exit__ = MagicMock(return_value=False)
+
+    nfct_cls = MagicMock(return_value=ct_instance)
+    return nfct_cls
+
+
 class TestRunSmallConntrackProbe:
-    def _ns_side_effect(self, ns: str, cmd: str, timeout: int = 10) -> subprocess.CompletedProcess:
-        """Return '1' for wc -l queries so the count checks pass."""
-        if "wc -l" in cmd:
-            return _completed(0, stdout="1")
-        return _completed(0, stdout="")
+    # ``ns`` is still called for the NS_SRC traffic-generation probes (nc/ping).
+    # Those calls don't affect the count logic, so a plain no-op stub is fine.
+    _ns_stub = staticmethod(lambda *_a, **_kw: _completed(0, stdout=""))
 
     def test_returns_four_results(self):
         """Probe must produce exactly 4 ConnStateResult objects."""
-        with patch("shorewall_nft.verify.connstate.ns",
-                   side_effect=self._ns_side_effect):
+        with patch("shorewall_nft.verify.connstate.ns", side_effect=self._ns_stub), \
+             patch("shorewall_nft.verify.connstate.NFCTSocket", _make_nfct_mock(1)):
             results = _run_small_conntrack_probe("10.0.0.1", port=80)
         assert len(results) == 4
 
     def test_all_pass_when_counts_positive(self):
         """When conntrack count >= 1 all results should pass."""
-        with patch("shorewall_nft.verify.connstate.ns",
-                   side_effect=self._ns_side_effect):
+        with patch("shorewall_nft.verify.connstate.ns", side_effect=self._ns_stub), \
+             patch("shorewall_nft.verify.connstate.NFCTSocket", _make_nfct_mock(1)):
             results = _run_small_conntrack_probe()
         assert all(r.passed for r in results)
 
     def test_fails_when_zero_entries(self):
         """When conntrack count = 0 the tracked-flow checks should fail."""
-        with patch("shorewall_nft.verify.connstate.ns",
-                   return_value=_completed(0, stdout="0")):
+        with patch("shorewall_nft.verify.connstate.ns", side_effect=self._ns_stub), \
+             patch("shorewall_nft.verify.connstate.NFCTSocket", _make_nfct_mock(0)):
             results = _run_small_conntrack_probe()
         # The 4th result (ct:table_nonempty) and the per-proto checks all fail
         named = {r.name: r for r in results}
@@ -331,19 +349,22 @@ class TestRunSmallConntrackProbe:
             "ct:icmp_flow_tracked",
             "ct:table_nonempty",
         }
-        with patch("shorewall_nft.verify.connstate.ns",
-                   side_effect=self._ns_side_effect):
+        with patch("shorewall_nft.verify.connstate.ns", side_effect=self._ns_stub), \
+             patch("shorewall_nft.verify.connstate.NFCTSocket", _make_nfct_mock(1)):
             results = _run_small_conntrack_probe()
         assert {r.name for r in results} == expected
 
-    def test_value_error_in_count_treated_as_zero(self):
-        """If conntrack output is non-numeric, _ct_count falls back to 0 → failed."""
-        def _bad_stdout(ns, cmd, timeout=10):
-            if "wc -l" in cmd:
-                return _completed(0, stdout="not-a-number")
-            return _completed(0, stdout="")
+    def test_exception_in_count_treated_as_zero(self):
+        """If NFCTSocket raises, _ct_count falls back to 0 → all checks fail."""
+        ct_instance = MagicMock()
+        ct_instance.dump.side_effect = OSError("netns gone")
+        ct_instance.flush.return_value = None
+        ct_instance.__enter__ = MagicMock(return_value=ct_instance)
+        ct_instance.__exit__ = MagicMock(return_value=False)
+        nfct_cls = MagicMock(return_value=ct_instance)
 
-        with patch("shorewall_nft.verify.connstate.ns", side_effect=_bad_stdout):
+        with patch("shorewall_nft.verify.connstate.ns", side_effect=self._ns_stub), \
+             patch("shorewall_nft.verify.connstate.NFCTSocket", nfct_cls):
             results = _run_small_conntrack_probe()
         named = {r.name: r for r in results}
         assert not named["ct:tcp_flow_tracked"].passed

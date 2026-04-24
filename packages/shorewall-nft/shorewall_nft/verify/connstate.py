@@ -15,8 +15,13 @@ All tests run inside network namespaces via ip netns.
 
 from __future__ import annotations
 
+import os
+import socket
 import time
 from dataclasses import dataclass
+
+from pyroute2 import NFCTSocket
+from pyroute2.netlink.nfnetlink.nfctsocket import NFCTAttrTuple
 
 from shorewall_nft.verify.simulate import (
     DEFAULT_SRC,
@@ -344,15 +349,17 @@ def run_small_conntrack_probe(dst_ip: str = "203.0.113.5",
     results: list[ConnStateResult] = []
 
     def _ct_count(proto: str) -> int:
-        r = ns(NS_FW, f"conntrack -L -p {proto} 2>/dev/null | wc -l",
-                timeout=5)
         try:
-            return int((r.stdout or "0").strip())
-        except ValueError:
+            proto_num = socket.getprotobyname(proto)
+            flt = NFCTAttrTuple(proto=proto_num)
+            with NFCTSocket(netns=NS_FW, flags=os.O_RDONLY) as ct:
+                return sum(1 for _ in ct.dump(tuple_orig=flt))
+        except Exception:  # noqa: BLE001
             return 0
 
     def _ct_flush() -> None:
-        ns(NS_FW, "conntrack -F 2>/dev/null || true", timeout=5)
+        with NFCTSocket(netns=NS_FW, flags=os.O_RDONLY) as ct:
+            ct.flush()
 
     # 1. TCP flow should create a tcp conntrack entry
     _ct_flush()

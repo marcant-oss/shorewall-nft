@@ -450,6 +450,14 @@ class SimTopology:
 
     def _install_slave_redirect(self, slave: str) -> None:
         """Load a tiny nft REDIRECT rule into a slave namespace."""
+        self._install_nft_redirect(slave)
+
+    def _install_nft_redirect(self, ns_name: str) -> None:
+        """Load a tiny nft REDIRECT rule into any named namespace.
+
+        Uses an ``inet`` table so a single ruleset covers both IPv4 and
+        IPv6 — no iptables/ip6tables binary dependency.
+        """
         nft_script = (
             "table inet sw_redir { }\n"
             "delete table inet sw_redir\n"
@@ -461,20 +469,16 @@ class SimTopology:
             "  }\n"
             "}\n"
         )
-        self._net.exec_in_ns(slave, ["nft", "-f", "-"],
-                             timeout=10, capture_output=True)
-        # nft -f - via subprocess.run can't take stdin via Popen here;
-        # use a temp file.
         import tempfile
         with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".nft", delete=False,
-                prefix="sw-slave-redir-") as f:
+                prefix="sw-redir-") as f:
             f.write(nft_script)
             path = f.name
         try:
-            r = self._net.exec_in_ns(slave, ["nft", "-f", path], timeout=10)
+            r = self._net.exec_in_ns(ns_name, ["nft", "-f", path], timeout=10)
             if r.returncode != 0:
-                print(f"  WARNING: slave {slave} REDIRECT install failed: "
+                print(f"  WARNING: {ns_name} REDIRECT install failed: "
                       f"{r.stderr[:200]}")
         finally:
             Path(path).unlink(missing_ok=True)
@@ -657,14 +661,7 @@ class SimTopology:
         In single-pair mode they stay in NS_DST as before.
         """
         listener_ns = NS_SRC if self.zones else NS_DST
-        ns(listener_ns,
-            "iptables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port 65000 2>/dev/null || true")
-        ns(listener_ns,
-            "iptables -t nat -A PREROUTING -p udp -j REDIRECT --to-port 65001 2>/dev/null || true")
-        ns(listener_ns,
-            "ip6tables -t nat -A PREROUTING -p tcp -j REDIRECT --to-port 65000 2>/dev/null || true")
-        ns(listener_ns,
-            "ip6tables -t nat -A PREROUTING -p udp -j REDIRECT --to-port 65001 2>/dev/null || true")
+        self._install_nft_redirect(listener_ns)
 
         # TCP listener — dual-stack via ncat if available, else two nc instances
         ns(listener_ns, "nc -l -k -p 65000 >/dev/null 2>&1 &")
