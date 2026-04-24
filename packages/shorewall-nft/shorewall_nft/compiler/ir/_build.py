@@ -196,6 +196,24 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
                 matches=[Match(field="ct state", value="untracked")],
                 verdict=untracked_verdict,
             ))
+        # TCP-flags jump — every iptables zone-pair chain emits
+        # ``-A <chain> -p tcp -j tcpflags`` right after the ct-prefix
+        # block. Without it, TCP packets carrying the SYN+FIN /
+        # SYN+RST / FIN+URG+PSH / all-zero flag combinations bypass
+        # the ``sw_TCPFlags`` chain and reach the dport-specific
+        # accept rules. Surfaced by simlab probe-classes G + H — 305
+        # fail_accept on a single fixture before this fix.
+        #
+        # Only emit when ``sw_TCPFlags`` actually exists in the IR
+        # (TCP_FLAGS_DISPOSITION may be CONTINUE/NONE which keeps the
+        # chain empty; in that case there is nothing to drop on, and
+        # an unconditional jump would be dead code).
+        if "sw_TCPFlags" in ir.chains and ir.chains["sw_TCPFlags"].rules:
+            ct_rules.append(Rule(
+                matches=[Match(field="meta l4proto", value="tcp")],
+                verdict=Verdict.JUMP,
+                verdict_args="sw_TCPFlags",
+            ))
         chain.rules = ct_rules + list(chain.rules)
 
 

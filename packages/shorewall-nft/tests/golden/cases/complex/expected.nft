@@ -549,11 +549,13 @@ table inet shorewall {
 
 	chain dmz-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain dmz-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -563,6 +565,7 @@ table inet shorewall {
 
 	chain dmz-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -572,6 +575,7 @@ table inet shorewall {
 
 	chain dmz-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -581,16 +585,19 @@ table inet shorewall {
 
 	chain dmz-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain dmz-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain dmz-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		meta nfproto ipv4 meta l4proto udp udp dport 53 accept
 		meta nfproto ipv4 meta l4proto tcp tcp dport 53 accept
@@ -600,16 +607,19 @@ table inet shorewall {
 
 	chain dmz-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain dmz-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain dmz-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -619,16 +629,19 @@ table inet shorewall {
 
 	chain dmz-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain fw-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain fw-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -638,6 +651,7 @@ table inet shorewall {
 
 	chain fw-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -647,6 +661,7 @@ table inet shorewall {
 
 	chain fw-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -656,31 +671,37 @@ table inet shorewall {
 
 	chain fw-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain fw-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain fw-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain fw-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain fw-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain fw-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -690,11 +711,13 @@ table inet shorewall {
 
 	chain fw-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain guest-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -704,6 +727,7 @@ table inet shorewall {
 
 	chain guest-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -714,6 +738,7 @@ table inet shorewall {
 
 	chain guest-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -722,6 +747,7 @@ table inet shorewall {
 
 	chain guest-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -731,6 +757,7 @@ table inet shorewall {
 
 	chain guest-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -740,6 +767,7 @@ table inet shorewall {
 
 	chain guest-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -749,6 +777,7 @@ table inet shorewall {
 
 	chain guest-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -758,6 +787,7 @@ table inet shorewall {
 
 	chain guest-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto tcp tcp dport 80 accept
 		meta nfproto ipv4 meta l4proto tcp tcp dport 443 accept
 		# dhcp:bond0.20
@@ -769,6 +799,7 @@ table inet shorewall {
 
 	chain guest-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -778,6 +809,7 @@ table inet shorewall {
 
 	chain guest-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -787,6 +819,7 @@ table inet shorewall {
 
 	chain guest-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -796,6 +829,7 @@ table inet shorewall {
 
 	chain guest-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -805,6 +839,7 @@ table inet shorewall {
 
 	chain int-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -814,6 +849,7 @@ table inet shorewall {
 
 	chain int-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto tcp tcp dport 22 accept
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		ip daddr 192.0.2.53 meta l4proto udp udp dport 53 accept
@@ -827,6 +863,7 @@ table inet shorewall {
 
 	chain int-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -837,6 +874,7 @@ table inet shorewall {
 
 	chain int-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -846,6 +884,7 @@ table inet shorewall {
 
 	chain int-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -856,6 +895,7 @@ table inet shorewall {
 
 	chain int-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -866,6 +906,7 @@ table inet shorewall {
 
 	chain int-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -876,6 +917,7 @@ table inet shorewall {
 
 	chain int-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto tcp tcp dport 80 accept
 		meta nfproto ipv4 meta l4proto tcp tcp dport 443 accept
 		meta nfproto ipv4 meta l4proto tcp tcp dport 25 log level info prefix "Shorewall:int-net:REJECT: "
@@ -891,6 +933,7 @@ table inet shorewall {
 
 	chain int-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		ip daddr 192.0.2.60 meta l4proto tcp tcp dport 8080 accept
 		ip daddr 192.0.2.60 meta l4proto tcp tcp dport 8443 accept
@@ -903,6 +946,7 @@ table inet shorewall {
 
 	chain int-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -913,6 +957,7 @@ table inet shorewall {
 
 	chain int-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -923,6 +968,7 @@ table inet shorewall {
 
 	chain int-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -933,6 +979,7 @@ table inet shorewall {
 
 	chain iot-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -942,6 +989,7 @@ table inet shorewall {
 
 	chain iot-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		ip daddr 192.0.2.53 meta l4proto udp udp dport 53 accept
 		ip daddr 192.0.2.53 meta l4proto tcp tcp dport 53 accept
@@ -954,6 +1002,7 @@ table inet shorewall {
 
 	chain iot-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -963,6 +1012,7 @@ table inet shorewall {
 
 	chain iot-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -972,6 +1022,7 @@ table inet shorewall {
 
 	chain iot-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -980,6 +1031,7 @@ table inet shorewall {
 
 	chain iot-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -989,6 +1041,7 @@ table inet shorewall {
 
 	chain iot-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -998,6 +1051,7 @@ table inet shorewall {
 
 	chain iot-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto tcp tcp dport 25 log level info prefix "Shorewall:iot-net:REJECT: "
 		meta nfproto ipv4 meta l4proto tcp tcp dport 25 reject
 		ip daddr @dns_dns1_example_com_v4 meta l4proto udp udp dport 53 accept
@@ -1011,6 +1065,7 @@ table inet shorewall {
 
 	chain iot-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -1020,6 +1075,7 @@ table inet shorewall {
 
 	chain iot-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -1029,6 +1085,7 @@ table inet shorewall {
 
 	chain iot-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -1038,6 +1095,7 @@ table inet shorewall {
 
 	chain iot-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -1047,17 +1105,20 @@ table inet shorewall {
 
 	chain lan-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain lan-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto tcp tcp dport 22 accept
 		jump sw_Reject
 	}
 
 	chain lan-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -1067,6 +1128,7 @@ table inet shorewall {
 
 	chain lan-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -1076,6 +1138,7 @@ table inet shorewall {
 
 	chain lan-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -1085,16 +1148,19 @@ table inet shorewall {
 
 	chain lan-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain lan-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain lan-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		ip daddr 192.0.2.60 meta l4proto tcp tcp dport 8080 accept
 		ip daddr 192.0.2.60 meta l4proto tcp tcp dport 8443 accept
 		jump sw_Reject
@@ -1102,11 +1168,13 @@ table inet shorewall {
 
 	chain lan-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain lan-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1116,17 +1184,20 @@ table inet shorewall {
 
 	chain lan-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain mgmt-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		jump sw_Drop
 	}
 
 	chain mgmt-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		ip saddr 192.0.2.10 meta l4proto tcp tcp dport 22 accept
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		jump sw_Drop
@@ -1134,6 +1205,7 @@ table inet shorewall {
 
 	chain mgmt-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -1144,6 +1216,7 @@ table inet shorewall {
 
 	chain mgmt-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -1154,6 +1227,7 @@ table inet shorewall {
 
 	chain mgmt-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -1164,17 +1238,20 @@ table inet shorewall {
 
 	chain mgmt-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		jump sw_Drop
 	}
 
 	chain mgmt-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain mgmt-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto tcp tcp dport 80 accept
 		meta nfproto ipv4 meta l4proto tcp tcp dport 443 accept
 		meta nfproto ipv4 meta l4proto udp udp dport { 53, 123 } accept
@@ -1188,18 +1265,21 @@ table inet shorewall {
 
 	chain mgmt-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		jump sw_Drop
 	}
 
 	chain mgmt-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		jump sw_Drop
 	}
 
 	chain mgmt-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -1210,12 +1290,14 @@ table inet shorewall {
 
 	chain mgmt-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		jump sw_Drop
 	}
 
 	chain net-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		ip daddr 192.0.2.50 meta l4proto tcp tcp dport 80 accept
 		ip daddr 192.0.2.50 meta l4proto tcp tcp dport 443 accept
 		ip saddr 192.0.2.10 meta l4proto tcp tcp dport 22 accept
@@ -1224,6 +1306,7 @@ table inet shorewall {
 
 	chain net-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		ip saddr 192.0.2.10 meta l4proto tcp tcp dport 22 accept
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		jump sw_Reject
@@ -1231,6 +1314,7 @@ table inet shorewall {
 
 	chain net-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -1240,6 +1324,7 @@ table inet shorewall {
 
 	chain net-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -1249,6 +1334,7 @@ table inet shorewall {
 
 	chain net-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -1258,26 +1344,31 @@ table inet shorewall {
 
 	chain net-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain net-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain net-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain net-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain net-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1287,21 +1378,25 @@ table inet shorewall {
 
 	chain net-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain srv-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain srv-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain srv-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -1311,6 +1406,7 @@ table inet shorewall {
 
 	chain srv-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -1320,6 +1416,7 @@ table inet shorewall {
 
 	chain srv-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -1329,26 +1426,31 @@ table inet shorewall {
 
 	chain srv-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain srv-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain srv-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain srv-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain srv-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1358,6 +1460,7 @@ table inet shorewall {
 
 	chain srv-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
@@ -1469,11 +1572,13 @@ table inet shorewall {
 
 	chain tunneled-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain tunneled-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		ip daddr 192.0.2.53 meta l4proto udp udp dport 53 meta secpath exists accept
 		ip daddr 192.0.2.53 meta l4proto tcp tcp dport 53 meta secpath exists accept
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 meta secpath exists accept
@@ -1482,6 +1587,7 @@ table inet shorewall {
 
 	chain tunneled-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -1491,6 +1597,7 @@ table inet shorewall {
 
 	chain tunneled-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -1500,6 +1607,7 @@ table inet shorewall {
 
 	chain tunneled-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -1509,26 +1617,31 @@ table inet shorewall {
 
 	chain tunneled-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain tunneled-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain tunneled-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain tunneled-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain tunneled-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1538,11 +1651,13 @@ table inet shorewall {
 
 	chain tunneled-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain voice-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1552,6 +1667,7 @@ table inet shorewall {
 
 	chain voice-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -1562,6 +1678,7 @@ table inet shorewall {
 
 	chain voice-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -1571,6 +1688,7 @@ table inet shorewall {
 
 	chain voice-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -1580,6 +1698,7 @@ table inet shorewall {
 
 	chain voice-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -1589,6 +1708,7 @@ table inet shorewall {
 
 	chain voice-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1598,6 +1718,7 @@ table inet shorewall {
 
 	chain voice-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1607,6 +1728,7 @@ table inet shorewall {
 
 	chain voice-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto udp udp dport 5060 accept
 		meta nfproto ipv4 meta l4proto tcp tcp dport { 5060, 5061 } accept
 		# dhcp:bond0.40
@@ -1618,6 +1740,7 @@ table inet shorewall {
 
 	chain voice-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1627,6 +1750,7 @@ table inet shorewall {
 
 	chain voice-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1636,6 +1760,7 @@ table inet shorewall {
 
 	chain voice-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1644,6 +1769,7 @@ table inet shorewall {
 
 	chain voice-vpn {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
@@ -1653,11 +1779,13 @@ table inet shorewall {
 
 	chain vpn-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain vpn-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto tcp tcp dport 22 accept
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		jump sw_Reject
@@ -1665,6 +1793,7 @@ table inet shorewall {
 
 	chain vpn-guest {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.20
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
@@ -1674,6 +1803,7 @@ table inet shorewall {
 
 	chain vpn-int {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
@@ -1684,6 +1814,7 @@ table inet shorewall {
 
 	chain vpn-iot {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.30
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
@@ -1693,11 +1824,13 @@ table inet shorewall {
 
 	chain vpn-lan {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain vpn-mgmt {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		meta nfproto ipv4 reject
 		jump sw_Reject
@@ -1705,6 +1838,7 @@ table inet shorewall {
 
 	chain vpn-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto tcp tcp dport 80 accept
 		meta nfproto ipv4 meta l4proto tcp tcp dport 443 accept
 		accept
@@ -1712,17 +1846,20 @@ table inet shorewall {
 
 	chain vpn-srv {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 accept
 		accept
 	}
 
 	chain vpn-tunneled {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain vpn-voice {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		# dhcp:bond0.40
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40

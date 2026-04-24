@@ -77,67 +77,80 @@ table inet shorewall {
 
 	chain dmz-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain dmz-loc {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Reject
 	}
 
 	chain dmz-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain fw-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain fw-loc {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain fw-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain loc-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain loc-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto tcp tcp dport 22 accept
 		jump sw_Reject
 	}
 
 	chain loc-loc {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain loc-net {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain net-dmz {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Drop
 	}
 
 	chain net-fw {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Drop
 	}
 
 	chain net-loc {
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Drop
 	}
 

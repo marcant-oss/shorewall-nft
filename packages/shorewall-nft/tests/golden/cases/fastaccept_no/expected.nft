@@ -48,18 +48,21 @@ table inet shorewall {
 	chain fw-loc {
 		ct state { established, related } accept
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain fw-net {
 		ct state { established, related } accept
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain loc-fw {
 		ct state { established, related } accept
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		meta nfproto ipv4 meta l4proto tcp tcp dport 22 accept
 		jump sw_Reject
 	}
@@ -67,18 +70,21 @@ table inet shorewall {
 	chain loc-net {
 		ct state { established, related } accept
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		accept
 	}
 
 	chain net-fw {
 		ct state { established, related } accept
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Drop
 	}
 
 	chain net-loc {
 		ct state { established, related } accept
 		ct state invalid drop
+		meta l4proto tcp jump sw_TCPFlags
 		jump sw_Drop
 	}
 
