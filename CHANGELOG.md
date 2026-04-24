@@ -58,10 +58,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now reports ``skipped-empty (likely unprivileged)`` and removes
   the zero-byte file so operators notice before feeding the dump
   into simlab. Commit `855bd14`.
+- **Per-source meter name collision** (#90) — multiple rules with
+  the same hashlimit ``NAME`` (the common ``Limit:<level>:LOGIN,…``
+  pattern) emitted multiple ``meter LOGIN size 65535 { … }``
+  declarations with different rate parameters. nft rejects the
+  second+ with ``File exists; meter 'LOGIN' overlaps an existing
+  set 'LOGIN' in family inet``. iptables-hashlimit allowed shared
+  names with per-rule counters; nft does not. Surfaced when running
+  ``nft -c -f`` against a compiled ruleset on a real 6.11 kernel —
+  user-namespace rootless tests didn't catch this because the
+  netlink failure path differs. Suffix the NAME with the chain name
+  + rule index so each meter declaration is unique while the base
+  name stays as a readable prefix. Commit `9ae6b30`.
 
-Validated end-to-end by ``shorewall-nft-simlab full --random 200``
-against four live-dump fixtures (every iptables rule probed at least
-once, plus 200 random probes per config):
+Validated end-to-end by both ``shorewall-nft-simlab full --random 200``
+in a rootless user-namespace **and** ``nft -c -f`` against the
+compiled output on a real Linux 6.11 kernel (catches netlink-load
+errors the userns path silently masks). Four live-dump fixtures,
+every iptables rule probed at least once, plus 200 random probes
+per config:
 
 | fixture   | probes total | fail_drop | fail_accept | environmental noise            |
 |-----------|--------------|-----------|-------------|--------------------------------|
