@@ -20,8 +20,10 @@ from shorewall_nft.compiler.ir._data import (
     FirewallIR,
     Hook,
     Match,
+    RateLimitSpec,
     Rule,
     Verdict,
+    _parse_rate_limit,
     is_ipv6_spec,
 )
 from shorewall_nft.compiler.ir.rules import (
@@ -1548,3 +1550,139 @@ def _apply_default_actions(ir: FirewallIR, settings: dict[str, str]) -> None:
                 verdict=Verdict.JUMP,
                 verdict_args=ACTION_CHAIN_MAP[reject_default],
             ))
+
+
+def _process_synparams(ir: FirewallIR, lines: list[ConfigLine],
+                       zones: ZoneModel) -> None:
+    """Process the ``synparams`` config file — SYN-flood protection per zone.
+
+    Upstream analogue: ``process_a_policy1`` inline block in Rules.pm:787.
+    For each row in ``synparams`` (ZONE RATE BURST [SUPPRESS]), this function:
+
+    1. Creates a ``synflood-<zone>`` chain containing:
+       - ``limit rate <rate>/<unit> burst <burst> packets return``
+       - ``drop``
+       (Packets within the rate limit return; excess is dropped.)
+
+    2. Prepends a TCP SYN guard jump into every zone-pair chain whose
+       destination zone matches the listed zone.  The guard rule is:
+       ``tcp flags syn jump synflood-<zone>``
+
+    The ``SUPPRESS`` column (optional) is parsed but not currently acted
+    on — it controls whether the synflood chain suppresses logging, which
+    is a future WP-E enhancement.
+
+    nft emit for a row ``loc 100/sec 200``:
+
+    .. code-block:: nft
+
+        chain synflood-loc {
+            limit rate 100/second burst 200 packets return
+            drop
+        }
+
+    And in every ``*-loc`` zone-pair chain, prepend:
+
+    .. code-block:: nft
+
+        tcp flags & (fin|syn|rst|ack) == syn jump synflood-loc
+    """
+    if not lines:
+        return
+
+    # Parse each row: ZONE RATE BURST [SUPPRESS]
+    synflood_zones: list[tuple[str, RateLimitSpec]] = []
+
+    for line in lines:
+        cols = line.columns
+        if not cols:
+            continue
+        zone_name = cols[0].strip()
+        if not zone_name or zone_name == "-":
+            continue
+        # Resolve $FW alias
+        if zone_name == "$FW":
+            zone_name = zones.firewall_zone
+
+        rate_str = cols[1].strip() if len(cols) > 1 else "100/sec"
+        burst_str = cols[2].strip() if len(cols) > 2 else "200"
+
+        # Parse rate: may be "100/sec", "10/min" etc.
+        rl = _parse_rate_limit(rate_str)
+        if rl is None:
+            # Try appending ":burst" and re-parsing
+            rl = _parse_rate_limit(f"{rate_str}:{burst_str}" if burst_str else rate_str)
+        if rl is None:
+            _log.warning("synparams: unparseable rate %r for zone %r — skipped",
+                         rate_str, zone_name)
+            continue
+        # Override burst from the dedicated column
+        try:
+            rl_burst = int(burst_str)
+        except (ValueError, TypeError):
+            rl_burst = rl.burst
+        # RateLimitSpec is slots=True, create a new one with the burst override
+        rl = RateLimitSpec(
+            rate=rl.rate, unit=rl.unit, burst=rl_burst,
+            name=None, per_source=False,
+        )
+        synflood_zones.append((zone_name, rl))
+
+    if not synflood_zones:
+        return
+
+    # Step 1: Build the ``synflood-<zone>`` chains.
+    for zone_name, rl in synflood_zones:
+        chain_name = f"synflood-{zone_name}"
+        if chain_name in ir.chains:
+            continue  # idempotent — don't overwrite if already built
+
+        sf_chain = Chain(name=chain_name)
+        # Rule 1: pass traffic within the rate limit
+        sf_chain.rules.append(Rule(
+            matches=[],
+            verdict=Verdict.RETURN,
+            rate_limit=rl,
+        ))
+        # Rule 2: drop the rest
+        sf_chain.rules.append(Rule(
+            matches=[],
+            verdict=Verdict.DROP,
+        ))
+        ir.add_chain(sf_chain)
+
+    # Step 2: Inject TCP SYN jumps at the front of every *-<zone> chain.
+    # We must collect target chains first, then prepend, to avoid
+    # modifying the dict while iterating.
+    synflood_zone_set = {z for z, _ in synflood_zones}
+    for chain_name, chain in list(ir.chains.items()):
+        if chain.is_base_chain or chain_name.startswith("sw_"):
+            continue
+        # Skip the synflood chains themselves — they must not receive the guard.
+        if chain_name.startswith("synflood-"):
+            continue
+        # Zone-pair chain names: "<src>-<dst>"
+        parts = chain_name.split("-", 1)
+        if len(parts) != 2:
+            continue
+        _src, _dst = parts
+        if _dst not in synflood_zone_set:
+            continue
+        # Prepend the syn-jump guard AFTER any ct state rules at the top.
+        # We find the first non-ct-state rule position.
+        insert_pos = 0
+        for i, r in enumerate(chain.rules):
+            is_ct_state = any(m.field == "ct state" for m in r.matches)
+            if is_ct_state:
+                insert_pos = i + 1
+            else:
+                break
+        jump_rule = Rule(
+            matches=[
+                Match(field="tcp flags", value="syn"),
+            ],
+            verdict=Verdict.JUMP,
+            verdict_args=f"synflood-{_dst}",
+            comment="synflood guard",
+        )
+        chain.rules.insert(insert_pos, jump_rule)

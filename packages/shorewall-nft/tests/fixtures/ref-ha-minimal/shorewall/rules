@@ -1,4 +1,4 @@
-#ACTION		SOURCE		DEST		PROTO	DEST PORT
+#ACTION		SOURCE		DEST		PROTO	DEST PORT(S)	SOURCE PORT(S)	ORIGDEST	RATE		USER		MARK		CONNLIMIT
 ?SECTION NEW
 
 # Allow SSH from local network to firewall
@@ -13,6 +13,12 @@ DNS(ACCEPT)	loc		net
 # Allow HTTP/HTTPS inbound to local web server
 ACCEPT		net		loc:$WEBSERVER	tcp	80,443
 
+# Rate-limited HTTP: 30 connections/minute burst 60 (plain LIMIT column)
+ACCEPT		net		loc:$WEBSERVER	tcp	80		-	-		30/min:60
+
+# Named per-source rate-limit via LIMIT: action (LIMIT:name,rate,burst)
+LIMIT:HTTP_LIMIT,10,20	net	loc:$WEBSERVER	tcp	80
+
 # DNAT: forward port 8080 on firewall to web server port 80
 DNAT		net		loc:$WEBSERVER:80	tcp	8080
 
@@ -22,3 +28,9 @@ Ping/ACCEPT	net		$FW
 # Allow ICMP ping from loc
 Ping(ACCEPT)	loc		$FW
 Ping(ACCEPT)	$FW		all
+
+# Connection-limited SSH: max 3 concurrent per source
+ACCEPT		net		$FW		tcp	22		-	-		-		-		-		3
+
+# Connection-limited with /24 mask: max 10 per /24
+ACCEPT		net		loc:$WEBSERVER	tcp	443		-	-		-		-		-		10:24

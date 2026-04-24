@@ -18,6 +18,7 @@ from shorewall_nft.compiler.ir import (
     Verdict,
     split_nft_zone_pair,
 )
+from shorewall_nft.compiler.ir._data import RateLimitSpec
 from shorewall_nft.compiler.verdicts import (
     AuditVerdict,
     ClassifyVerdict,
@@ -375,7 +376,14 @@ def _short_source_ref(rule: "Rule") -> str:
     # Meta info: rate limit, connlimit, time match, user match
     meta: list[str] = []
     if rule.rate_limit:
-        meta.append(f"rate={rule.rate_limit}")
+        rl = rule.rate_limit
+        if isinstance(rl, RateLimitSpec):
+            _rl_repr = f"{rl.rate}/{rl.unit}:{rl.burst}"
+            if rl.name:
+                _rl_repr = f"{rl.name},{_rl_repr}"
+            meta.append(f"rate={_rl_repr}")
+        else:
+            meta.append(f"rate={rl}")
     if rule.connlimit:
         meta.append(f"connlimit={rule.connlimit}")
     if rule.time_match:
@@ -456,8 +464,8 @@ def emit_arp_nft(ir: FirewallIR) -> str:
             f"\t\ttype {chain_type} hook {hook} priority "
             f"{chain.priority};{policy_str}")
         for idx, rule in enumerate(chain.rules):
-            rule_str = _emit_rule(rule, chain_name=chain.name, rule_idx=idx)
-            if rule_str:
+            for rule_str in _emit_rule_lines(rule, chain_name=chain.name,
+                                             rule_idx=idx):
                 lines.append(f"\t\t{rule_str}")
         lines.append("\t}")
         lines.append("")
@@ -503,8 +511,8 @@ def emit_stopped_nft(ir: FirewallIR) -> str:
             f"\t\ttype {chain_type} hook {hook} priority "
             f"{chain.priority};{policy_str}")
         for idx, rule in enumerate(chain.rules):
-            rule_str = _emit_rule(rule, chain_name=chain.name, rule_idx=idx)
-            if rule_str:
+            for rule_str in _emit_rule_lines(rule, chain_name=chain.name,
+                                             rule_idx=idx):
                 lines.append(f"\t\t{rule_str}")
         lines.append("\t}")
         lines.append("")
@@ -560,9 +568,8 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
 
         # Emit ct state rules first (before dispatch)
         for idx, rule in enumerate(chain_rules_to_emit):
-            rule_str = _emit_rule(rule, debug_ctx=debug_ctx,
-                                   chain_name=chain.name, rule_idx=idx)
-            if rule_str:
+            for rule_str in _emit_rule_lines(rule, debug_ctx=debug_ctx,
+                                             chain_name=chain.name, rule_idx=idx):
                 lines.append(f"{indent}\t{rule_str}")
 
         if chain_rules_to_emit or emitted_dnat_map:
@@ -582,14 +589,15 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
     # Emit rules (for non-base chains only; base chain rules emitted above)
     if not chain.is_base_chain:
         for idx, rule in enumerate(chain.rules):
-            rule_str = _emit_rule(rule, debug_ctx=debug_ctx,
-                                   chain_name=chain.name, rule_idx=idx)
-            if rule_str:
+            rule_stmts = _emit_rule_lines(rule, debug_ctx=debug_ctx,
+                                          chain_name=chain.name, rule_idx=idx)
+            if rule_stmts:
                 if rule.comment and debug_ctx is None:
                     # In normal mode, emit ?COMMENT tag as a shell comment.
                     # In debug mode the comment is already on the rule itself.
                     lines.append(f"{indent}\t# {rule.comment}")
-                lines.append(f"{indent}\t{rule_str}")
+                for rule_str in rule_stmts:
+                    lines.append(f"{indent}\t{rule_str}")
 
         # Default policy for non-base chains
         # (JUMP policy is handled via explicit rule at end of chain)
@@ -1078,6 +1086,44 @@ _TYPED_VERDICT_EMITTERS: dict[type, Callable] = {
     AuditVerdict: lambda v: f'log prefix "AUDIT:{v.base_action}: " accept',
 }
 
+def _emit_rule_lines(rule: Rule, debug_ctx: "_DebugContext | None" = None,
+                     chain_name: str = "", rule_idx: int = 0) -> list[str]:
+    """Emit a rule as one or more nft statement strings.
+
+    For plain rate-limit rules this returns a single element list.
+    For named per-source (hashlimit/meter) rules this returns two
+    elements: the meter-drop guard and the original verdict rule.
+
+    The meter-drop pattern mirrors upstream Shorewall's hashlimit emit:
+    traffic exceeding the per-source rate is dropped by the meter rule;
+    traffic within the limit falls through to the accept rule.
+    """
+    rl = rule.rate_limit
+    if isinstance(rl, RateLimitSpec) and rl.per_source:
+        # Build the meter-drop guard using only the non-address matches
+        # from the original rule (protocol, port, etc.), plus ip saddr.
+        meter_name = rl.name or "shorewall_meter"
+        meter_stmt = (
+            f"meter {meter_name} size 65535 "
+            f"{{ ip saddr limit rate over {rl.rate}/{rl.unit} "
+            f"burst {rl.burst} packets }} drop"
+        )
+        # The original rule without the per_source rate_limit
+        # (rate_limit cleared so _emit_rule doesn't re-emit it).
+        import copy as _copy
+        stripped = _copy.copy(rule)
+        stripped.rate_limit = None  # type: ignore[attr-defined]
+        verdict_stmt = _emit_rule(stripped, debug_ctx=debug_ctx,
+                                  chain_name=chain_name, rule_idx=rule_idx)
+        result = [meter_stmt]
+        if verdict_stmt:
+            result.append(verdict_stmt)
+        return result
+    single = _emit_rule(rule, debug_ctx=debug_ctx,
+                        chain_name=chain_name, rule_idx=rule_idx)
+    return [single] if single else []
+
+
 def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
                chain_name: str = "", rule_idx: int = 0) -> str:
     """Emit a single rule as nft syntax.
@@ -1108,17 +1154,39 @@ def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
         if match.field not in _INLINE_MATCH_EMITTERS:
             parts.append(_emit_match(match))
 
-    # Rate limit
-    if rule.rate_limit:
-        parts.append(f"limit rate {rule.rate_limit}")
+    # Rate limit — plain form only; per_source/hashlimit handled by
+    # _emit_rule_lines (which emits a separate meter-drop rule first).
+    if isinstance(rule.rate_limit, RateLimitSpec) and not rule.rate_limit.per_source:
+        rl = rule.rate_limit
+        parts.append(
+            f"limit rate {rl.rate}/{rl.unit} burst {rl.burst} packets")
 
-    # Connection limit
+    # Connection limit: N[:mask] → ct count over N, with optional saddr mask.
     if rule.connlimit:
-        # s:N:M → ct count N
-        import re
-        m = re.match(r'^(?:s:)?(\d+)(?::(\d+))?$', rule.connlimit)
+        import re as _re
+        m = _re.match(r'^(\d+)(?::(\d+))?$', rule.connlimit.lstrip("s:"))
         if m:
-            parts.append(f"ct count {m.group(1)}")
+            count = m.group(1)
+            mask = m.group(2)
+            if mask:
+                # CIDR mask → compute nft saddr mask expression.
+                # /24 → 255.255.255.0, etc.
+                mask_bits = int(mask)
+                if 1 <= mask_bits <= 32:
+                    mask_int = ((1 << 32) - 1) ^ ((1 << (32 - mask_bits)) - 1)
+                    octets = [
+                        (mask_int >> 24) & 0xFF,
+                        (mask_int >> 16) & 0xFF,
+                        (mask_int >> 8) & 0xFF,
+                        mask_int & 0xFF,
+                    ]
+                    mask_str = ".".join(str(o) for o in octets)
+                    parts.append(
+                        f"ip saddr and {mask_str} ct count over {count}")
+                else:
+                    parts.append(f"ct count over {count}")
+            else:
+                parts.append(f"ct count over {count}")
 
     # Time match
     if rule.time_match:

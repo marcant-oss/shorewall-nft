@@ -191,6 +191,14 @@ _COLUMNS: dict[str, list[str]] = {
     "nfsets": [
         "name", "hosts", "options",
     ],
+
+    # SYN-flood protection per zone.
+    # Columns: ZONE RATE BURST [SUPPRESS]
+    # Generates a ``synflood-<zone>`` chain with a per-source rate-limit
+    # and injects a jump to it on every TCP SYN rule destined for that zone.
+    "synparams": [
+        "zone", "rate", "burst", "suppress",
+    ],
 }
 
 

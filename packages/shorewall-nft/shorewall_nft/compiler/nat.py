@@ -389,6 +389,32 @@ def _process_snat_line(ir: FirewallIR, line: ConfigLine) -> None:
     rule.verdict_args = verdict_args
     chain.rules.append(rule)
 
+    # ADD_SNAT_ALIASES: record SNAT target address for runtime alias apply.
+    # Mirrors Nat.pm::process_one_masq1: ``if ($add_snat_aliases) { … }``.
+    # Conditions for recording:
+    #   1. ADD_SNAT_ALIASES=Yes in settings.
+    #   2. Verdict is an explicit SNAT to a concrete IP (not MASQUERADE /
+    #      NONAT / detect).  MASQUERADE uses the interface's current address
+    #      dynamically — no static alias needed.
+    #   3. A DEST interface is specified (needed to know *which* iface to
+    #      alias on).
+    #   4. The SNAT target is a plain IP (not a range start/end nor a
+    #      port-only specification).
+    if isinstance(verdict_args, SnatVerdict) and dest_iface and dest_iface != "-":
+        add_snat_aliases = ir.settings.get(
+            "ADD_SNAT_ALIASES", "No").strip().lower() in ("yes", "1", "true")
+        if add_snat_aliases:
+            snat_target = verdict_args.target
+            # Skip if target looks like an iface-variable reference (&/%)
+            # or an address-range (contains '-') or is empty.
+            if (
+                snat_target
+                and not snat_target.startswith(("&", "%"))
+                and "-" not in snat_target
+                and not any(a == snat_target for a, _ in ir.ip_aliases)
+            ):
+                ir.ip_aliases.append((snat_target, dest_iface))
+
 
 def _looks_like_iface(s: str) -> bool:
     """True if *s* looks like an interface name (no dot/colon/slash)."""
@@ -661,6 +687,11 @@ def process_static_nat(ir: FirewallIR, nat_lines: list[ConfigLine]) -> None:
 
     _ensure_nat_chains(ir)
 
+    # ADD_IP_ALIASES: auto-add /32 aliases for 1:1 NAT external IPs.
+    # Default upstream value is Yes.
+    add_ip_aliases = ir.settings.get(
+        "ADD_IP_ALIASES", "Yes").strip().lower() in ("yes", "1", "true")
+
     for line in nat_lines:
         cols = line.columns
         if len(cols) < 3:
@@ -672,7 +703,10 @@ def process_static_nat(ir: FirewallIR, nat_lines: list[ConfigLine]) -> None:
         all_ints = (cols[3].lower() in ("yes", "1") if len(cols) > 3 and cols[3] not in ("-", "") else False)
         local_nat = (cols[4].lower() in ("yes", "1") if len(cols) > 4 and cols[4] not in ("-", "") else False)
 
-        # Strip :digit alias suffix from interface name (alias creation is WP-F3)
+        # Strip :digit alias suffix from interface name.
+        # The full iface_spec (including :digit) is preserved for the
+        # alias lookup so that callers providing eth0:0 get the correct
+        # base interface name in the alias tuple.
         iface = iface_spec.split(":")[0]
 
         # 1. PREROUTING — dnat to INTERNAL when destination is EXTERNAL
@@ -713,6 +747,26 @@ def process_static_nat(ir: FirewallIR, nat_lines: list[ConfigLine]) -> None:
             )
             out_rule.matches.append(Match(field="ip daddr", value=external))
             ir.chains["nat-output"].rules.append(out_rule)
+
+        # 4. IP alias — record (external, iface) for runtime apply.
+        # Mirrors Nat.pm::do_one_nat: ``$addresses_to_add{$external} = 1;
+        # push @addresses_to_add, ($external, $fullinterface);``
+        # The alias is skipped when ADD_IP_ALIASES is No, or when the
+        # iface_spec carries an explicit empty alias (``eth0:``).
+        if add_ip_aliases and external and iface:
+            # Upstream: if alias digit is explicitly empty (``eth0:``)
+            # skip the alias — ``$add_ip_aliases = ''`` branch in Nat.pm.
+            alias_part = iface_spec[len(iface):]
+            if alias_part not in (":", ""):
+                # Has a non-empty alias suffix — still add on base iface.
+                pass
+            # Only skip if explicitly ``iface:`` (empty alias).
+            if alias_part == ":":
+                pass  # skip per upstream semantics
+            else:
+                # De-duplicate: same external IP already queued.
+                if not any(a == external for a, _ in ir.ip_aliases):
+                    ir.ip_aliases.append((external, iface))
 
 
 def _ensure_output_chain(ir: FirewallIR) -> None:

@@ -86,6 +86,10 @@ class ShorewalConfig:
     # resolver, ip-list, ip-list-plain). Declared once here and
     # referenced in rules as ``nfset:name``.
     nfsets: list[ConfigLine] = field(default_factory=list)
+    # SYN-flood protection per zone — columns: ZONE RATE BURST [SUPPRESS].
+    # Generates a ``synflood-<zone>`` rate-limit chain and injects a jump
+    # to it on TCP SYN rules headed for each listed zone.
+    synparams: list[ConfigLine] = field(default_factory=list)
     macros: dict[str, list[ConfigLine]] = field(default_factory=dict)
     # Line-based extension scripts — raw line lists so the structured
     # blob can round-trip them without pretending they have columns.
@@ -169,7 +173,8 @@ class ConfigParser:
                      # - scfilter:   source CIDR filter
                      "arprules", "proxyarp", "proxyndp", "ecn",
                      "nfacct", "rawnat", "scfilter",
-                     "blacklist", "dnsnames", "nfsets"):
+                     "blacklist", "dnsnames", "nfsets",
+                     "synparams"):
             path = self.config_dir / name
             if path.exists():
                 lines = self._parse_columnar(path)
@@ -754,6 +759,7 @@ def _merge_configs(config: ShorewalConfig, config6: ShorewalConfig) -> None:
     config.conntrack.extend(config6.conntrack)
     config.notrack.extend(config6.notrack)
     config.blrules.extend(config6.blrules)
+    config.synparams.extend(config6.synparams)
 
     # Merge macros — v6 entries extend v4 entries in same macro.
     # The compiler filters by address family during expansion.

@@ -168,12 +168,18 @@ def _check_rule(rule: Rule, caps: NftCapabilities, chain_name: str) -> list[Capa
 
     # Rate limit
     if rule.rate_limit and not caps.has_limit:
+        from shorewall_nft.compiler.ir._data import RateLimitSpec
+        rl = rule.rate_limit
+        if isinstance(rl, RateLimitSpec):
+            rl_str = f"{rl.rate}/{rl.unit} burst {rl.burst} packets"
+        else:
+            rl_str = str(rl)
         errors.append(CapabilityError(
             feature="limit",
             description="Rate limiting not available",
             rule_file=rule.source_file,
             rule_line=rule.source_line,
-            rule_context=f"limit rate {rule.rate_limit} in {ctx}",
+            rule_context=f"limit rate {rl_str} in {ctx}",
             suggestion="Load nft_limit module: modprobe nft_limit",
         ))
 

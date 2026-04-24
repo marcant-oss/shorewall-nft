@@ -16,9 +16,11 @@ from shorewall_nft.compiler.ir._data import (
     Hook,
     MarkGeometry,
     Match,
+    RateLimitSpec,
     Rule,
     Verdict,
     _is_mac_addr,
+    _parse_limit_action,
     _parse_rate_limit,
     is_ipv6_spec,
     split_nft_zone_pair,
@@ -87,6 +89,7 @@ from shorewall_nft.compiler.ir._build import (
     _process_routestopped,
     _process_scfilter,
     _process_stoppedrules,
+    _process_synparams,
     _set_self_zone_policies,
 )
 from shorewall_nft.compiler.ir.rules import (
@@ -176,6 +179,12 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
 
     # Process filter rules (excluding DNAT)
     _process_rules(ir, filter_rules, zones)
+
+    # Process synparams (SYN-flood protection per zone).
+    # Must run AFTER _process_rules so zone-pair chains already exist
+    # for the TCP SYN guard injection.
+    if getattr(config, "synparams", None):
+        _process_synparams(ir, config.synparams, zones)
 
     # Process notrack rules
     if config.notrack:

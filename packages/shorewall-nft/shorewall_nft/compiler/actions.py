@@ -13,6 +13,7 @@ from __future__ import annotations
 from shorewall_nft.compiler.ir import (
     FirewallIR,
     Match,
+    RateLimitSpec,
     Rule,
     Verdict,
 )
@@ -284,7 +285,7 @@ def _create_rst_chain(ir: FirewallIR) -> None:
             Match(field="tcp flags & rst", value="rst"),
         ],
         verdict=Verdict.ACCEPT,
-        rate_limit="2/second burst 5 packets",
+        rate_limit=RateLimitSpec(rate=2, unit="second", burst=5),
     ))
     chain.rules.append(Rule(
         matches=[

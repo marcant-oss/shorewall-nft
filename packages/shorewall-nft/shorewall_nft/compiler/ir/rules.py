@@ -21,9 +21,11 @@ from pathlib import Path
 from shorewall_nft.compiler.ir._data import (
     FirewallIR,
     Match,
+    RateLimitSpec,
     Rule,
     Verdict,
     _is_mac_addr,
+    _parse_limit_action,
     _parse_rate_limit,
     is_ipv6_spec,
 )
@@ -553,6 +555,21 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
             _expand_macro(ir, zones, macro_name, verdict_str, log_tag,
                           source_spec, dest_spec, proto, dport, sport, line)
         else:
+            # LIMIT:name,rate,burst — named per-source rate-limit action.
+            # Must be checked BEFORE the generic colon-split below so that
+            # ``LIMIT:LOGIN,12,60`` is not misinterpreted as action=LIMIT with
+            # log level "LOGIN,12,60".
+            _raw_action_upper = action_str.upper()
+            if _raw_action_upper.startswith("LIMIT:") or _raw_action_upper == "LIMIT":
+                param_str = action_str[6:] if ":" in action_str else ""
+                rl_spec = _parse_limit_action(param_str) if param_str else None
+                if rl_spec is None and rate:
+                    rl_spec = _parse_rate_limit(rate)
+                _add_rule(ir, zones, Verdict.ACCEPT, None,
+                          source_spec, dest_spec, proto, dport, sport, line,
+                          rate_spec=rl_spec)
+                continue
+
             # Check for action:loglevel pattern
             log_prefix = None
             if ":" in action_str:
@@ -569,10 +586,13 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
                               dest_spec, proto, dport, sport, line)
                 continue
 
-            # Limit:TAG — rate-limited action
-            if action_str.startswith("Limit"):
+            # Fallthrough LIMIT check — catches bare "Limit" action
+            # (no colon param) after the colon-split leaves action_str="Limit".
+            if action_str.upper() == "LIMIT":
+                rl_spec = _parse_rate_limit(rate) if rate else None
                 _add_rule(ir, zones, Verdict.ACCEPT, log_prefix,
-                          source_spec, dest_spec, proto, dport, sport, line)
+                          source_spec, dest_spec, proto, dport, sport, line,
+                          rate_spec=rl_spec)
                 continue
 
             # AUDIT actions: A_ACCEPT, A_DROP, A_REJECT
@@ -769,7 +789,8 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
               time_match: str | None = None,
               headers: str | None = None,
               switch: str | None = None,
-              helper: str | None = None) -> None:
+              helper: str | None = None,
+              rate_spec: RateLimitSpec | None = None) -> None:
     """Add a rule to the appropriate chain(s)."""
     src_zone, src_addrs = _parse_zone_spec(source_spec, zones)
     dst_zone, dst_addrs = _parse_zone_spec(dest_spec, zones)
@@ -1035,8 +1056,11 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                         # Common patterns: -m set --match-set, -m recent, etc.
                         rule.matches.append(Match(field="inline", value=inline_text))
 
-            # Rate limit: s:name:rate/unit:burst → nft limit
-            if rate:
+            # Rate limit: explicit RateLimitSpec from LIMIT action wins;
+            # fall back to parsing the rate column string.
+            if rate_spec is not None:
+                rule.rate_limit = rate_spec
+            elif rate:
                 rule.rate_limit = _parse_rate_limit(rate)
             if user:
                 rule.user_match = user

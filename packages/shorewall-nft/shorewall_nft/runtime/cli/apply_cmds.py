@@ -294,6 +294,23 @@ def start(directory, netns, shorewalld_socket, instance_name,
         except Exception as exc:  # noqa: BLE001 — proxy-ARP apply is best-effort; don't block start
             s.warn(f"skipped ({exc})")
 
+    # ── Step 4b: IP aliases (ADD_IP_ALIASES / ADD_SNAT_ALIASES) ──────
+    with prog.step("IP aliases") as s:
+        try:
+            from shorewall_nft.runtime.apply import apply_ip_aliases
+            aliases = getattr(ir, "ip_aliases", [])
+            if aliases:
+                applied, skipped, errs = apply_ip_aliases(aliases, netns=netns)
+                s.info(
+                    f"{applied} added"
+                    + (f", {skipped} already present" if skipped else ""))
+                for e in errs:
+                    s.warn(e)
+            else:
+                s.info("none configured")
+        except Exception as exc:  # noqa: BLE001 — alias apply is best-effort; don't block start
+            s.warn(f"skipped ({exc})")
+
     # ── Step 5: tear down leftover shorewall_stopped table ────────────
     with prog.step("Cleanup") as s:
         try:
@@ -408,6 +425,21 @@ def stop(directory, netns, shorewalld_socket, instance_name,
                 click.echo(f"proxy-arp/ndp: {n} entries removed")
     except Exception as e:  # noqa: BLE001 — proxy-ARP removal is best-effort on stop
         click.echo(f"proxy-arp/ndp removal: skipped ({e})", err=True)
+
+    # Remove IP aliases (DNAT/SNAT) — gated on RETAIN_ALIASES=No (default).
+    try:
+        from shorewall_nft.runtime.apply import remove_ip_aliases
+        _settings_stop = getattr(ir, "settings", {}) or {}
+        retain = _settings_stop.get(
+            "RETAIN_ALIASES", "No").strip().lower() in ("yes", "1", "true")
+        if not retain:
+            aliases = getattr(ir, "ip_aliases", []) if ir is not None else []
+            if aliases:
+                n_removed, _skipped, _errs = remove_ip_aliases(aliases, netns=netns)
+                if n_removed:
+                    click.echo(f"ip-aliases: {n_removed} removed")
+    except Exception as e:  # noqa: BLE001 — alias removal is best-effort on stop
+        click.echo(f"ip-aliases removal: skipped ({e})", err=True)
 
     # Deregister from shorewalld. Determine whether DNS/DNSR sets are
     # present from the compile result if available, else from the

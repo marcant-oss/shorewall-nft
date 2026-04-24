@@ -25,6 +25,14 @@ from shorewall_nft.nft.nfsets import NfSetRegistry
 if TYPE_CHECKING:
     pass
 
+# Unit normalization map shared by _parse_rate_limit and tests.
+_UNIT_MAP: dict[str, str] = {
+    "sec": "second", "second": "second",
+    "min": "minute", "minute": "minute",
+    "hour": "hour",
+    "day": "day",
+}
+
 
 class Verdict(Enum):
     ACCEPT = "accept"
@@ -50,6 +58,32 @@ class Hook(Enum):
     POSTROUTING = "postrouting"
 
 
+@dataclass(slots=True, frozen=True)
+class RateLimitSpec:
+    """Parsed Shorewall rate-limit / hashlimit specification.
+
+    Plain form (LIMIT column: ``12/min:60`` or action ``12/min``)::
+
+        RateLimitSpec(rate=12, unit="minute", burst=60, name=None,
+                      per_source=False)
+
+    Named hashlimit form (action column: ``LIMIT:LOGIN,12,60``)::
+
+        RateLimitSpec(rate=12, unit="minute", burst=60, name="LOGIN",
+                      per_source=True)
+
+    Named srcip form (LIMIT column: ``s:LOGIN:12/min:60``)::
+
+        RateLimitSpec(rate=12, unit="minute", burst=60, name="LOGIN",
+                      per_source=True)
+    """
+    rate: int
+    unit: str       # "second" | "minute" | "hour" | "day"
+    burst: int = 5  # default upstream burst
+    name: str | None = None
+    per_source: bool = False
+
+
 @dataclass(slots=True)
 class Match:
     """A single match condition in a rule."""
@@ -73,8 +107,8 @@ class Rule:
     counter: bool = False
     log_prefix: str | None = None
     log_level: str | None = None  # e.g. "info", "debug" — typed override for log_level: prefix
-    rate_limit: str | None = None  # e.g. "30/minute burst 100"
-    connlimit: str | None = None   # e.g. "s:1:2"
+    rate_limit: RateLimitSpec | None = None  # parsed rate-limit spec
+    connlimit: str | None = None   # e.g. "10" or "10:24" (count[:mask])
     time_match: str | None = None  # e.g. "utc&timestart=8:00&timestop=17:00"
     user_match: str | None = None  # e.g. "nobody"
     mark_match: str | None = None  # e.g. "0x1/0xff"
@@ -265,6 +299,13 @@ class FirewallIR:
     # Default is the upstream defaults (8-bit TC, 8-bit total, low routes).
     mark_geometry: MarkGeometry = field(default_factory=MarkGeometry.default)
 
+    # IP alias lifecycle — populated by process_static_nat() and
+    # _process_snat_line() when ADD_IP_ALIASES / ADD_SNAT_ALIASES are
+    # enabled in shorewall.conf.  Each tuple is ``(address, iface_name)``.
+    # ``runtime/apply.py::apply_ip_aliases`` consumes this list at start;
+    # ``remove_ip_aliases`` consumes it at stop (gated on RETAIN_ALIASES).
+    ip_aliases: list[tuple[str, str]] = field(default_factory=list)
+
     # Multi-ISP provider state — populated by build_ir() from the
     # providers / routes / rtrules config files.  Channel-2 consumers
     # (generate-iproute2-rules CLI command) read these after build_ir().
@@ -311,27 +352,126 @@ class FirewallIR:
         return self.chains[name]
 
 
-def _parse_rate_limit(rate_str: str) -> str:
-    """Parse Shorewall rate limit format to nft format.
+def _parse_rate_limit(rate_str: str) -> RateLimitSpec | None:
+    """Parse a Shorewall rate-limit token into a typed ``RateLimitSpec``.
 
-    Shorewall: s:name:rate/unit:burst  or  rate/unit:burst
-    nft:       limit rate N/unit burst M
+    Accepted forms (mirrors upstream ``do_ratelimit`` in Chains.pm):
+
+    Plain limit column forms:
+        ``12/min``          → plain limit, no burst (default 5)
+        ``12/min:60``       → plain limit, burst 60
+        ``12/second:5``     → plain limit, burst 5
+
+    Named per-source (hashlimit) forms:
+        ``s:LOGIN:12/min``         → per-source, name "LOGIN", no burst
+        ``s:LOGIN:12/min:60``      → per-source, name "LOGIN", burst 60
+        ``s::12/min:60``           → per-source, auto-name, burst 60
+
+    Action-column named form (``LIMIT:name,rate,burst``):
+        Callers split the ``LIMIT:`` prefix and pass ``"name,rate,burst"``
+        to the helper below — see ``_parse_limit_action()``.
+
+    Returns ``None`` when the token is empty, ``"-"``, or unparseable.
     """
-    # s:name:30/min:100 → limit rate 30/minute burst 100
-    m = re.match(r'^(?:s:\w+:)?(\d+)/(\w+)(?::(\d+))?$', rate_str)
+    if not rate_str or rate_str == "-":
+        return None
+
+    # Named per-source form: s[/mask]:name:rate/unit[:burst]
+    # Also handles anonymous per-source: s::rate/unit[:burst]
+    m = re.match(
+        r'^s(?:/\d+)?:(\w*):(\d+)/(sec|min|hour|day|second|minute)(?::(\d+))?$',
+        rate_str)
     if m:
-        count = m.group(1)
-        unit = m.group(2)
-        burst = m.group(3)
-        # Normalize unit names
-        unit_map = {"sec": "second", "min": "minute", "hour": "hour", "day": "day",
-                    "second": "second", "minute": "minute"}
-        nft_unit = unit_map.get(unit, unit)
-        result = f"{count}/{nft_unit}"
-        if burst:
-            result += f" burst {burst} packets"
-        return result
-    return rate_str
+        name = m.group(1) or None
+        rate = int(m.group(2))
+        unit = _UNIT_MAP.get(m.group(3), m.group(3))
+        burst = int(m.group(4)) if m.group(4) else 5
+        return RateLimitSpec(rate=rate, unit=unit, burst=burst,
+                             name=name, per_source=True)
+
+    # Plain form: rate/unit[:burst]
+    m = re.match(r'^(\d+)/(sec|min|hour|day|second|minute)(?::(\d+))?$', rate_str)
+    if m:
+        rate = int(m.group(1))
+        unit = _UNIT_MAP.get(m.group(2), m.group(2))
+        burst = int(m.group(3)) if m.group(3) else 5
+        return RateLimitSpec(rate=rate, unit=unit, burst=burst)
+
+    return None
+
+
+def _parse_limit_action(param: str) -> RateLimitSpec | None:
+    """Parse the ``LIMIT:name,rate,burst`` action-column form.
+
+    The ACTION column may carry ``LIMIT:name,rate,burst`` (Shorewall
+    hashlimit shorthand).  The caller strips the ``LIMIT:`` prefix and
+    passes the remainder here.
+
+    Examples::
+
+        "LOGIN,12,60"   → RateLimitSpec(rate=12, unit="minute", burst=60,
+                                        name="LOGIN", per_source=True)
+        "12,60"         → RateLimitSpec(rate=12, unit="minute", burst=60,
+                                        name=None,  per_source=True)
+
+    The upstream Shorewall ``LIMIT:`` action always implies per-source
+    (srcip hashlimit) and uses ``/minute`` as the default unit — see
+    ``process_rule`` in Rules.pm and the ``LIMIT:BURST`` policy column.
+    If a ``rate/unit`` token is embedded the unit is honoured; otherwise
+    ``/minute`` is assumed.
+
+    Returns ``None`` on parse failure.
+    """
+    if not param:
+        return None
+    parts = [p.strip() for p in param.split(",")]
+    if len(parts) == 3:
+        name_or_rate, rate_or_unit, burst_str = parts
+        # name,rate/unit,burst  OR  name,rate,burst (rate implied /minute)
+        if "/" in rate_or_unit:
+            # name,rate/unit,burst
+            name = name_or_rate or None
+            m = re.match(r'^(\d+)/(sec|min|hour|day|second|minute)$', rate_or_unit)
+            if not m:
+                return None
+            rate = int(m.group(1))
+            unit = _UNIT_MAP.get(m.group(2), m.group(2))
+        else:
+            # name,rate,burst — rate in /minute
+            name = name_or_rate or None
+            try:
+                rate = int(rate_or_unit)
+            except ValueError:
+                return None
+            unit = "minute"
+        try:
+            burst = int(burst_str)
+        except ValueError:
+            return None
+        return RateLimitSpec(rate=rate, unit=unit, burst=burst,
+                             name=name, per_source=True)
+    if len(parts) == 2:
+        # Either: rate,burst  or  name,rate (no burst)
+        a, b = parts
+        if "/" in a:
+            m = re.match(r'^(\d+)/(sec|min|hour|day|second|minute)$', a)
+            if m:
+                rate = int(m.group(1))
+                unit = _UNIT_MAP.get(m.group(2), m.group(2))
+                burst = int(b) if b.isdigit() else 5
+                return RateLimitSpec(rate=rate, unit=unit, burst=burst,
+                                     per_source=True)
+        # name,rate  (no burst, /minute implied)
+        try:
+            rate = int(b)
+        except ValueError:
+            return None
+        return RateLimitSpec(rate=rate, unit="minute", burst=5,
+                             name=a or None, per_source=True)
+    if len(parts) == 1:
+        # bare rate/unit
+        return _parse_rate_limit(parts[0])
+    return None
 
 
 def is_ipv6_spec(addr: str) -> bool:
