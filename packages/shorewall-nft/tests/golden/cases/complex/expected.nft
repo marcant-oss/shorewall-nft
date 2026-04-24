@@ -1549,6 +1549,7 @@ table inet shorewall {
 		meta l4proto tcp tcp flags & (syn | rst) syn | rst drop
 		meta l4proto tcp tcp flags & (fin | rst) fin | rst drop
 		meta l4proto tcp tcp flags & (fin | urg | psh) fin | urg | psh drop
+		meta l4proto tcp tcp flags & (fin | syn | rst | psh | ack | urg) 0 drop
 	}
 
 	chain sw_allowinUPnP {

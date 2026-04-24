@@ -179,7 +179,9 @@ class TestTcpFlagsDisposition:
         rules = self._build(disp)
         audit_rules = [r for r in rules if isinstance(r.verdict_args, AuditVerdict)]
         non_audit = [r for r in rules if not isinstance(r.verdict_args, AuditVerdict)]
-        assert len(audit_rules) == len(non_audit) == 4
+        # 5 bad-flag combinations: SYN+FIN, SYN+RST, FIN+RST,
+        # FIN+URG+PSH (Christmas), all-zero (NONE).
+        assert len(audit_rules) == len(non_audit) == 5
         assert all(a.verdict_args.base_action == exp_audit for a in audit_rules)
 
     def test_default_is_drop(self):

@@ -328,11 +328,22 @@ def _create_tcp_flags_chain(ir: FirewallIR) -> None:
     if resolved is None:
         return
     verdict, audit = resolved
+    # Bad TCP-flag combinations — same set as iptables' tcpflags chain
+    # plus our pre-existing FIN+RST entry. Each tuple is
+    # ``(mask, value)``; the rule matches when ``flags & mask == value``.
+    #
+    # Note: the all-zero entry (``mask=fin|syn|rst|psh|ack|urg, value=0``)
+    # mirrors iptables' ``--tcp-flags FIN,SYN,RST,PSH,ACK,URG NONE`` —
+    # without it, packets carrying no TCP flags slip past the chain and
+    # land on dport-specific accept rules. Surfaced by simlab probe-
+    # class H[''] — 61 fail_accept on a single fixture before this
+    # entry was added.
     for flags in [
         ("fin | syn", "fin | syn"),
         ("syn | rst", "syn | rst"),
         ("fin | rst", "fin | rst"),
         ("fin | urg | psh", "fin | urg | psh"),
+        ("fin | syn | rst | psh | ack | urg", "0"),
     ]:
         if audit is not None:
             chain.rules.append(Rule(
