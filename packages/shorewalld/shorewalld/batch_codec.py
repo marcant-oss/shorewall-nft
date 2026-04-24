@@ -71,6 +71,10 @@ from typing import Iterable
 
 MAGIC_REQUEST = 0x53574E46        # b"SWNF"
 MAGIC_REPLY = 0x53574E52          # b"SWNR"
+# Unsolicited push from worker → parent — NFLOG events decoded inside
+# the per-netns worker child and fanned out to the LogDispatcher on the
+# parent event loop. See :mod:`shorewalld.log_codec`.
+MAGIC_NFLOG = 0x53574C47          # b"SWLG"
 WIRE_VERSION = 1
 
 BATCH_OP_ADD = 1
