@@ -49,6 +49,18 @@ update + integration tests + operator docs, 6 tests). Sink surface
 expanded mid-build per user directive from 2 (file, unix socket) to
 4 (added journald + /dev/log). Total 824 tests passing.**
 
+**M0 kernel-smoke gate PASSED 2026-04-24** via user + net namespace
+(``unshare -U -r -n``), which grants CAP_NET_ADMIN inside the
+namespace without real root. Test procedure: create ``inet smoketest``
+table with ``icmp log group 42 prefix "Shorewall:smoke:ACCEPT:"``,
+run ``python -m shorewalld.nflog_netlink --group 42``, ping 127.0.0.1,
+confirm one ``LogEvent(chain='smoke', disposition='ACCEPT', ...)`` is
+received and decoded. All four CFG messages (PF_UNBIND, PF_BIND,
+CMD_BIND, CFG_MODE=COPY_PACKET) ack cleanly; TLV walk correctly
+extracts hook / hw_protocol / indev / timestamp / prefix. Wire
+protocol is confirmed against a real kernel — no pivot to ctypes
+needed, the hand-rolled pyroute2-style subclass works as designed.
+
 Original plan preserved below for historical context.
 
 Concrete deliverables narrower than the full "Scope (proposed)" below.
