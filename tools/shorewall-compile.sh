@@ -17,23 +17,26 @@
 #   iptables.nft    nft equivalent via translate          (if not --no-translate)
 #   ip6tables.nft   nft equivalent for v6                 (if not --no-translate)
 #
-# Known limitations (v1):
-#   * Bootstrap stages the upstream source tree as symlinks rather than
-#     running install.sh. This is enough for most configs, but two
-#     things differ from a real install:
-#       - Drop/Reject default-policy actions (DROP_DEFAULT=Drop /
-#         REJECT_DEFAULT=Reject) are deprecated upstream and not
-#         shipped as separate action files. Configs that need them
-#         must either set DROP_DEFAULT=none / REJECT_DEFAULT=none in
-#         shorewall.conf, or compile against a system shorewall
-#         install instead. The script writes minimal stubs for both
-#         but the compiler also needs them registered in actions.std,
-#         which we do not auto-patch.
-#       - Some less-common actions installed by install.sh from
-#         deprecated/ may also be missing.
-#   * shorewall6 configs that set BROADCAST=detect on an interface
-#     fail compile (IPv6 has no broadcast). This is a config bug, not
-#     a script issue.
+# Bootstrap mechanics:
+#   The cache uses upstream's own install.sh (per Shorewall component:
+#   Shorewall-core, Shorewall, Shorewall6) with SHAREDIR / CONFDIR /
+#   etc. pointed at the cache dir directly (no DESTDIR), so install.sh
+#   runs its getparams sed-patcher and produces a fully-installed,
+#   self-contained Shorewall tree. After install we patch:
+#     - coreversion / version files (install.sh writes the literal
+#       "xxx" placeholder; we write the real version from Config.pm)
+#     - actions.std + action.Drop + action.Reject stubs (Drop/Reject
+#       default-policy actions are upstream-deprecated; many real
+#       configs still set DROP_DEFAULT=Drop / REJECT_DEFAULT=Reject)
+#
+# Known limitations:
+#   * Configs that use shorewall-nft-specific syntax extensions
+#     (CT:helper:NAME, ?FAMILY directive, nfsets:NAME tokens) won't
+#     compile under classic Shorewall — they are extensions on the
+#     Python compiler side, not part of upstream. This script targets
+#     classic-Shorewall-compatible configs only.
+#   * shorewall6 configs that set BROADCAST=detect fail compile
+#     (IPv6 has no broadcast — config bug, not a script issue).
 #
 # Usage:
 #   shorewall-compile.sh [--shorewall PATH] [--shorewall6 PATH]
@@ -209,132 +212,195 @@ fi
 WORKDIR="$(mktemp -d -t shorewall-compile.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
-# The compiler shells out to getparams via "$FindBin::Bin/getparams"
-# (Config.pm:5871). $FindBin::Bin is the dir of compiler.pl, so we
-# need a writable Perl/ tree where getparams is patched to source the
-# right shorewallrc. Mirror the source Perl/ tree as symlinks plus a
-# patched getparams.
-PERLLIB="$WORKDIR/perl"
-COMPILER="$PERLLIB/compiler.pl"
-mkdir -p "$PERLLIB/Shorewall"
-for entry in "$SRC_PERL"/*; do
-    name="$(basename "$entry")"
-    if [[ "$name" == "getparams" ]]; then
-        continue   # patched copy below
+# Run upstream install.sh from each Shorewall component with
+# DESTDIR pointing at our cache, so we get a complete, properly-
+# patched install (action files, getparams, version files,
+# Drop/Reject defaults, etc.) without root.
+#
+# The install is cached per (REF, install-rc) pair; subsequent runs
+# reuse it. -n skips the configure step (systemctl-enable etc.); we
+# strip OWNERSHIP from the rc so install.sh does not chown.
+STAGING_KEY="${REF:-localsrc}"
+STAGING="$CACHE_DIR/staging-$STAGING_KEY"
+
+mkdir -p "$WORKDIR/etc/shorewall" "$WORKDIR/etc/shorewall6"
+
+if [[ ! -f "$STAGING/.installed" ]]; then
+    echo "==> staging shorewall via install.sh into $STAGING" >&2
+    rm -rf "$STAGING"
+    mkdir -p "$STAGING"
+
+    INSTALL_RC="$WORKDIR/install-shorewallrc"
+    # NOTE: do not set PRODUCT here — install.sh detects per-component
+    # (Shorewall vs Shorewall6) via shorewall.service presence in cwd.
+    #
+    # SHAREDIR / CONFDIR etc. point at the staging dir directly (no
+    # DESTDIR prefix) so install.sh's getparams sed-patcher (which
+    # only fires when SHAREDIR != /usr/share) runs against our path.
+    # That patches the installed getparams to source our shorewallrc
+    # at $STAGING/usr/share/shorewall/shorewallrc.
+    cat > "$INSTALL_RC" <<EOF
+HOST=linux
+PREFIX=$STAGING
+SHAREDIR=$STAGING/usr/share
+LIBEXECDIR=$STAGING/usr/share
+PERLLIBDIR=$STAGING/usr/share/shorewall
+CONFDIR=$STAGING/etc
+SBINDIR=$STAGING/usr/sbin
+MANDIR=$STAGING/usr/share/man
+INITDIR=
+INITFILE=
+INITSOURCE=
+ANNOTATED=
+SYSCONFFILE=
+SERVICEFILE=
+SYSCONFDIR=$STAGING/etc/default
+SERVICEDIR=
+SPARSE=Yes
+VARLIB=$STAGING/var/lib
+VARDIR=$STAGING/var/lib/shorewall
+DEFAULT_PAGER=
+OWNER=
+GROUP=
+OWNERSHIP=
+EOF
+
+    # Shorewall6 shares the install.sh from Shorewall (auto-detects
+    # PRODUCT via shorewall.service presence). Source tree only ships
+    # one copy. Stage a symlink so we can ``cd Shorewall6 && ./install.sh``.
+    if [[ -d "$SRCDIR/Shorewall6" && ! -f "$SRCDIR/Shorewall6/install.sh" ]]; then
+        ln -sfn "$SRCDIR/Shorewall/install.sh" "$SRCDIR/Shorewall6/install.sh"
     fi
-    ln -sfn "$entry" "$PERLLIB/$name"
-done
-for entry in "$SRC_PERL/Shorewall"/*; do
-    ln -sfn "$entry" "$PERLLIB/Shorewall/$(basename "$entry")"
-done
+    # Shorewall and Shorewall6 install.sh source ./lib.installer
+    # which only ships in Shorewall-core. Stage symlinks so each
+    # per-product install.sh can find it. Same for shorewallrc.*
+    # template files (referenced for HOST detection).
+    for product_dir in "$SRCDIR/Shorewall" "$SRCDIR/Shorewall6"; do
+        [[ -d "$product_dir" ]] || continue
+        ln -sfn "$SRCDIR/Shorewall-core/lib.installer" \
+                "$product_dir/lib.installer"
 
-# Hardcoded VERSION inside Config.pm (the canonical compile-time
-# version, separate from the git tag). Read it so coreversion +
-# version files match and we don't trigger the "Version Mismatch"
-# warning that aborts the params-load downstream.
-ver="$(awk -F"'" '/VERSION +=> *.[0-9]/ {print $2; exit}' \
-       "$SRC_PERL/Shorewall/Config.pm" 2>/dev/null)"
-ver="${ver:-${REF:-source-tree}}"
+        # install.sh references *.annotated config files which the
+        # upstream Build script generates but the source tree omits.
+        # Stub them as symlinks to their non-annotated source so the
+        # install completes; we never use the annotated copies.
+        if [[ -d "$product_dir/configfiles" ]]; then
+            for cfg in "$product_dir/configfiles"/*; do
+                base="$(basename "$cfg")"
+                [[ "$base" == *.annotated ]] && continue
+                ann="$product_dir/configfiles/$base.annotated"
+                [[ -e "$ann" ]] || ln -sfn "$base" "$ann"
+            done
+        fi
+    done
 
-# Compiler expects $SHAREDIR/shorewall/* and $SHAREDIR/shorewall6/*
-# (lowercase, as installed by upstream). Source tree uses Shorewall/
-# and Shorewall6/ (capitalised). Stage lowercase symlinks once.
-mkdir -p "$WORKDIR/share" "$WORKDIR/etc/shorewall" \
-         "$WORKDIR/etc/shorewall6" "$WORKDIR/var/shorewall" \
-         "$WORKDIR/var/shorewall6"
-ln -sfn "$SRCDIR/Shorewall"  "$WORKDIR/share/shorewall"
-ln -sfn "$SRCDIR/Shorewall6" "$WORKDIR/share/shorewall6"
+    # No DESTDIR: rc points SHAREDIR etc. at the staging dir directly.
+    # Shorewall-core install.sh accepts only -h/-v; the per-product
+    # ones accept -n / -s / -p too. Pass the configure-skip / sparse
+    # / non-annotated flags only where they are recognised.
+    for component in Shorewall-core Shorewall Shorewall6; do
+        [[ -d "$SRCDIR/$component" ]] || continue
+        echo "==> install.sh: $component" >&2
+        flags=()
+        if [[ "$component" != "Shorewall-core" ]]; then
+            flags=(-n -s -p)
+        fi
+        if ! ( cd "$SRCDIR/$component" && \
+               OWNER= GROUP= \
+               sh ./install.sh "${flags[@]}" "$INSTALL_RC" \
+               > "$WORKDIR/install.$component.log" 2>&1 ); then
+            echo "ERROR: install.sh failed for $component" >&2
+            sed -n '1,40p' "$WORKDIR/install.$component.log" >&2
+            exit 1
+        fi
+    done
 
-# Source tree only has $SRCDIR/Shorewall (read-only target of the
-# symlink); to drop fabricated install-only files (coreversion,
-# version, patched getparams, shorewallrc) alongside, replace the
-# top-level symlink with a directory of per-file symlinks.
-# Both Shorewall and Shorewall6 install dirs are populated from
-# Shorewall-core/* (lib.cli, lib.common, etc.) PLUS their own
-# per-product files (Shorewall/macro.*, Shorewall/configfiles/, etc.).
-rm "$WORKDIR/share/shorewall" "$WORKDIR/share/shorewall6"
-mkdir -p "$WORKDIR/share/shorewall" "$WORKDIR/share/shorewall6"
-for entry in "$SRCDIR/Shorewall-core"/*; do
-    name="$(basename "$entry")"
-    [[ "$name" == install.sh || "$name" == uninstall.sh \
-       || "$name" == configure* || "$name" == COPYING \
-       || "$name" == INSTALL || "$name" == manpages \
-       || "$name" == shorewallrc.* || "$name" == init.* ]] && continue
-    ln -sfn "$entry" "$WORKDIR/share/shorewall/$name"
-    ln -sfn "$entry" "$WORKDIR/share/shorewall6/$name"
-done
-for entry in "$SRCDIR/Shorewall"/*; do
-    ln -sfn "$entry" "$WORKDIR/share/shorewall/$(basename "$entry")"
-done
-for entry in "$SRCDIR/Shorewall6"/*; do
-    ln -sfn "$entry" "$WORKDIR/share/shorewall6/$(basename "$entry")"
-done
-# Actions/ and Macros/ subdirs are flattened into the install root
-# by install.sh — replicate the same flattening with symlinks so the
-# compiler finds action.* and macro.* files at $SHAREDIR/shorewall/.
-for prod_src in "$SRCDIR/Shorewall" "$SRCDIR/Shorewall6"; do
-    [[ "$prod_src" == */Shorewall ]] && dest=shorewall || dest=shorewall6
-    for sub in Actions Macros; do
-        [[ -d "$prod_src/$sub" ]] || continue
-        for entry in "$prod_src/$sub"/*; do
-            ln -sfn "$entry" "$WORKDIR/share/$dest/$(basename "$entry")"
+    # install.sh writes coreversion = "xxx" (source-tree placeholder).
+    # The compiler's hardcoded VERSION (Config.pm) is the real one.
+    # Pre-fix coreversion + version files so the compiler does not
+    # abort with a mismatch warning during params load.
+    real_ver="$(awk -F"'" '/VERSION +=> *.[0-9]/ {print $2; exit}' \
+                "$SRCDIR/Shorewall/Perl/Shorewall/Config.pm" 2>/dev/null)"
+    real_ver="${real_ver:-${REF:-source-tree}}"
+    for prod in shorewall shorewall6; do
+        for f in coreversion version; do
+            [[ -f "$STAGING/usr/share/$prod/$f" ]] && \
+                printf '%s\n' "$real_ver" > "$STAGING/usr/share/$prod/$f"
         done
     done
-done
 
-# Install.sh writes coreversion + version files with the package
-# version. Compiler refuses to start without coreversion and aborts
-# the params load on coreversion ↔ Config.pm-VERSION mismatch.
-printf '%s\n' "$ver" > "$WORKDIR/share/shorewall/coreversion"
-printf '%s\n' "$ver" > "$WORKDIR/share/shorewall/version"
-printf '%s\n' "$ver" > "$WORKDIR/share/shorewall6/coreversion"
-printf '%s\n' "$ver" > "$WORKDIR/share/shorewall6/version"
-
-# Patched getparams in $PERLLIB (where the compiler invokes it via
-# $FindBin::Bin/getparams) — sources our local shorewallrc instead
-# of the install-time /usr/share/shorewall/shorewallrc.
-sed "s|/usr/share/shorewall/shorewallrc|$WORKDIR/shorewallrc|g" \
-    "$SRC_PERL/getparams" \
-    > "$PERLLIB/getparams"
-chmod +x "$PERLLIB/getparams"
-
-# Drop and Reject default-policy action files are not in the source
-# tree (older Shorewall shipped action.Drop/action.Reject; current
-# install.sh actively deletes them as deprecated). Many real configs
-# still set DROP_DEFAULT=Drop / REJECT_DEFAULT=Reject. Drop in
-# minimal stubs that perform the bare verdict so DEFAULT settings
-# resolve cleanly.
-for prod in shorewall shorewall6; do
-    cat > "$WORKDIR/share/$prod/action.Drop" <<'EOF'
-# Auto-generated by shorewall-compile.sh — minimal Drop action stub.
+    # Older Shorewall shipped Drop / Reject default-policy action
+    # files; upstream removed them as deprecated. Many real-world
+    # configs still set DROP_DEFAULT=Drop / REJECT_DEFAULT=Reject.
+    # Inject minimal stubs + register them in actions.std so configs
+    # using the legacy default names compile cleanly. Users who want
+    # the modern (no-default) behaviour can set DROP_DEFAULT=none
+    # in shorewall.conf — the stubs are harmless either way.
+    for prod in shorewall shorewall6; do
+        share_d="$STAGING/usr/share/$prod"
+        [[ -d "$share_d" ]] || continue
+        cat > "$share_d/action.Drop" <<'EOF'
+# Auto-generated by shorewall-compile.sh — minimal Drop policy action.
 ?format 1
 DROP   -   -
 EOF
-    cat > "$WORKDIR/share/$prod/action.Reject" <<'EOF'
-# Auto-generated by shorewall-compile.sh — minimal Reject action stub.
+        cat > "$share_d/action.Reject" <<'EOF'
+# Auto-generated by shorewall-compile.sh — minimal Reject policy action.
 ?format 1
 REJECT   -   -
 EOF
-done
+        # Register both in actions.std so the compiler accepts them
+        # as valid action names. The "noinline" attribute matches
+        # how A_REJECT (the analogous audit-then-reject action) is
+        # declared upstream.
+        if ! grep -qE "^Drop\b" "$share_d/actions.std" 2>/dev/null; then
+            {
+                echo "Drop      noinline   # shorewall-compile.sh stub"
+                echo "Reject    noinline   # shorewall-compile.sh stub"
+            } >> "$share_d/actions.std"
+        fi
+    done
 
-# Synthesise a shorewallrc that points the compiler at our staging area.
+    touch "$STAGING/.installed"
+    echo "==> staging complete: $STAGING" >&2
+else
+    echo "==> staging cache hit: $STAGING" >&2
+fi
+
+
+# shorewallrc the compiler reads at runtime — points at the staged
+# install. install.sh dropped the same content into $STAGING but
+# we re-synthesise here with $WORKDIR-local CONFDIR/VARDIR (so the
+# compiler does not try to write into the cache).
 SHOREWALLRC="$WORKDIR/shorewallrc"
 cat > "$SHOREWALLRC" <<EOF
 PRODUCT=shorewall
 HOST=generic
-PREFIX=$WORKDIR
-SHAREDIR=$WORKDIR/share
-LIBEXECDIR=$WORKDIR/share
-PERLLIBDIR=$PERLLIB
+PREFIX=$STAGING/usr
+SHAREDIR=$STAGING/usr/share
+LIBEXECDIR=$STAGING/usr/share
+PERLLIBDIR=$STAGING/usr/share/shorewall
 CONFDIR=$WORKDIR/etc
-SBINDIR=$WORKDIR/sbin
-MANDIR=$WORKDIR/share/man
+SBINDIR=$STAGING/usr/sbin
+MANDIR=$STAGING/usr/share/man
 VARLIB=$WORKDIR/var
 VARDIR=$WORKDIR/var/shorewall
 ANNOTATED=
 SPARSE=Yes
 DEFAULT_PAGER=
 EOF
+
+# The Perl compiler from the install lives at
+# $STAGING/usr/share/shorewall/compiler.pl; $FindBin::Bin will be
+# that dir, so getparams alongside it is the install-patched copy.
+COMPILER="$STAGING/usr/share/shorewall/Perl/compiler.pl"
+[[ -f "$COMPILER" ]] || COMPILER="$STAGING/usr/share/shorewall/compiler.pl"
+if [[ ! -f "$COMPILER" ]]; then
+    echo "error: install.sh did not produce compiler.pl in expected location" >&2
+    echo "       searched under $STAGING/usr/share/shorewall/" >&2
+    find "$STAGING/usr/share/shorewall" -name compiler.pl -print >&2 || true
+    exit 1
+fi
 
 compile_family() {
     local family="$1" cfg="$2" out="$3" suffix
@@ -371,10 +437,19 @@ compile_family() {
         return 1
     fi
 
-    # --preview prints "Compiling..." progress lines as comments + the
-    # iptables-restore input. We pass everything through; iptables-save
-    # consumers ignore non-table comment lines anyway.
-    cp "$rawout" "$out"
+    # --preview wraps the iptables-restore input inside the bash-script
+    # boilerplate that Shorewall would normally execute:
+    #   cat << __EOF__ >&3
+    #   <iptables-save text>
+    #   __EOF__
+    # plus a trailing "Shorewall configuration verified" line.
+    # Extract just the heredoc body so iptables-restore-translate
+    # gets clean iptables-save input.
+    awk '
+        /^[[:space:]]*cat << __EOF__/ { in_body = 1; next }
+        in_body && /^__EOF__/         { in_body = 0; next }
+        in_body                       { print }
+    ' "$rawout" > "$out"
     echo "==> wrote $out ($(wc -l < "$out") lines)" >&2
 }
 
