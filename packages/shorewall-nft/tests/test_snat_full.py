@@ -276,18 +276,20 @@ class TestSnatEmit:
         assert isinstance(chain.rules[1].verdict_args, SnatVerdict)
 
     def test_ipsec_column_yes(self):
+        """IPSEC=yes → ``meta secpath exists`` (any xfrm-decoded packet)."""
         out = self._emit_line(
             "SNAT(198.51.100.1)", "192.0.2.0/24", "eth0",
             "-", "-", "yes", "-", "-", "-", "-", "-",
         )
-        assert "ipsec" in out
+        assert "meta secpath exists" in out
 
     def test_ipsec_column_no(self):
+        """IPSEC=no → ``meta secpath missing`` (packet bypassed xfrm)."""
         out = self._emit_line(
             "SNAT(198.51.100.1)", "192.0.2.0/24", "eth0",
             "-", "-", "no", "-", "-", "-", "-", "-",
         )
-        assert "ipsec" in out
+        assert "meta secpath missing" in out
 
     def test_proto_dport_columns(self):
         out = self._emit_line(

@@ -1597,16 +1597,6 @@ def _emit_match(match: Match) -> str:
     value = match.value
     negate = "!= " if match.negate else ""
 
-    # IPsec policy matches — nft uses `ipsec in/out exists|missing`.
-    # These come from the IPSEC column in snat/masq files.
-    if field.startswith("policy "):
-        parts = field.split()
-        if len(parts) == 3:
-            _, direction, pol = parts  # e.g. "policy", "out", "ipsec"/"none"
-            exists = "missing" if pol == "none" else "exists"
-            extra = f" {value}" if value.strip() else ""
-            return f"ipsec {direction} {exists}{extra}"
-
     # Strip Shorewall6 angle brackets from IPv6 addresses
     value = value.replace("<", "").replace(">", "")
 

@@ -468,7 +468,7 @@ table inet shorewall {
 	}
 
 	chain +nfset_abuse_v4-tunneled {
-		meta nfproto ipv4 policy out ipsec proto ah mode tunnel drop
+		meta nfproto ipv4 meta secpath exists drop
 	}
 
 	chain +nfset_abuse_v4-voice {
@@ -516,7 +516,7 @@ table inet shorewall {
 	}
 
 	chain +nfset_abuse_v6-tunneled {
-		meta nfproto ipv4 policy out ipsec proto ah mode tunnel drop
+		meta nfproto ipv4 meta secpath exists drop
 	}
 
 	chain +nfset_abuse_v6-voice {
@@ -903,7 +903,7 @@ table inet shorewall {
 
 	chain int-tunneled {
 		ct state invalid drop
-		meta nfproto ipv4 meta l4proto icmp icmp type 8 policy out ipsec proto ah mode tunnel accept
+		meta nfproto ipv4 meta l4proto icmp icmp type 8 meta secpath exists accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -1194,7 +1194,7 @@ table inet shorewall {
 
 	chain mgmt-tunneled {
 		ct state invalid drop
-		meta nfproto ipv4 meta l4proto icmp icmp type 8 policy out ipsec proto ah mode tunnel accept
+		meta nfproto ipv4 meta l4proto icmp icmp type 8 meta secpath exists accept
 		jump sw_Drop
 	}
 
@@ -1474,9 +1474,9 @@ table inet shorewall {
 
 	chain tunneled-fw {
 		ct state invalid drop
-		ip daddr 192.0.2.53 meta l4proto udp udp dport 53 policy in ipsec proto ah mode tunnel accept
-		ip daddr 192.0.2.53 meta l4proto tcp tcp dport 53 policy in ipsec proto ah mode tunnel accept
-		meta nfproto ipv4 meta l4proto icmp icmp type 8 policy in ipsec proto ah mode tunnel accept
+		ip daddr 192.0.2.53 meta l4proto udp udp dport 53 meta secpath exists accept
+		ip daddr 192.0.2.53 meta l4proto tcp tcp dport 53 meta secpath exists accept
+		meta nfproto ipv4 meta l4proto icmp icmp type 8 meta secpath exists accept
 		jump sw_Reject
 	}
 

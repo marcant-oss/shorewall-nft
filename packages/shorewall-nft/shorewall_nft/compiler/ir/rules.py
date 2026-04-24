@@ -1087,16 +1087,28 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
 
 def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
                                 direction: str) -> str | None:
-    """Build the ``policy in|out ipsec ...`` nft clause for *zone_name*.
+    """Build the IPsec policy match nft clause for *zone_name*.
 
     Returns ``None`` when the zone is not an ipsec zone (no clause needed).
 
     ``direction`` must be ``"in"`` (traffic *from* the zone) or ``"out"``
     (traffic *to* the zone).
 
-    The returned string is the complete inline nft expression, e.g.::
+    nftables 1.1.x exposes two mutually-exclusive IPsec match forms:
 
-        policy in ipsec reqid 10 proto esp mode tunnel
+    * ``meta secpath exists`` — matches any packet that arrived through
+      an xfrm SA (direction-agnostic; the kernel marks both decoded
+      ingress and encrypted egress). Used when the zone only restricts
+      by ``proto=`` / ``mode=``, which nft cannot express on the
+      ``ipsec`` match.
+    * ``ipsec {in|out} [reqid N] [spi 0xN]`` — narrow match against a
+      specific SPD entry. Used when the zone carries ``reqid=`` or
+      ``spi=``.
+
+    Shorewall's ``proto=`` / ``mode=`` filters have no nft counterpart
+    and are dropped with an advisory at compile time; traffic via any
+    other SA type still matches ``meta secpath exists`` so the rule is
+    still safer than no match at all.
     """
     z = zones.zones.get(zone_name)
     if z is None:
@@ -1104,36 +1116,36 @@ def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
     if z.zone_type not in ("ipsec", "ipsec4", "ipsec6"):
         return None
 
-    parts = [f"policy {direction} ipsec"]
     opts = z.ipsec_options
-    if opts is not None:
+    if opts is not None and (opts.reqid is not None or opts.spi is not None):
+        parts = [f"ipsec {direction}"]
         if opts.reqid is not None:
             parts.append(f"reqid {opts.reqid}")
         if opts.spi is not None:
             parts.append(f"spi {opts.spi:#x}")
-        if opts.proto:
-            parts.append(f"proto {opts.proto}")
-        if opts.mode:
-            parts.append(f"mode {opts.mode}")
-        if opts.mark is not None:
-            parts.append(f"mark {opts.mark:#x}")
-    return " ".join(parts)
+        return " ".join(parts)
+
+    # No reqid/spi — fall back to the broad "came through IPsec" check.
+    # proto= / mode= / mark= are silently lost (no nft equivalent).
+    return "meta secpath exists"
 
 
 def _inject_ipsec_policy_match(rule: "Rule", src_zone: str, dst_zone: str,
                                 zones: ZoneModel) -> None:
-    """Prepend IPsec ``policy in/out ipsec`` inline matches to *rule*.
+    """Prepend the nft IPsec-policy inline matches to *rule*.
 
-    When the source zone is an ipsec zone, insert ``policy in ipsec ...``
-    at the front of the rule's match list (traffic arrived *in* via the
-    tunnel). When the destination zone is an ipsec zone, append
-    ``policy out ipsec ...`` (traffic must leave *out* via the tunnel).
-    Prepending keeps the policy match as the first discriminator, which
-    is the most efficient order for the kernel's rule evaluator.
+    When the source zone is an ipsec zone, insert the IPsec match at
+    the front of the rule's match list (traffic arrived *in* via the
+    tunnel). When the destination zone is an ipsec zone, append the
+    match (traffic must leave *out* via the tunnel). Prepending keeps
+    the policy match as the first discriminator, which is the most
+    efficient order for the kernel's rule evaluator.
 
-    Upstream analogue: Shorewall wraps every rule in an ipsec zone-pair
-    chain with an ``-m policy`` match. We express the same with
-    ``policy in|out ipsec`` which is the nft equivalent.
+    The actual nft expression is built by ``_build_ipsec_policy_clause``:
+    ``meta secpath exists`` when the zone only restricts by proto/mode
+    (no nft counterpart), or ``ipsec <dir> reqid N`` / ``spi 0xN`` when
+    reqid/spi are set. Upstream Shorewall's iptables ``-m policy`` match
+    is not reproducible 1:1 in nft 1.1.x.
     """
     in_clause = _build_ipsec_policy_clause(src_zone, zones, "in")
     out_clause = _build_ipsec_policy_clause(dst_zone, zones, "out")

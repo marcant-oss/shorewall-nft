@@ -545,10 +545,11 @@ def _process_host_options(ir: FirewallIR, zones: ZoneModel) -> None:
     * ``blacklist`` — add the host addresses to the dynamic-blacklist nft
       set match (emit a ``ip saddr @blacklist drop`` rule before the zone
       dispatch).
-    * ``ipsec``     — mark the zone as IPSEC type and emit a
-      ``policy in ipsec`` / ``policy out ipsec`` match on all rules
-      entering/leaving chains that involve this host (handled at rule-emit
-      time by tagging the zone).
+    * ``ipsec``     — mark the zone as IPSEC type and emit an
+      ``meta secpath exists`` / narrow ``ipsec <dir> reqid N`` match on
+      all rules entering/leaving chains that involve this host (handled
+      at rule-emit time by tagging the zone; see
+      ``_build_ipsec_policy_clause``).
     * ``routeback``,``broadcast``,``destonly``,``sourceonly`` — annotate
       only (affect chain dispatch ordering, not individual rules).
     * ``maclist``   — MAC-list enforcement (stub; full maclist emit is

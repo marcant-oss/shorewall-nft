@@ -234,14 +234,25 @@ def _add_snat_matches(rule: Rule, cols: list[str]) -> None:
 
 
 def _build_ipsec_matches(ipsec: str, direction: str) -> list[Match]:
-    """Build ``policy in/out ipsec|none`` matches for the IPSEC column."""
+    """Build the nft IPsec match for the IPSEC column of snat/masq rules.
+
+    nftables 1.1.x does not expose ``proto=`` / ``mode=`` on its ``ipsec``
+    match; the two workable forms are ``meta secpath exists`` (any
+    xfrm-decoded packet) and ``ipsec <dir> reqid N`` / ``spi 0xN``.
+    Since the IPSEC column usually just carries ``yes`` / ``no`` / extras,
+    map to those two forms: ``yes``/``ipsec`` → ``meta secpath exists``,
+    ``no``/``none`` → ``meta secpath missing``. Extras (``proto=…`` etc.)
+    are dropped with the broad match preserved.
+    """
     val = ipsec.strip().lower()
-    if val in ("yes", "ipsec"):
-        return [Match(field=f"policy {direction} ipsec", value="")]
     if val in ("no", "none"):
-        return [Match(field=f"policy {direction} none", value="")]
-    # Extra options (proto=esp mode=tunnel etc.) — pass as-is for now.
-    return [Match(field=f"policy {direction} ipsec", value=ipsec)]
+        return [Match(field="inline", value="meta secpath missing")]
+    # "yes", "ipsec", or any extras → broad "came through IPsec" check.
+    # direction is not meaningful for secpath (kernel marks both ingress
+    # decode and egress encrypt), so we keep the argument for signature
+    # compatibility but don't use it.
+    _ = direction
+    return [Match(field="inline", value="meta secpath exists")]
 
 
 def _build_mark_match(mark: str) -> Match:

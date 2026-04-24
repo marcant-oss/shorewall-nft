@@ -197,38 +197,49 @@ def _zones_with_ipsec(opts_list: list[str]) -> ZoneModel:
 
 
 def test_policy_clause_bare_ipsec_zone():
-    """An ipsec zone with no sub-options must produce 'policy in|out ipsec'."""
+    """An ipsec zone with no sub-options must fall back to 'meta secpath exists'.
+
+    nftables 1.1.x has no ``policy`` statement equivalent to iptables
+    ``-m policy``; ``meta secpath exists`` is the idiomatic broad match.
+    """
     zones = _zones_with_ipsec([])
     clause = _build_ipsec_policy_clause("vpn", zones, "in")
-    assert clause == "policy in ipsec"
+    assert clause == "meta secpath exists"
 
 
 def test_policy_clause_with_proto():
+    """proto= has no nft counterpart — the broad secpath fallback applies."""
     zones = _zones_with_ipsec(["proto=esp"])
     clause = _build_ipsec_policy_clause("vpn", zones, "in")
-    assert clause is not None
-    assert "proto esp" in clause
+    assert clause == "meta secpath exists"
 
 
 def test_policy_clause_with_mode():
+    """mode= has no nft counterpart — the broad secpath fallback applies."""
     zones = _zones_with_ipsec(["mode=tunnel"])
     clause = _build_ipsec_policy_clause("vpn", zones, "out")
-    assert clause is not None
-    assert "mode tunnel" in clause
+    assert clause == "meta secpath exists"
 
 
 def test_policy_clause_with_reqid():
+    """reqid= produces a narrow ``ipsec <dir> reqid N`` match."""
     zones = _zones_with_ipsec(["reqid=99"])
     clause = _build_ipsec_policy_clause("vpn", zones, "in")
-    assert clause is not None
-    assert "reqid 99" in clause
+    assert clause == "ipsec in reqid 99"
 
 
 def test_policy_clause_with_spi():
+    """spi= produces a narrow ``ipsec <dir> spi 0xN`` match."""
     zones = _zones_with_ipsec(["spi=0x1000"])
     clause = _build_ipsec_policy_clause("vpn", zones, "in")
-    assert clause is not None
-    assert "spi 0x1000" in clause
+    assert clause == "ipsec in spi 0x1000"
+
+
+def test_policy_clause_proto_plus_reqid_drops_proto():
+    """When reqid is present, proto= is silently dropped (no nft expression)."""
+    zones = _zones_with_ipsec(["reqid=42", "proto=esp", "mode=tunnel"])
+    clause = _build_ipsec_policy_clause("vpn", zones, "out")
+    assert clause == "ipsec out reqid 42"
 
 
 def test_policy_clause_returns_none_for_non_ipsec_zone():
@@ -246,24 +257,25 @@ def test_policy_clause_returns_none_for_unknown_zone():
 # ── WP-D3: _inject_ipsec_policy_match ────────────────────────────────────────
 
 def test_inject_ipsec_policy_adds_match_when_src_is_ipsec():
-    """When src zone is ipsec, a 'policy in ipsec' inline match must be prepended."""
+    """When src zone is ipsec, an IPsec-match inline is prepended."""
     zones = _zones_with_ipsec(["proto=esp"])
     rule = Rule()
     rule.matches.append(Match(field="meta l4proto", value="tcp"))
     _inject_ipsec_policy_match(rule, "vpn", "fw", zones)
     assert rule.matches[0].field == "inline"
-    assert "policy in ipsec" in rule.matches[0].value
+    # proto=esp has no nft counterpart → broad secpath fallback.
+    assert rule.matches[0].value == "meta secpath exists"
 
 
 def test_inject_ipsec_policy_adds_match_when_dst_is_ipsec():
-    """When dst zone is ipsec, a 'policy out ipsec' inline match must be appended."""
+    """When dst zone is ipsec, an IPsec-match inline is appended."""
     zones = _zones_with_ipsec(["proto=esp"])
     rule = Rule()
     rule.matches.append(Match(field="meta l4proto", value="tcp"))
     _inject_ipsec_policy_match(rule, "fw", "vpn", zones)
     last = rule.matches[-1]
     assert last.field == "inline"
-    assert "policy out ipsec" in last.value
+    assert last.value == "meta secpath exists"
 
 
 def test_inject_ipsec_no_match_for_non_ipsec_zones():
@@ -280,52 +292,63 @@ def test_inject_ipsec_no_match_for_non_ipsec_zones():
 # ── WP-D3: full compile — rules in ipsec-zone chains carry policy match ──────
 
 def test_ipsec_zone_rules_carry_policy_in_match():
-    """Every ACCEPT rule in a chain where the source is an ipsec zone must carry
-    'policy in ipsec ...' in the emitted nft output."""
+    """Rules whose source is an ipsec zone must carry a ``meta secpath exists``
+    (or narrow ``ipsec in …``) match in the emitted nft output."""
     config = _make_config_with_ipsec("proto=esp,mode=tunnel")
     ir = build_ir(config)
     nft = emit_nft(ir)
-    # The chain tunnel-net handles traffic from the ipsec zone to net.
-    # Our injected ACCEPT rule for tcp/22 must carry 'policy in ipsec'.
-    assert "policy in ipsec" in nft, (
-        "Expected 'policy in ipsec' in emitted nft for ipsec zone src"
+    assert "meta secpath exists" in nft, (
+        "Expected 'meta secpath exists' (or narrow 'ipsec in') in emitted "
+        "nft for ipsec zone src"
     )
 
 
 def test_ipsec_zone_rules_carry_policy_out_match():
-    """Every rule where the destination is an ipsec zone must carry
-    'policy out ipsec ...' in the emitted nft output."""
+    """Rules whose destination is an ipsec zone must carry a ``meta secpath
+    exists`` (or narrow ``ipsec out …``) match in the emitted nft output."""
     config = _make_config_with_ipsec("proto=esp,mode=tunnel")
     ir = build_ir(config)
     nft = emit_nft(ir)
-    assert "policy out ipsec" in nft, (
-        "Expected 'policy out ipsec' in emitted nft for ipsec zone dst"
+    assert "meta secpath exists" in nft, (
+        "Expected 'meta secpath exists' (or narrow 'ipsec out') in emitted "
+        "nft for ipsec zone dst"
     )
 
 
-def test_ipsec_zone_proto_mode_in_emitted_rule():
-    """proto= and mode= from zone OPTIONS must appear in the injected policy clause."""
+def test_ipsec_zone_proto_mode_dropped_in_emit():
+    """proto= / mode= are silently dropped; the broad secpath match remains.
+
+    Regression guard: earlier emitter output ``policy in ipsec proto ah mode
+    tunnel`` which ``nft -f`` rejects with ``unexpected policy``. There is
+    no ``policy`` statement in nft 1.1.x.
+    """
     config = _make_config_with_ipsec("proto=ah,mode=transport")
     ir = build_ir(config)
     nft = emit_nft(ir)
-    assert "proto ah" in nft
-    assert "mode transport" in nft
+    assert "policy in ipsec" not in nft
+    assert "policy out ipsec" not in nft
+    assert "proto ah" not in nft
+    assert "mode transport" not in nft
+    assert "meta secpath exists" in nft
 
 
 def test_ipsec_zone_reqid_in_emitted_rule():
-    """reqid= must appear in the injected policy clause."""
+    """reqid= must appear as a narrow ``ipsec <dir> reqid N`` clause."""
     config = _make_config_with_ipsec("reqid=77")
     ir = build_ir(config)
     nft = emit_nft(ir)
     assert "reqid 77" in nft
+    # No stale iptables-ism — narrow match, no ``policy in|out ipsec``.
+    assert "policy in ipsec" not in nft
+    assert "policy out ipsec" not in nft
 
 
 def test_ipsec_zone_bare_minimal():
-    """An ipsec zone with no sub-options must still emit 'policy in ipsec'."""
+    """An ipsec zone with no sub-options must still emit ``meta secpath exists``."""
     config = _make_config_with_ipsec("-")
     ir = build_ir(config)
     nft = emit_nft(ir)
-    assert "policy in ipsec" in nft or "policy out ipsec" in nft
+    assert "meta secpath exists" in nft
 
 
 # ── WP-D3: ipsec4 / ipsec6 zone types ─────────────────────────────────────────
