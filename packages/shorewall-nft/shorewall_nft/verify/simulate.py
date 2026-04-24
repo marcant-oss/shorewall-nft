@@ -1076,6 +1076,7 @@ def _expand_port_spec(
     if not dport:
         return [None]
     out: set[int] = set()
+    boundary_pins: set[int] = set()
     try:
         for tok in dport.split(","):
             tok = tok.strip()
@@ -1087,6 +1088,18 @@ def _expand_port_spec(
                 hi = int(hi_s) if hi_s else 65535
                 if lo > hi:
                     lo, hi = hi, lo
+                # Probe-class D — port boundaries. Always pin the
+                # interesting boundary ports of every range: the lo/hi
+                # endpoints + one-below-lo + one-above-hi (when they
+                # exist). Catches off-by-one in port-set conversions
+                # like ``1024:65535`` → ``1023`` accidentally accepted
+                # or ``65535`` accidentally dropped.
+                boundary_pins.add(lo)
+                boundary_pins.add(hi)
+                if lo > 1:
+                    boundary_pins.add(lo - 1)
+                if hi < 65535:
+                    boundary_pins.add(hi + 1)
                 span = hi - lo + 1
                 if span <= cap:
                     out.update(range(lo, hi + 1))
@@ -1100,6 +1113,8 @@ def _expand_port_spec(
         return []
     if len(out) > cap:
         out = set(rng.sample(list(out), cap))
+    # Boundary pins always survive the cap — they're the cheap signal.
+    out.update(boundary_pins)
     return sorted(out)  # type: ignore[return-value]
 
 
