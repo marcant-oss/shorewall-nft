@@ -251,6 +251,11 @@ class Daemon:
         self._plain_tracker: PlainListTracker | None = None
         self._plain_task: asyncio.Task[None] | None = None
 
+        # keepalived SNMP/MIB integration subsystems.
+        self._keepalived_dispatcher: Any | None = None
+        self._keepalived_trap_listener: Any | None = None
+        self._keepalived_dbus: Any | None = None
+
     # ── config accessor (read-only pass-through) ──────────────────────
     # Kept for back-compat so existing code/tests can still read
     # ``daemon.prom_port`` etc. without being changed all at once.
@@ -356,9 +361,18 @@ class Daemon:
                     self._config.vrrp_snmp_host, self._config.vrrp_snmp_port,
                     self._config.vrrp_snmp_community, self._config.vrrp_snmp_timeout,
                 )
-            _vc = _VrrpCollector(snmp_config=_snmp_cfg)
+            _vc = _VrrpCollector(
+                snmp_config=_snmp_cfg,
+                keepalived_snmp_unix=self._config.keepalived_snmp_unix,
+            )
             self._registry.add(_vc)
             log.info("shorewalld VRRP D-Bus collector registered")
+
+        # keepalived SNMP/MIB integration — only when KEEPALIVED_SNMP_UNIX
+        # is configured. Falls through to the legacy VrrpCollector path
+        # (above) for operators who have not migrated yet.
+        if self._config.keepalived_snmp_unix:
+            await self._start_keepalived_subsystems()
 
         # Prometheus HTTP scrape endpoint. Deferred import so
         # ``--help`` works without prometheus_client installed.
@@ -924,6 +938,99 @@ class Daemon:
         log.info(
             "plain list tracker: started with %d source(s)", len(configs))
 
+    async def _start_keepalived_subsystems(self) -> None:
+        """Bootstrap the keepalived SNMP walker, trap listener, and D-Bus client.
+
+        Called from :meth:`run` when ``KEEPALIVED_SNMP_UNIX`` is set.
+        Every sub-component has an *Unavailable* soft-degrade path so a
+        missing python3-netsnmp, pysnmp, or dbus-next never aborts startup
+        — it just drops that capability with a warning log.
+        """
+        assert self._config.keepalived_snmp_unix is not None
+        assert self._registry is not None
+
+        from .keepalived.dispatcher import KeepalivedDispatcher
+        from .keepalived.metrics import KeepalivedCollector
+        from .keepalived.snmp_client import (
+            KeepalivedSnmpClient,
+            KeepalivedSnmpClientUnavailable,
+        )
+
+        # ── SNMP client + walker ──────────────────────────────────────
+        try:
+            _client = KeepalivedSnmpClient(
+                unix_path=self._config.keepalived_snmp_unix,
+            )
+        except KeepalivedSnmpClientUnavailable as e:
+            log.warning(
+                "keepalived SNMP disabled (python3-netsnmp not installed): %s", e)
+            return
+
+        self._keepalived_dispatcher = KeepalivedDispatcher(
+            client=_client,
+            walk_interval_s=self._config.keepalived_walk_interval_s,
+            enable_wide_tables=self._config.keepalived_wide_tables,
+        )
+        await self._keepalived_dispatcher.start()
+        log.info(
+            "keepalived SNMP walker started: unix=%s interval=%.0fs wide_tables=%s",
+            self._config.keepalived_snmp_unix,
+            self._config.keepalived_walk_interval_s,
+            self._config.keepalived_wide_tables,
+        )
+
+        self._registry.add(
+            KeepalivedCollector(self._keepalived_dispatcher))
+
+        # ── Trap listener ─────────────────────────────────────────────
+        if self._config.keepalived_trap_socket:
+            from .keepalived.trap_listener import (
+                KeepalivedTrapListener,
+                KeepalivedTrapListenerUnavailable,
+            )
+            try:
+                self._keepalived_trap_listener = KeepalivedTrapListener(
+                    socket_path=self._config.keepalived_trap_socket,
+                    dispatcher=self._keepalived_dispatcher,
+                )
+                await self._keepalived_trap_listener.start()
+                log.info(
+                    "keepalived trap listener started: %s",
+                    self._config.keepalived_trap_socket,
+                )
+            except KeepalivedTrapListenerUnavailable as e:
+                log.warning(
+                    "keepalived trap listener disabled (pysnmp not installed): %s",
+                    e)
+            except OSError as e:
+                log.warning(
+                    "keepalived trap listener failed to bind %s: %s",
+                    self._config.keepalived_trap_socket, e)
+                self._keepalived_trap_listener = None
+
+        # ── D-Bus client ──────────────────────────────────────────────
+        if self._config.keepalived_dbus_methods != "none":
+            from .keepalived.dbus_client import (
+                KeepalivedDbusClient,
+                KeepalivedDbusUnavailable,
+            )
+            try:
+                self._keepalived_dbus = KeepalivedDbusClient(
+                    dispatcher=self._keepalived_dispatcher,
+                    method_acl=self._config.keepalived_dbus_methods,
+                    enable_create_instance=self._config.keepalived_dbus_create_instance,
+                )
+                await self._keepalived_dbus.start()
+                log.info(
+                    "keepalived D-Bus client started: acl=%s create_instance=%s",
+                    self._config.keepalived_dbus_methods,
+                    self._config.keepalived_dbus_create_instance,
+                )
+            except KeepalivedDbusUnavailable as e:
+                log.warning(
+                    "keepalived D-Bus disabled (dbus-next not installed): %s", e)
+                self._keepalived_dbus = None
+
     async def _start_control_server(self) -> None:
         """Bind the control Unix socket and register handlers."""
         assert self._config.control_socket is not None
@@ -940,6 +1047,7 @@ class Daemon:
             iplist_tracker=self._iplist_tracker,
             pull_resolver=self._pull_resolver,
             nfsets_hook=self._apply_nfsets_from_instances,
+            keepalived_dbus=self._keepalived_dbus,
         )
 
         # Register iplist handlers if the tracker is running.
@@ -965,6 +1073,18 @@ class Daemon:
             self._control_server.register_handler(
                 "deregister-instance", handlers.handle_deregister_instance
             )
+
+        # keepalived D-Bus command handlers — registered regardless of
+        # whether the D-Bus client started; the handler methods degrade
+        # cleanly when keepalived_dbus=None (they return {"error": ...}).
+        self._control_server.register_handler(
+            "keepalived-data", handlers.handle_keepalived_data)
+        self._control_server.register_handler(
+            "keepalived-stats", handlers.handle_keepalived_stats)
+        self._control_server.register_handler(
+            "keepalived-reload", handlers.handle_keepalived_reload)
+        self._control_server.register_handler(
+            "keepalived-garp", handlers.handle_keepalived_garp)
 
         # Seed coordinator — answers request-seed commands from shorewall-nft.
         if self._tracker is not None:
@@ -1230,6 +1350,25 @@ class Daemon:
             await _safe_async(
                 "control_server", self._control_server.shutdown())
             self._control_server = None
+
+        # keepalived D-Bus client: must shut down before the dispatcher
+        # (it holds a reference and may still be dispatching signals).
+        if self._keepalived_dbus is not None:
+            await _safe_async(
+                "keepalived_dbus", self._keepalived_dbus.stop())
+            self._keepalived_dbus = None
+
+        # keepalived trap listener.
+        if self._keepalived_trap_listener is not None:
+            await _safe_async(
+                "keepalived_trap_listener", self._keepalived_trap_listener.stop())
+            self._keepalived_trap_listener = None
+
+        # keepalived dispatcher: cancel the walk task.
+        if self._keepalived_dispatcher is not None:
+            await _safe_async(
+                "keepalived_dispatcher", self._keepalived_dispatcher.stop())
+            self._keepalived_dispatcher = None
 
         # Log dispatcher: sinks must flush before we tear down the
         # worker router (the router drains NFLOG events into the

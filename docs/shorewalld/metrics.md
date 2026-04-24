@@ -321,6 +321,46 @@ operator-visible signal that a sink is underpowered.
 
 ---
 
+## MIB-driven keepalived families (`KEEPALIVED_SNMP_UNIX` path)
+
+When `KEEPALIVED_SNMP_UNIX` is set, shorewalld performs a full MIB walk every
+`KEEPALIVED_WALK_INTERVAL` seconds and **auto-registers** one Prometheus family
+per scalar and per table column in the committed `mib.py` constants file.  No
+hardcoded OID list — regenerate `mib.py` to add new keepalived columns.
+
+### Family naming convention
+
+| MIB object | Family name | Type |
+|------------|-------------|------|
+| Read-only scalar | `shorewalld_keepalived_<name>` | gauge |
+| `Gauge32` / `Integer32` / `Unsigned32` table column | `shorewalld_keepalived_<colname>` | gauge |
+| `Counter32` / `Counter64` table column | `shorewalld_keepalived_<colname>_total` | counter |
+| Trap + D-Bus event | `shorewalld_keepalived_events_total{type=<name>}` | counter |
+
+Labels for table families come from the table's INDEX clause in the MIB
+(e.g. `vrrpInstanceTable` carries `index="1"` as a single integer index).
+
+### Cardinality guard
+
+Tables with 30+ columns (`vrrpRouteTable`, `virtualServerTable`,
+`vrrpRuleTable`) are excluded by default.  Set `KEEPALIVED_WIDE_TABLES=yes`
+to include them.  At 10 VRRP instances with wide tables enabled, expect
+~800 time series from `virtualServerTable` alone.
+
+### Walk health metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `shorewalld_keepalived_walks_ok_total` | counter | Successful full MIB walks |
+| `shorewalld_keepalived_walks_error_total` | counter | Walks that raised an exception |
+| `shorewalld_keepalived_walk_duration_seconds` | gauge | Duration of the most recent walk |
+| `shorewalld_keepalived_events_total{type=...}` | counter | Events by type (traps + D-Bus signals) |
+
+For the full operator reference see
+[`docs/shorewalld/keepalived-snmp.md`](keepalived-snmp.md).
+
+---
+
 ## VRRP (keepalived D-Bus + SNMP augmentation)
 
 Enabled with `--enable-vrrp-collector`.  Requires `jeepney>=0.8`

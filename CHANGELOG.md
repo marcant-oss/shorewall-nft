@@ -78,6 +78,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   any config that does not override `LOGFORMAT`. Tests: +9 cases in
   `tests/test_log_settings.py::TestLogFormat`.
 
+- **shorewalld keepalived SNMP integration (Unix socket + MIB + traps +
+  D-Bus methods, final wiring)** — `KEEPALIVED_SNMP_UNIX` activates the
+  MIB-driven KeepalivedDispatcher: a periodic full walk of the KEEPALIVED-MIB
+  (26 tables + 32 scalars from keepalived 2.3+), auto-registered Prometheus
+  families (one gauge or counter per MIB column, no hardcoded OID list), and
+  an SNMPv2c trap listener for `vrrpSyncGroupStateChange` /
+  `vrrpInstanceStateChange` events. D-Bus method surface exposed through the
+  control socket: `keepalived-data`, `keepalived-stats`, `keepalived-reload`,
+  `keepalived-garp` — gated by a 3-tier ACL (`KEEPALIVED_DBUS_METHODS`).
+  Every sub-component (python3-netsnmp walker, pysnmp trap listener, dbus-next
+  client) has a soft-degrade path: missing library logs a warning and drops
+  only that capability, the daemon does not abort. `KEEPALIVED_SNMP_UNIX` is
+  required to activate any of the above; without it the daemon behaves as
+  before. 7 new `KEEPALIVED_*` config keys + CLI flags. +31 tests.
+
+### Deprecated
+
+- **Legacy `VRRP_SNMP_*` UDP collector path** — when `KEEPALIVED_SNMP_UNIX`
+  is set alongside `VRRP_SNMP_ENABLED=yes`, shorewalld emits a deprecation
+  warning at startup and runs both collectors in parallel (metric families
+  `shorewall_vrrp_*` vs `shorewalld_keepalived_*` do not collide). The UDP
+  path continues to work for one release. Remove `VRRP_SNMP_ENABLED` and
+  related keys from `shorewalld.conf` to silence the warning and fully
+  migrate to the Unix-socket path. See `docs/shorewalld/keepalived-snmp.md`
+  for the migration table.
+
 ## [1.10.2] - 2026-04-24
 
 Phase 6 — upstream-Shorewall config-coverage parity, plus pyroute2-first

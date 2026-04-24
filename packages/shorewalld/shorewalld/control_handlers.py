@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .dns_pull_resolver import PullResolver
     from .instance import InstanceManager
     from .iplist.tracker import IpListTracker
+    from .keepalived.dbus_client import KeepalivedDbusClient
 
 log = logging.getLogger("shorewalld.control_handlers")
 
@@ -34,6 +35,11 @@ class ControlHandlers:
     The optional *nfsets_hook* callback is called after
     ``register-instance`` to wire nfsets backends; it should be
     ``Daemon._apply_nfsets_from_instances``.
+
+    The optional *keepalived_dbus* collaborator handles the four
+    ``keepalived-*`` control-socket commands (data, stats, reload, garp).
+    When ``None``, those handlers return ``{"error": "keepalived-dbus disabled"}``.
+    Daemon wiring (passing the real client) lands in Commit 4 (P8).
     """
 
     def __init__(
@@ -43,11 +49,13 @@ class ControlHandlers:
         iplist_tracker: "IpListTracker | None" = None,
         pull_resolver: "PullResolver | None" = None,
         nfsets_hook: "Callable[[], Awaitable[None]] | None" = None,
+        keepalived_dbus: "KeepalivedDbusClient | None" = None,
     ) -> None:
         self._instance_mgr = instance_mgr
         self._iplist_tracker = iplist_tracker
         self._pull_resolver = pull_resolver
         self._nfsets_hook = nfsets_hook
+        self._keepalived_dbus = keepalived_dbus
 
     # ── iplist handlers ───────────────────────────────────────────────
 
@@ -159,3 +167,75 @@ class ControlHandlers:
         hostname = req.get("hostname")
         n = await self._pull_resolver.refresh(hostname)
         return {"ok": True, "rescheduled": n}
+
+    # ── keepalived D-Bus handlers ────────────────────────────────────
+    #
+    # These handlers are additive only — the daemon dispatch table wiring
+    # lands in Commit 4 (P8).  Tests call the handler methods directly.
+    # When keepalived_dbus=None, every handler returns {"error": ...} so
+    # partial builds degrade cleanly.
+
+    async def handle_keepalived_data(self, req: dict) -> dict:  # noqa: ARG002
+        """Return keepalived.data contents (calls PrintData D-Bus method).
+
+        Response: ``{"data": "<utf-8 str>"}`` on success,
+        ``{"error": "..."}`` when disabled or on error.
+        """
+        if self._keepalived_dbus is None:
+            return {"error": "keepalived-dbus disabled"}
+        try:
+            raw = await self._keepalived_dbus.print_data()
+            return {"data": raw.decode("utf-8", "replace")}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("handle_keepalived_data: %s", exc)
+            return {"error": str(exc)}
+
+    async def handle_keepalived_stats(self, req: dict) -> dict:
+        """Return keepalived.stats contents (calls PrintStats[Clear]).
+
+        Request: optional ``{"clear": true}`` to prefer PrintStatsClear.
+        Response: ``{"data": "<utf-8 str>"}`` on success.
+        """
+        if self._keepalived_dbus is None:
+            return {"error": "keepalived-dbus disabled"}
+        clear = bool(req.get("clear", False))
+        try:
+            raw = await self._keepalived_dbus.print_stats(clear=clear)
+            return {"data": raw.decode("utf-8", "replace")}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("handle_keepalived_stats: %s", exc)
+            return {"error": str(exc)}
+
+    async def handle_keepalived_reload(self, req: dict) -> dict:  # noqa: ARG002
+        """Trigger keepalived config reload (calls ReloadConfig D-Bus method).
+
+        Requires ``KEEPALIVED_DBUS_METHODS=all``.
+        Response: ``{"ok": true}`` on success.
+        """
+        if self._keepalived_dbus is None:
+            return {"error": "keepalived-dbus disabled"}
+        try:
+            await self._keepalived_dbus.reload_config()
+            return {"ok": True}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("handle_keepalived_reload: %s", exc)
+            return {"error": str(exc)}
+
+    async def handle_keepalived_garp(self, req: dict) -> dict:
+        """Send a Gratuitous ARP for a named VRRP instance.
+
+        Request: ``{"instance": "<name>"}`` (required).
+        Response: ``{"ok": true}`` on success or ``{"error": "..."}`` on failure.
+        Requires ``KEEPALIVED_DBUS_METHODS=all``.
+        """
+        if self._keepalived_dbus is None:
+            return {"error": "keepalived-dbus disabled"}
+        instance = req.get("instance")
+        if not instance:
+            return {"error": "missing 'instance' in request"}
+        try:
+            await self._keepalived_dbus.send_garp(instance)
+            return {"ok": True}
+        except Exception as exc:  # noqa: BLE001
+            log.debug("handle_keepalived_garp: %s", exc)
+            return {"error": str(exc)}

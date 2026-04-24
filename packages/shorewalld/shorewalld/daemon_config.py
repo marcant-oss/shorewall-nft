@@ -113,3 +113,22 @@ class DaemonConfig:
     log_dispatch_socket: str | None = None   # path; unix-socket JSON fan-out
     log_dispatch_journald: bool = False      # structured journal entries
     log_dispatch_syslog: str | None = None   # path to /dev/log (RFC 3164)
+
+    # ── keepalived SNMP / MIB integration ────────────────────────────
+    # Unix-socket SNMP transport (python3-netsnmp) + trap listener.
+    # When ``keepalived_snmp_unix`` is set the new MIB-driven walker
+    # starts; when unset the legacy UDP VrrpCollector path is used
+    # (if enabled via ``enable_vrrp_collector``).
+    keepalived_snmp_unix: str | None = None      # e.g. "/run/snmpd/snmpd.sock"
+    keepalived_trap_socket: str | None = None    # e.g. "/run/shorewalld/snmp-trap.sock"
+
+    # Coverage knobs
+    keepalived_wide_tables: bool = False          # enables vrrpRouteTable / virtualServerTable / vrrpRuleTable
+    keepalived_scrape_virtual_servers: bool = True  # LVS stats (moderate cardinality)
+
+    # D-Bus method exposure
+    keepalived_dbus_methods: str = "readonly"     # "none" | "readonly" | "all"
+    keepalived_dbus_create_instance: bool = False  # opt-in; needs --enable-dbus-create-instance build
+
+    # Walk cadence
+    keepalived_walk_interval_s: float = 30.0
