@@ -386,6 +386,108 @@ else = 5).
 Forward events to a syslog daemon as RFC 3164 datagrams (typical:
 .IR /dev/log ).
 LOCAL0 facility; severity maps as for journald.
+.TP
+.BI \-\-keepalived\-snmp\-unix " PATH"
+Path to snmpd's Unix DGRAM socket (e.g.
+.IR /run/snmpd/snmpd.sock ).
+When set, activates the MIB-driven keepalived walker: shorewalld
+performs a full KEEPALIVED-MIB walk every
+.B \-\-keepalived\-walk\-interval
+seconds and auto-registers one Prometheus family per MIB column.
+Requires the distro package
+.B python3-netsnmp
+.RB ( "apt install python3-netsnmp" )
+or
+.B net-snmp-python3
+.RB ( "dnf install net-snmp-python3" ).
+Degrades silently when the library is absent.
+Also configurable via
+.B KEEPALIVED_SNMP_UNIX
+in
+.IR shorewalld.conf .
+.TP
+.BI \-\-keepalived\-trap\-socket " PATH"
+Path for the Unix DGRAM socket that receives SNMPv2c traps forwarded
+by snmpd (configure with
+.B "trap2sink unix:<path>"
+in
+.IR snmpd.conf ).
+Only active when
+.B \-\-keepalived\-snmp\-unix
+is also set.
+Requires
+.B pysnmp>=7.0
+.RB ( "pip install shorewalld[snmp]" ).
+Also configurable via
+.B KEEPALIVED_TRAP_SOCKET
+in
+.IR shorewalld.conf .
+.TP
+.B \-\-keepalived\-wide\-tables
+Enable high-cardinality keepalived MIB tables:
+.BR vrrpRouteTable ,
+.BR virtualServerTable ,
+.BR vrrpRuleTable .
+Off by default to cap Prometheus cardinality.
+Also configurable via
+.B KEEPALIVED_WIDE_TABLES=yes
+in
+.IR shorewalld.conf .
+.TP
+.B \-\-no\-keepalived\-wide\-tables
+Disable wide-table families (default).
+.TP
+.B \-\-keepalived\-scrape\-virtual\-servers
+Include LVS
+.B virtualServerTable
+metrics.  Default on.
+Also configurable via
+.B KEEPALIVED_SCRAPE_VIRTUAL_SERVERS
+in
+.IR shorewalld.conf .
+.TP
+.B \-\-no\-keepalived\-scrape\-virtual\-servers
+Exclude LVS virtual-server metrics.
+.TP
+.BI \-\-keepalived\-dbus\-methods " TIER"
+D-Bus method ACL tier.  One of
+.BR none ,
+.B readonly
+(default: only
+.B print_data
+and
+.B print_stats
+permitted), or
+.B all
+(also allows
+.B reload_config
+and
+.BR send_garp ).
+Also configurable via
+.B KEEPALIVED_DBUS_METHODS
+in
+.IR shorewalld.conf .
+.TP
+.B \-\-keepalived\-dbus\-create\-instance
+Enable
+.B CreateInstance
+/
+.B DestroyInstance
+D-Bus methods.  Requires keepalived built with
+.BR \-\-enable\-dbus\-create\-instance .
+Off by default.
+Also configurable via
+.B KEEPALIVED_DBUS_CREATE_INSTANCE=yes
+in
+.IR shorewalld.conf .
+.TP
+.BI \-\-keepalived\-walk\-interval " SECONDS"
+Seconds between full MIB walks (default:
+.BR 30 ).
+Also configurable via
+.B KEEPALIVED_WALK_INTERVAL
+in
+.IR shorewalld.conf .
 
 .SH tap SUBCOMMAND
 .B shorewalld tap
@@ -513,6 +615,45 @@ own bounded queue and contributes a
 .BI shorewall_log_dropped_total{reason=sink_ X }
 counter so backpressure is operator-visible.
 
+.SS keepalived SNMP/MIB integration keys
+.B KEEPALIVED_SNMP_UNIX
+.I PATH
+— path to snmpd's Unix DGRAM socket.  Setting this activates the
+MIB-driven walker.  Leave unset (default) to use only the legacy
+.B VRRP_SNMP_*
+UDP path (if configured) or no keepalived metrics.
+.PP
+.B KEEPALIVED_TRAP_SOCKET
+.I PATH
+— path for the Unix DGRAM socket that receives SNMPv2c traps from snmpd.
+Configure snmpd with
+.BR "trap2sink unix:<path>" .
+.PP
+.B KEEPALIVED_WIDE_TABLES
+(yes | no; default
+.BR no )
+— enable high-cardinality MIB tables.
+.PP
+.B KEEPALIVED_SCRAPE_VIRTUAL_SERVERS
+(yes | no; default
+.BR yes )
+— include LVS virtual-server metrics.
+.PP
+.B KEEPALIVED_DBUS_METHODS
+(none | readonly | all; default
+.BR readonly )
+— D-Bus method ACL tier.
+.PP
+.B KEEPALIVED_DBUS_CREATE_INSTANCE
+(yes | no; default
+.BR no )
+— enable CreateInstance / DestroyInstance methods.
+.PP
+.B KEEPALIVED_WALK_INTERVAL
+.I SECONDS
+— walk cadence (default:
+.BR 30 ).
+
 .SH PROMETHEUS METRICS
 Endpoint:
 .BI http:// HOST : PORT /metrics
@@ -634,6 +775,33 @@ Label values:
 .B shorewalld_plainlist_last_success_timestamp_seconds
 is a Unix-timestamp gauge (0 = never refreshed).  Alert with
 .B time() \- metric > THRESHOLD .
+
+.SS keepalived MIB-driven families (opt-in via KEEPALIVED_SNMP_UNIX)
+When
+.B KEEPALIVED_SNMP_UNIX
+is set, shorewalld auto-registers one Prometheus family per MIB column
+from the committed
+.B mib.py
+constants file.  Family names follow the pattern:
+
+.RS
+.nf
+shorewalld_keepalived_<name>           gauge    (read-only scalars + Gauge32/Integer32 table cols)
+shorewalld_keepalived_<colname>_total  counter  (Counter32/Counter64 table cols)
+shorewalld_keepalived_events_total     counter  type  (traps + D-Bus signals)
+.fi
+.RE
+
+Example row for the VRRP instance table:
+.RS
+.nf
+shorewalld_keepalived_vrrpInstanceState     gauge   index
+shorewalld_keepalived_vrrpInstanceBecomeMaster_total counter index
+.fi
+.RE
+
+For the full family list and cardinality guidance see
+.IR docs/shorewalld/keepalived-snmp.md .
 
 .SS VRRP metrics [Wave 8/9 \-\- keepalived D-Bus + SNMP, opt-in via \-\-enable\-vrrp\-collector]
 .RS

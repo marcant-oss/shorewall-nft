@@ -105,6 +105,9 @@ _BOOL_KEYS = frozenset({
     "STATE_ENABLED",
     "VRRP_SNMP_ENABLED",
     "LOG_DISPATCH_JOURNALD",
+    "KEEPALIVED_WIDE_TABLES",
+    "KEEPALIVED_SCRAPE_VIRTUAL_SERVERS",
+    "KEEPALIVED_DBUS_CREATE_INSTANCE",
 })
 _INT_KEYS = frozenset({
     "PEER_PORT",
@@ -121,6 +124,7 @@ _FLOAT_KEYS = frozenset({
     "VRRP_SNMP_TIMEOUT",
     "DNS_DEDUP_REFRESH_THRESHOLD",
     "BATCH_WINDOW_SECONDS",
+    "KEEPALIVED_WALK_INTERVAL",
 })
 
 
@@ -198,6 +202,14 @@ class ConfDefaults:
     log_dispatch_socket: str | None = None
     log_dispatch_journald: bool | None = None
     log_dispatch_syslog: str | None = None
+    # keepalived SNMP/MIB integration (Commit 4 — P8).
+    keepalived_snmp_unix: str | None = None
+    keepalived_trap_socket: str | None = None
+    keepalived_wide_tables: bool | None = None
+    keepalived_scrape_virtual_servers: bool | None = None
+    keepalived_dbus_methods: str | None = None
+    keepalived_dbus_create_instance: bool | None = None
+    keepalived_walk_interval_s: float | None = None
 
 
 # Map config key → ConfDefaults attribute. Keys not in this map are
@@ -241,6 +253,14 @@ _CONF_KEY_MAP: dict[str, str] = {
     "LOG_DISPATCH_SOCKET": "log_dispatch_socket",
     "LOG_DISPATCH_JOURNALD": "log_dispatch_journald",
     "LOG_DISPATCH_SYSLOG": "log_dispatch_syslog",
+    # keepalived SNMP/MIB integration.
+    "KEEPALIVED_SNMP_UNIX": "keepalived_snmp_unix",
+    "KEEPALIVED_TRAP_SOCKET": "keepalived_trap_socket",
+    "KEEPALIVED_WIDE_TABLES": "keepalived_wide_tables",
+    "KEEPALIVED_SCRAPE_VIRTUAL_SERVERS": "keepalived_scrape_virtual_servers",
+    "KEEPALIVED_DBUS_METHODS": "keepalived_dbus_methods",
+    "KEEPALIVED_DBUS_CREATE_INSTANCE": "keepalived_dbus_create_instance",
+    "KEEPALIVED_WALK_INTERVAL": "keepalived_walk_interval_s",
 }
 
 

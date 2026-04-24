@@ -88,6 +88,12 @@ from shorewalld.exporter import CollectorBase, _MetricFamily
 
 log = logging.getLogger("shorewalld.collectors.vrrp")
 
+# One-shot deprecation warning guard: when both the legacy VRRP_SNMP_*
+# UDP path and the new KEEPALIVED_SNMP_UNIX path are configured,
+# emit a deprecation warning exactly once per process so operators know
+# to migrate.  See _warn_legacy_overlap().
+_LEGACY_OVERLAP_WARNED: bool = False
+
 # ── optional dependency: jeepney (D-Bus) ─────────────────────────────────────
 
 try:
@@ -240,6 +246,36 @@ def _make_error_family() -> _MetricFamily:
 # ── Collector ────────────────────────────────────────────────────────────────
 
 
+def _warn_legacy_overlap(unix_path: str) -> None:
+    """Emit a one-shot deprecation warning when both UDP and Unix paths are set.
+
+    The legacy ``VRRP_SNMP_*`` UDP path continues to work for one release
+    cycle (the legacy ``shorewall_vrrp_*`` families and the new
+    ``shorewalld_keepalived_*`` families have distinct names and coexist
+    cleanly).  Operators should migrate to ``KEEPALIVED_SNMP_UNIX`` to
+    silence this warning.
+    """
+    global _LEGACY_OVERLAP_WARNED
+    if _LEGACY_OVERLAP_WARNED:
+        return
+    _LEGACY_OVERLAP_WARNED = True
+    import warnings
+    warnings.warn(
+        f"legacy VRRP_SNMP_* UDP config is deprecated; "
+        f"KEEPALIVED_SNMP_UNIX={unix_path!r} is now the primary path. "
+        "Both metric families (shorewall_vrrp_* and shorewalld_keepalived_*) "
+        "are live. Remove VRRP_SNMP_ENABLED/VRRP_SNMP_HOST to silence this.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    log.warning(
+        "keepalived: legacy VRRP_SNMP_* UDP path is deprecated alongside "
+        "KEEPALIVED_SNMP_UNIX=%s; remove VRRP_SNMP_* from shorewalld.conf "
+        "to silence this warning",
+        unix_path,
+    )
+
+
 class VrrpCollector(CollectorBase):
     """Scrape VRRP state from one or more keepalived processes via D-Bus,
     optionally augmented with SNMP data from the KEEPALIVED-MIB sub-agent.
@@ -278,6 +314,7 @@ class VrrpCollector(CollectorBase):
         cache_ttl: float = 5.0,
         system_bus_path: str | None = None,
         snmp_config: VrrpSnmpConfig | None = None,
+        keepalived_snmp_unix: str | None = None,
     ) -> None:
         super().__init__(netns="")
         self._glob = bus_name_glob
@@ -290,6 +327,9 @@ class VrrpCollector(CollectorBase):
         self._errors: dict[str, int] = {r: 0 for r in _REASONS}
         # Signal-listener connection (persistent between scrapes).
         # Kept open to accumulate VrrpStatusChange signals without polling.
+        # Emit a one-shot deprecation warning if both paths are active.
+        if snmp_config is not None and keepalived_snmp_unix is not None:
+            _warn_legacy_overlap(keepalived_snmp_unix)
         self._sig_conn: object | None = None
         # (bus_name, nic, vrid, family) → Unix timestamp of last observed
         # VrrpStatusChange signal.

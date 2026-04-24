@@ -63,13 +63,14 @@ def test_daemonconfig_undeclared_attr_raises():
 
 def test_daemonconfig_field_count():
     """DaemonConfig exposes exactly the expected number of fields."""
-    # 40 fields as of 2026-04-24 (added 6 log-dispatcher fields:
-    # log_dispatch, log_nflog_group, log_dispatch_file,
-    # log_dispatch_socket, log_dispatch_journald, log_dispatch_syslog).
+    # 47 fields as of 2026-04-24 (added 7 keepalived SNMP fields:
+    # keepalived_snmp_unix, keepalived_trap_socket, keepalived_wide_tables,
+    # keepalived_scrape_virtual_servers, keepalived_dbus_methods,
+    # keepalived_dbus_create_instance, keepalived_walk_interval_s).
     # Bump this number if you intentionally add/remove a field, and
     # update the docstring count in daemon_config.py.
     fields = dataclasses.fields(DaemonConfig)
-    assert len(fields) == 40, (
+    assert len(fields) == 47, (
         f"DaemonConfig has {len(fields)} fields; update this assertion "
         "if you intentionally added/removed a field")
 

@@ -15,11 +15,26 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
   kwargs accepted for back-compat with a `DeprecationWarning`;
   control-socket handlers live in `control_handlers.py` for testability.
 - `daemon_config.py` — `DaemonConfig` frozen dataclass (`frozen=True`,
-  `slots=True`), 34 fields covering all daemon runtime knobs. Built by
+  `slots=True`), 47 fields covering all daemon runtime knobs. Built by
   `cli.py` after merging `ConfDefaults` (from shorewalld.conf) with argparse
   CLI flags. Pass as `Daemon(config=DaemonConfig(...))`.
 - `config.py` — `shorewalld.conf` + allowlist loader; `ConfDefaults` holds
   the file-parsed view with `| None` fields (unset = CLI default wins).
+- `keepalived/` — keepalived SNMP/MIB integration subpackage (opt-in via
+  `KEEPALIVED_SNMP_UNIX`):
+  - `mib.py` — generated OID↔name↔SYNTAX tables (committed; regenerate via
+    `tools/gen_keepalived_mib.py`).
+  - `snmp_client.py` — `KeepalivedSnmpClient`: python-netsnmp wrapper over
+    `unix:/run/snmpd/snmpd.sock`; `asyncio.to_thread` bridge; MIB-driven
+    `walk_all()` returning a `KeepalivedSnapshot`.
+  - `dispatcher.py` — `KeepalivedDispatcher`: periodic walk loop (default 30 s),
+    atomic snapshot publish, event ingress from trap listener + D-Bus client.
+  - `metrics.py` — `KeepalivedCollector`: auto-registers one Prometheus family
+    per MIB column from the snapshot; cardinality guard for wide tables.
+  - `trap_listener.py` — `KeepalivedTrapListener`: Unix DGRAM socket for
+    SNMPv2c traps forwarded by snmpd (`trap2sink unix:…`); pysnmp BER decode.
+  - `dbus_client.py` — `KeepalivedDbusClient`: dbus-next async client for
+    the 4 keepalived D-Bus signals + method wrappers with ACL tier enforcement.
 - `control.py` — control unix socket protocol (`ControlServer`, dispatch,
   `ping` built-in). Wire format: one JSON object per line.
 - `control_handlers.py` — `ControlHandlers`: one async method per

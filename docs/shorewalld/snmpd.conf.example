@@ -1,0 +1,33 @@
+# snmpd.conf — shorewalld keepalived integration snippet
+#
+# Add these lines to /etc/snmp/snmpd.conf or drop into
+# /etc/snmp/snmpd.conf.d/keepalived.conf (if your distribution supports
+# drop-in directories for snmpd).
+#
+# Restart snmpd after changes:
+#   systemctl restart snmpd
+
+# Listen on a Unix DGRAM socket in addition to the UDP port.
+# shorewalld uses the Unix socket for SNMP walks; the UDP port
+# is kept for compatibility with other SNMP tools (e.g. snmpwalk).
+agentAddress unix:/run/snmpd/snmpd.sock,udp:127.0.0.1:161
+
+# Forward every SNMPv2c trap snmpd receives to shorewalld's trap listener
+# socket.  shorewalld decodes the keepalived NOTIFICATION-TYPEs
+# (vrrpSyncGroupStateChange, vrrpInstanceStateChange) and increments
+# shorewalld_keepalived_events_total{type=...}.
+trap2sink unix:/run/shorewalld/snmp-trap.sock
+
+# Enable AgentX master mode so keepalived can register its sub-agent.
+# keepalived must be started with -x (or have enable_snmp_vrrp in its
+# global_defs block) to connect.
+master agentx
+
+# Unix path for AgentX sub-agent connections.  Must match the
+# agentx_socket directive in keepalived.conf (default: /var/agentx/master).
+agentXSocket unix:/var/run/agentx.sock
+
+# Allow read-only community access from localhost.
+# Replace with a stronger community string in production, or use
+# view-based access control (VACM) to restrict OID subtrees.
+rocommunity public default

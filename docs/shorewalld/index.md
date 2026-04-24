@@ -190,6 +190,32 @@ already granted to the shipping `shorewalld.service` /
 `shorewalld@.service` unit via `AmbientCapabilities`. No additional
 sysconfig needed.
 
+## keepalived integration
+
+shorewalld can monitor keepalived (VRRP failover daemon) via SNMP over a
+Unix socket, subscribe to keepalived SNMP traps, and surface the
+state-changing keepalived D-Bus methods (`PrintData`, `PrintStats`,
+`ReloadConfig`, `SendGarp`) through the control socket.
+
+Enable with `KEEPALIVED_SNMP_UNIX=/run/snmpd/snmpd.sock` in
+`shorewalld.conf`.  When set, the daemon performs a full MIB walk every
+30 seconds (configurable), auto-registers one Prometheus family per MIB
+column, and feeds SNMP traps into `shorewalld_keepalived_events_total`.
+No code changes are needed when keepalived adds new OIDs — the committed
+`mib.py` constants file is regenerated via `tools/gen_keepalived_mib.py`.
+
+Requirements: `python3-netsnmp` (distro package — `apt install python3-netsnmp`
+or `dnf install net-snmp-python3`) for SNMP walks; `pysnmp>=7.0` for trap
+reception; `dbus-next>=0.2.3` for the D-Bus method surface.  All three
+are optional: a missing library soft-degrades the corresponding subsystem
+with a warning log at startup rather than aborting the daemon.
+
+See [`docs/shorewalld/keepalived-snmp.md`](keepalived-snmp.md) for the
+full operator reference including snmpd configuration, keepalived flags,
+every `KEEPALIVED_*` knob, the D-Bus ACL, the Prometheus family naming
+convention, control-socket commands, troubleshooting, and migration from
+the legacy `VRRP_SNMP_*` UDP path.
+
 ## Install
 
 Ships as part of the `shorewall-nft` package. The daemon itself is the

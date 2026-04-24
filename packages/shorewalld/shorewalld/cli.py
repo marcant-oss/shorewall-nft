@@ -252,6 +252,53 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-dispatch-syslog", default=None, metavar="PATH",
         help="Forward NFLOG events to a syslog daemon as RFC 3164 "
              "datagrams. Typical value: /dev/log.")
+    # ── keepalived SNMP/MIB integration ──────────────────────────────
+    p.add_argument(
+        "--keepalived-snmp-unix", default=None, metavar="PATH",
+        help="Path to snmpd's Unix DGRAM socket for keepalived SNMP walks "
+             "(e.g. /run/snmpd/snmpd.sock). When set, the MIB-driven "
+             "KeepalivedDispatcher starts and auto-registers Prometheus "
+             "families for every scalar and table in the KEEPALIVED-MIB. "
+             "Requires python3-netsnmp (distro package). Off by default.")
+    p.add_argument(
+        "--keepalived-trap-socket", default=None, metavar="PATH",
+        help="Path for the Unix DGRAM socket that receives SNMPv2c traps "
+             "forwarded by snmpd (configure with 'trap2sink unix:<path>'). "
+             "Only active when --keepalived-snmp-unix is also set. "
+             "Requires pysnmp>=7.0.")
+    p.add_argument(
+        "--keepalived-wide-tables", action="store_true", default=False,
+        help="Enable high-cardinality keepalived MIB tables: vrrpRouteTable, "
+             "virtualServerTable, vrrpRuleTable. Off by default to cap "
+             "Prometheus cardinality for deployments with many VRRP instances "
+             "or virtual servers. (Alias: KEEPALIVED_WIDE_TABLES=yes)")
+    p.add_argument(
+        "--no-keepalived-wide-tables", action="store_true", default=False,
+        help=argparse.SUPPRESS)
+    p.add_argument(
+        "--keepalived-scrape-virtual-servers", action="store_true", default=True,
+        help="Include LVS virtualServerTable metrics. Default on; "
+             "use --no-keepalived-scrape-virtual-servers to disable.")
+    p.add_argument(
+        "--no-keepalived-scrape-virtual-servers", action="store_true", default=False,
+        help=argparse.SUPPRESS)
+    p.add_argument(
+        "--keepalived-dbus-methods", default="readonly",
+        choices=("none", "readonly", "all"),
+        help="D-Bus method ACL tier. 'readonly' (default): print_data and "
+             "print_stats only. 'all': also allows reload_config and "
+             "send_garp. 'none': all D-Bus method calls disabled.")
+    p.add_argument(
+        "--keepalived-dbus-create-instance", action="store_true", default=False,
+        help="Enable CreateInstance / DestroyInstance D-Bus methods. "
+             "Requires keepalived built with --enable-dbus-create-instance. "
+             "Off by default.")
+    p.add_argument(
+        "--no-keepalived-dbus-create-instance", action="store_true", default=False,
+        help=argparse.SUPPRESS)
+    p.add_argument(
+        "--keepalived-walk-interval", type=float, default=30.0, metavar="SECONDS",
+        help="Seconds between full MIB walks (default: 30).")
     for sub in SUBSYSTEMS:
         p.add_argument(
             f"--log-level-{sub}", default=None, metavar="LEVEL",
@@ -352,6 +399,21 @@ def _merge_conf_defaults(
             and defaults.log_dispatch_journald is True):
         args.log_dispatch_journald = True
     take("log_dispatch_syslog", defaults.log_dispatch_syslog)
+
+    # keepalived SNMP/MIB integration.
+    take("keepalived_snmp_unix", defaults.keepalived_snmp_unix)
+    take("keepalived_trap_socket", defaults.keepalived_trap_socket)
+    if ("keepalived_wide_tables" not in explicit
+            and defaults.keepalived_wide_tables is True):
+        args.keepalived_wide_tables = True
+    if ("no_keepalived_scrape_virtual_servers" not in explicit
+            and defaults.keepalived_scrape_virtual_servers is False):
+        args.no_keepalived_scrape_virtual_servers = True
+    take("keepalived_dbus_methods", defaults.keepalived_dbus_methods)
+    if ("keepalived_dbus_create_instance" not in explicit
+            and defaults.keepalived_dbus_create_instance is True):
+        args.keepalived_dbus_create_instance = True
+    take("keepalived_walk_interval", defaults.keepalived_walk_interval_s)
 
     return args
 
@@ -502,6 +564,18 @@ def main(argv: list[str] | None = None) -> int:
         log_dispatch_socket=args.log_dispatch_socket,
         log_dispatch_journald=args.log_dispatch_journald,
         log_dispatch_syslog=args.log_dispatch_syslog,
+        keepalived_snmp_unix=args.keepalived_snmp_unix,
+        keepalived_trap_socket=args.keepalived_trap_socket,
+        keepalived_wide_tables=(
+            args.keepalived_wide_tables
+            and not args.no_keepalived_wide_tables),
+        keepalived_scrape_virtual_servers=(
+            not args.no_keepalived_scrape_virtual_servers),
+        keepalived_dbus_methods=args.keepalived_dbus_methods,
+        keepalived_dbus_create_instance=(
+            args.keepalived_dbus_create_instance
+            and not args.no_keepalived_dbus_create_instance),
+        keepalived_walk_interval_s=args.keepalived_walk_interval,
     )
     daemon = Daemon(config=cfg)
     try:
