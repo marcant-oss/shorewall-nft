@@ -15,6 +15,7 @@
 | [HOWTO-CLAUDE-hw-offload-addition.md](HOWTO-CLAUDE-hw-offload-addition.md) | AI-agent entry point for the hardware-offload feature addition |
 | [phase6-coverage-plan.md](phase6-coverage-plan.md) | Phase 6 work-package plan: close upstream-Shorewall config-coverage gaps (Sonnet-agent runbook) |
 | [simlab-alignment-todo.md](simlab-alignment-todo.md) | Standalone TODO (Task #38) — investigate aligning simlab with `simulate.py` so the latter can be retired |
+| [pyroute2-audit-2026-04-24.md](pyroute2-audit-2026-04-24.md) | Baseline audit of where the codebase still shells out to legacy iproute2/iptables tools instead of pyroute2 |
 
 ## See also
 

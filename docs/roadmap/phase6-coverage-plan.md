@@ -20,6 +20,39 @@ their PRs.
 
 ---
 
+## Coding standard for Phase 6 agents — `pyroute2`-first
+
+**Hard rule for every WP**: when adding a runtime apply path (anything
+called from `runtime/`, anything that touches the live kernel), use
+**`pyroute2`** for kernel-state manipulation. Do **not** introduce new
+`subprocess` calls to `ip` / `iptables` / `ip6tables` / `tc` /
+`conntrack` / `ipset` / `sysctl` in production code.
+
+| Need | Use this |
+|---|---|
+| Add/del routes, rules, links, addrs, neigh entries | `pyroute2.IPRoute` |
+| Conntrack list / flush / count | `pyroute2.NFCTSocket` (already used in shorewalld) |
+| Netns lifecycle (create, remove, exec-in) | `pyroute2.netns` + setns-fork pattern |
+| nftables ruleset load | `NftInterface.run_script()` (in `nft/netlink.py`) — wraps libnftables when available, falls back to `nft` subprocess |
+| sysctl writes | direct write to `/proc/sys/...` (no pyroute2 API for sysctl) |
+| Any TC qdisc/class/filter | `pyroute2.IPRoute` (mirror `compiler/tc.py::apply_tc()`) |
+
+Acceptable shell-out exceptions (already documented in the audit):
+`nft monitor trace`, `modprobe`, `nft -f` ruleset load (no pyroute2
+API for any of these).
+
+For **operator-facing generated scripts** (e.g. `generate-tc`,
+`generate-sysctl`, `generate-iproute2-rules`), shell-script output is
+the right design and must stay. But every such generator should have
+a companion `apply_*()` function in `runtime/` that uses pyroute2 for
+the live path.
+
+**Baseline audit**: `docs/roadmap/pyroute2-audit-2026-04-24.md` lists
+every existing shell-out and where pyroute2 is already in use.
+Re-audit after every cluster lands to ensure no regression.
+
+---
+
 ## How a Sonnet agent should consume this doc
 
 Each WP below is **self-contained** and includes:
@@ -42,13 +75,18 @@ Expected agent prompt skeleton:
 
 ```
 You are implementing WP-<id> from docs/roadmap/phase6-coverage-plan.md.
-Read that section, then:
+Read that section AND the "Coding standard for Phase 6 agents —
+pyroute2-first" section above, then:
 1. Study the upstream Perl reference (paths in the WP).
-2. Implement the change in the listed Python files.
+2. Implement the change in the listed Python files. For any runtime
+   apply path, use pyroute2 — do NOT shell out to ip/iptables/tc/
+   conntrack/ipset/sysctl. Generators may emit shell scripts but must
+   have a companion apply_*() that uses pyroute2.
 3. Add unit tests + (where applicable) extend the named fixture.
 4. Run: pytest packages/shorewall-nft/tests -q
 5. Report: scope, code changes, test results, any deviation from upstream
-   semantics with reason.
+   semantics with reason, and any subprocess call you added (with
+   justification — must match the documented exceptions).
 Do NOT touch other WPs. Do NOT bump versions. Do NOT commit — leave
 changes staged for human review.
 ```
@@ -674,6 +712,15 @@ have TaskCreate entries pointing to their section in this doc.
 3. Coverage-audit re-run (rerun the three sonnet audit agents from
    2026-04-24) reports no further gaps in the inventoried files /
    options / OPTIONS columns.
+4. **pyroute2 audit re-run** — re-execute the audit recorded in
+   `docs/roadmap/pyroute2-audit-2026-04-24.md` and verify:
+   - No new shell-outs introduced by Phase 6 WPs (compare against
+     baseline Category A / Category B counts).
+   - At least one of the three highest-value migrations from the
+     baseline recommendations has been completed (or filed as an
+     explicit deferred ticket).
+   - Save the new audit as `docs/roadmap/pyroute2-audit-<DATE>.md`
+     for diff-against-baseline traceability.
 
 ## See also
 
