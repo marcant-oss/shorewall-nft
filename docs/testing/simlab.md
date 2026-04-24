@@ -185,15 +185,32 @@ shorewall-nft version, and the git HEAD at the time of the run.
 
 ## Usage
 
-### smoketest CLI
+simlab now ships as the standalone `shorewall-nft-simlab` package,
+installed alongside `shorewall-nft`. Two entry points are available:
+
+- `shorewall-nft-simlab` — simlab-native CLI with four subcommands
+  (`smoke`, `stress`, `limit`, `full`). Use this for deep-dive runs,
+  stress-testing, or when you want the full JSON / Markdown report.
+- `shorewall-nft simulate --data DIR` — delegates to simlab through
+  the programmatic API (`shorewall_nft_simlab.api.run_simulation_from_config`).
+  Use this from the normal shorewall-nft workflow when a live
+  snapshot of the firewall is handy.
+
+Both accept the same `--data DIR` snapshot produced by
+`tools/simlab-collect.sh`. See the end-to-end example below.
+
+### simlab-native CLI
 
 ```
-python -m shorewall_nft.verify.simlab.smoketest [OPTIONS] COMMAND [CMDOPTIONS]
+shorewall-nft-simlab [--data DIR] [--config DIR] [--load-limit N]
+                     [--report-dir DIR] COMMAND [OPTIONS]
 
 Global:
-  --data       Directory with ip4add/ip4routes/ip6add/ip6routes   (default /root/simulate-data)
-  --config     shorewall config directory                         (default /etc/shorewall46)
-  --load-limit Pause new cycles while 1-min loadavg >= this       (default 10.0)
+  --data       Directory with ip4add/ip4routes/ip6add/ip6routes + iptables.txt
+               (default /root/simulate-data)
+  --config     shorewall config directory
+               (default /etc/shorewall46)
+  --load-limit Pause new cycles while 1-min loadavg >= this       (default 4.0)
   --report-dir Archive directory override                         (default docs/testing/simlab-reports)
 
 Commands:
@@ -208,20 +225,125 @@ Commands:
     -v / --verbose     dump raw sysctl values before the run
 ```
 
-### Example: full run on the VM
+### End-to-end workflow
+
+Typical cycle: capture live state from the running firewall → ship it
+to a simulation host → run probes → read the report. All four steps
+are plain shell commands; simlab itself is the only moving piece.
 
 ```bash
-# Replace <simlab-host> with your own simulation test host (e.g. via
-# SHOREWALL_SIMLAB_HOST env var).
-ssh root@<simlab-host> "
-  cd /root/shorewall-nft && \
-  PYTHONUNBUFFERED=1 .venv/bin/python -m shorewall_nft.verify.simlab.smoketest \
-    full --random 50 --max-per-pair 30 --seed 42
-"
+# ─── On the source firewall (producer of the snapshot) ─────────────
+# Tier 1 dumps (ip addr/route/rule/link + rt_tables + dynamic-routing
+# daemon RIB) are unprivileged.  Tier 2 dumps (iptables-save /
+# nft list ruleset / ipset save / conntrack) need root.  sudo grabs
+# both tiers at once.
+sudo /path/to/shorewall-nft/tools/simlab-collect.sh \
+     --output /tmp/fw-snapshot
+cat /tmp/fw-snapshot/manifest.txt       # per-capture status — every
+                                         # line should say "captured"
+                                         # after sudo
+sudo tar -C /etc -czf /tmp/fw-config.tar.gz shorewall46
+                                         # shorewall config is
+                                         # root-owned; bundling needs
+                                         # sudo
+
+# ─── Transfer to the simulation host ───────────────────────────────
+rsync -a /tmp/fw-snapshot       user@simlab-host:/var/tmp/
+rsync -a /tmp/fw-config.tar.gz  user@simlab-host:/var/tmp/
+
+# ─── On the simulation host (consumer) ─────────────────────────────
+ssh user@simlab-host <<'EOF'
+    sudo mkdir -p /etc/shorewall46
+    sudo tar -C /etc -xzf /var/tmp/fw-config.tar.gz
+
+    # Route 1 — delegate via the shorewall-nft CLI.  Prints the
+    # classic "Results: N passed / M failed" summary familiar from
+    # `shorewall-nft simulate`.
+    shorewall-nft simulate \
+        --config-dir /etc/shorewall46 \
+        --data       /var/tmp/fw-snapshot
+
+    # Route 2 — run simlab directly for the full JSON + Markdown
+    # report (useful when triaging false-drop / false-accept
+    # mismatches).
+    shorewall-nft-simlab \
+        --data   /var/tmp/fw-snapshot \
+        --config /etc/shorewall46 \
+        full --max-per-pair 30 --seed 42
+EOF
+
+# ─── Pull the report archive back for git / ticket attachments ────
+rsync -a user@simlab-host:/root/shorewall-nft/docs/testing/simlab-reports/ \
+        ./simlab-reports/
 ```
 
+### Reading the output
+
+**Route 1 (`shorewall-nft simulate --data`)** prints a one-line
+summary plus one line per failing probe:
+
+```
+Simulating /etc/shorewall46 via simlab against /var/tmp/fw-snapshot
+
+Results: 184 passed, 3 failed (187 total)
+  FAIL   per_rule  eth0 -> eth1  expect=DROP    got=ACCEPT  14.2ms tcp 192.0.2.5 -> 203.0.113.10:22
+  FAIL   random    eth1 -> eth0  expect=ACCEPT  got=NONE   250.0ms icmp echo
+  FAIL   per_rule  eth0 -> eth2  expect=ACCEPT  got=DROP    11.8ms udp 198.51.100.1 -> 192.0.2.5:53
+```
+
+Exit code is 0 when every probe passed, 1 on any failure, so the
+command slots cleanly into CI or pre-merge gates.
+
+**Route 2 (`shorewall-nft-simlab full`)** additionally writes an
+archive under `<report-dir>/<UTC>/`:
+
+- `report.json` — structured record: per-probe tuples, per-category
+  pass-accept / pass-drop / **fail-drop** / **fail-accept** split
+  (see `docs/PRINCIPLES.md` P5), timings, peaks, resource delta,
+  sysctl warnings.
+- `report.md` — the same data rendered as Markdown for ticket
+  attachments.
+- `mismatches.txt` — failing tuples only, one per line.
+
+Investigation workflow:
+
+1. Open `report.md`; find the category with the highest `fail_accept`
+   or `fail_drop` count.
+2. Drill into the matching probe in `report.json` via `probe_id`;
+   read `oracle_reason` (the rule the oracle believes should fire)
+   and `desc` (source/dest tuple + proto/port).
+3. On the real firewall, `nft trace` the same tuple to confirm
+   whether the simulated verdict matches the live verdict. Match →
+   genuine rule-ordering bug in the shorewall config. Mismatch →
+   point-of-truth contract (`docs/testing/point-of-truth.md`) applies:
+   the iptables dump wins over simlab, so update the fixture /
+   compiler emit accordingly.
+
+### When `simlab-collect.sh` cannot run as root
+
+The snapshot is still useful — Tier 1 captures alone are enough for
+simlab to build its topology (addresses + routes + rules). Only
+the netfilter ruleset dumps are missing. Run the collector
+unprivileged and separately have an operator produce the privileged
+captures:
+
+```bash
+sudo sh -c '
+    iptables-save  > /tmp/iptables.txt
+    ip6tables-save > /tmp/ip6tables.txt
+'
+mv /tmp/iptables.txt /tmp/ip6tables.txt /tmp/fw-snapshot/
+```
+
+Simlab picks them up automatically — it reads by filename, not from
+the manifest.
+
+### Archive location
+
 Reports land under `/root/shorewall-nft/docs/testing/simlab-reports/<UTC>/`
-on the VM. `rsync` them back to your workstation for git commit.
+by default on the simulation host. Override via `--report-dir DIR`.
+`rsync` them back to your workstation for git commit or ticket
+attachment.
 
 ## Performance baseline (reference VM, 2 cores, 4.9 GB RAM)
 
