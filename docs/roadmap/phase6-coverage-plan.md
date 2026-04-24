@@ -633,28 +633,9 @@ chain.
 
 ---
 
-## Cluster H — Validation infrastructure
-
-### WP-H1 — Simlab alignment (Task #38)
-
-**Scope**: investigate adding a simlab entry point that consumes
-`(config_dir, iptables_dump)` directly so `runtime/cli/debug_cmds.py`
-can forward to simlab and `simulate.py` can be deleted.
-
-**Output**: written analysis at
-`docs/testing/simlab-alignment-analysis.md` with one of:
-1. Concrete migration plan + new simlab API surface, **or**
-2. Formal decision that `simulate.py` is permanent (with reasons).
-
-**Files to touch**:
-- Read-only investigation across `packages/shorewall-nft-simlab/` and
-  `packages/shorewall-nft/shorewall_nft/verify/simulate.py`.
-- Doc only — no code changes in this WP.
-
-**Done when**: the analysis doc lands and the open follow-up tasks
-(if any) are filed.
-
-**Blocked by**: none. Sequence-independent of all other WPs.
+> **Note**: Simlab alignment (was WP-H1, Task #38) is tracked
+> separately in `docs/roadmap/simlab-alignment-todo.md` — it is a
+> standalone investigation, not part of this coverage phase.
 
 ---
 
@@ -670,7 +651,6 @@ WP-D1, WP-D2, WP-D3                         (independent OPTIONS — parallel)
 WP-E1, WP-E2, WP-E3                         (logging — parallel)
 WP-F1, WP-F2                                (low priority — parallel)
 WP-G1, WP-G2, WP-G3                         (rate limiting — parallel)
-WP-H1                                       (analysis only — anytime)
 ```
 
 `WP-A1` and `WP-C3` are the two most load-bearing roots — they unblock
@@ -682,11 +662,9 @@ the largest follow-on chains. Do them first.
 
 Open Tasks at the start of Phase 6:
 - `#44` — covers WP-A1
-- `#38` — covers WP-H1
 
 The remaining WPs (A2, B1–B3, C1–C4, D1–D3, E1–E3, F1–F3, G1–G3)
-need TaskCreate entries pointing to their section in this doc.
-A second commit in this branch will add them.
+have TaskCreate entries pointing to their section in this doc.
 
 ## Done criteria for the whole phase
 
