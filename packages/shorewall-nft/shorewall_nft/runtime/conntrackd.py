@@ -14,6 +14,7 @@ the business of managing the full conntrackd surface.
 from __future__ import annotations
 
 from shorewall_nft.config.parser import ShorewalConfig
+from shorewall_nft.runtime.pyroute2_helpers import settings_bool
 
 
 def generate_conntrackd_fragment(
@@ -49,7 +50,7 @@ def generate_conntrackd_fragment(
         zone_mask = 0xff
     zone_mask &= 0xffffffff
 
-    ct_zone_tag = settings.get("CT_ZONE_TAG", "No").lower() in ("yes", "1", "true")
+    ct_zone_tag = settings_bool(settings, "CT_ZONE_TAG", False)
 
     # Replication filter: when CT_ZONE_TAG is on, sync only marks that
     # intersect zone_mask — this guarantees zones are replicated

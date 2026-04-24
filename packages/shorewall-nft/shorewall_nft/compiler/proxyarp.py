@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING
 
 from shorewall_nft.compiler.ir import is_ipv6_spec
 from shorewall_nft.config.parser import ConfigLine
+from shorewall_nft.runtime.pyroute2_helpers import resolve_iface_idx
 
 if TYPE_CHECKING:
     from shorewall_nft.compiler.ir._data import FirewallIR
@@ -221,22 +222,10 @@ def apply_proxyarp(
         # for the same dev multiple times in a row.
         iface_idx: dict[str, int] = {}
 
-        def _idx(name: str) -> int | None:
-            if name in iface_idx:
-                return iface_idx[name]
-            try:
-                links = ipr.link_lookup(ifname=name)
-            except NetlinkError:
-                return None
-            if not links:
-                return None
-            iface_idx[name] = links[0]
-            return links[0]
-
         for e in entries:
             fam_v6 = is_ipv6_spec(e.address)
             family_const = 10 if fam_v6 else 2  # AF_INET6/AF_INET
-            ext_idx = _idx(e.ext_iface)
+            ext_idx = resolve_iface_idx(ipr, e.ext_iface, iface_idx)
             if ext_idx is None:
                 errors.append(
                     f"{e.address}: external iface "
@@ -263,7 +252,7 @@ def apply_proxyarp(
                 continue
 
             if not e.haveroute:
-                int_idx = _idx(e.iface)
+                int_idx = resolve_iface_idx(ipr, e.iface, iface_idx)
                 if int_idx is None:
                     errors.append(
                         f"{e.address}: interior iface "

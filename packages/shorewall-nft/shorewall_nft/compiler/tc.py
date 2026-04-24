@@ -53,6 +53,7 @@ from shorewall_nft.compiler.verdicts import (
 )
 from shorewall_nft.config.parser import ConfigLine
 from shorewall_nft.config.zones import ZoneModel
+from shorewall_nft.runtime.pyroute2_helpers import resolve_iface_idx, settings_bool
 
 logger = logging.getLogger("shorewall_nft.compiler.tc")
 
@@ -123,15 +124,15 @@ def _tc_enabled_mode(settings: dict[str, str]) -> str:
 
 
 def _tc_expert(settings: dict[str, str]) -> bool:
-    return settings.get("TC_EXPERT", "No").strip().lower() in ("yes", "1", "true")
+    return settings_bool(settings, "TC_EXPERT", False)
 
 
 def _mark_in_forward(settings: dict[str, str]) -> bool:
-    return settings.get("MARK_IN_FORWARD_CHAIN", "No").strip().lower() in ("yes", "1", "true")
+    return settings_bool(settings, "MARK_IN_FORWARD_CHAIN", False)
 
 
 def _clear_tc(settings: dict[str, str]) -> bool:
-    return settings.get("CLEAR_TC", "No").strip().lower() in ("yes", "1", "true")
+    return settings_bool(settings, "CLEAR_TC", False)
 
 
 # ── Parse helpers ────────────────────────────────────────────────────────────
@@ -421,21 +422,9 @@ def apply_tcinterfaces(
 
     iface_idx: dict[str, int] = {}
 
-    def _idx(name: str) -> "int | None":
-        if name in iface_idx:
-            return iface_idx[name]
-        try:
-            links = ipr.link_lookup(ifname=name)
-        except Exception:
-            return None
-        if not links:
-            return None
-        iface_idx[name] = links[0]
-        return links[0]
-
     try:
         for dev in tcinterfaces:
-            idx = _idx(dev.interface)
+            idx = resolve_iface_idx(ipr, dev.interface, iface_idx)
             if idx is None:
                 _record_error(f"tcinterface {dev.interface!r}: not found, skipped")
                 continue
@@ -676,22 +665,10 @@ def apply_tc(tc: TcConfig, *, netns: str | None = None) -> TcApplyResult:
     # Cache interface name → index.
     iface_idx: dict[str, int] = {}
 
-    def _idx(name: str) -> int | None:
-        if name in iface_idx:
-            return iface_idx[name]
-        try:
-            links = ipr.link_lookup(ifname=name)
-        except NetlinkError:
-            return None
-        if not links:
-            return None
-        iface_idx[name] = links[0]
-        return links[0]
-
     try:
         # ── Devices: root HTB qdisc (egress) and ingress qdisc ──────────
         for dev in tc.devices:
-            idx = _idx(dev.interface)
+            idx = resolve_iface_idx(ipr, dev.interface, iface_idx)
             if idx is None:
                 _record_error(
                     f"device {dev.interface!r}: interface not found, skipped")
@@ -755,7 +732,7 @@ def apply_tc(tc: TcConfig, *, netns: str | None = None) -> TcApplyResult:
 
         # ── Classes: HTB leaf classes under root class 1:1 ──────────────
         for cls in tc.classes:
-            idx = _idx(cls.interface)
+            idx = resolve_iface_idx(ipr, cls.interface, iface_idx)
             if idx is None:
                 _record_error(
                     f"class {cls.interface!r}/{cls.mark}: "
@@ -801,7 +778,7 @@ def apply_tc(tc: TcConfig, *, netns: str | None = None) -> TcApplyResult:
                     f"mark {mark_part!r} not an integer, skipped")
                 continue
 
-            idx = _idx(iface_part)
+            idx = resolve_iface_idx(ipr, iface_part, iface_idx)
             if idx is None:
                 _record_error(
                     f"filter {flt.tc_class!r}: "

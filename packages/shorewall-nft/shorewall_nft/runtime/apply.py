@@ -47,6 +47,8 @@ except ImportError:  # pyroute2 may be absent in minimal installs
     IPRoute = None  # type: ignore[assignment,misc]
     NetlinkError = None  # type: ignore[assignment,misc]
 
+from shorewall_nft.runtime.pyroute2_helpers import resolve_iface_idx, settings_bool
+
 
 def apply_ip_aliases(
     addresses_to_add: list[tuple[str, str]],
@@ -88,20 +90,8 @@ def apply_ip_aliases(
     try:
         iface_idx: dict[str, int] = {}
 
-        def _idx(name: str) -> int | None:
-            if name in iface_idx:
-                return iface_idx[name]
-            try:
-                links = ipr.link_lookup(ifname=name)
-            except NetlinkError:
-                return None
-            if not links:
-                return None
-            iface_idx[name] = links[0]
-            return links[0]
-
         for addr, iface in addresses_to_add:
-            idx = _idx(iface)
+            idx = resolve_iface_idx(ipr, iface, iface_idx)
             if idx is None:
                 errors.append(
                     f"{addr}: interface {iface!r} not found, skipped")
@@ -174,20 +164,8 @@ def remove_ip_aliases(
     try:
         iface_idx: dict[str, int] = {}
 
-        def _idx(name: str) -> int | None:
-            if name in iface_idx:
-                return iface_idx[name]
-            try:
-                links = ipr.link_lookup(ifname=name)
-            except NetlinkError:
-                return None
-            if not links:
-                return None
-            iface_idx[name] = links[0]
-            return links[0]
-
         for addr, iface in addresses_to_remove:
-            idx = _idx(iface)
+            idx = resolve_iface_idx(ipr, iface, iface_idx)
             if idx is None:
                 # Interface gone — address definitely absent.
                 skipped += 1
@@ -297,13 +275,9 @@ def apply_iproute2_rules(
     if not providers and not routes and not rtrules:
         return 0, 0, []
 
-    def _bool_setting(key: str, default: bool) -> bool:
-        val = settings.get(key, "Yes" if default else "No").strip().lower()
-        return val in ("yes", "1", "true")
-
-    use_default_rt = _bool_setting("USE_DEFAULT_RT", False)
-    balance_providers = _bool_setting("BALANCE_PROVIDERS", False)
-    optimize_use_first = _bool_setting("OPTIMIZE_USE_FIRST", False)
+    use_default_rt = settings_bool(settings, "USE_DEFAULT_RT", False)
+    balance_providers = settings_bool(settings, "BALANCE_PROVIDERS", False)
+    optimize_use_first = settings_bool(settings, "OPTIMIZE_USE_FIRST", False)
 
     # Apply BALANCE_PROVIDERS: providers with no explicit balance/fallback
     # get balance=1.
@@ -335,18 +309,6 @@ def apply_iproute2_rules(
         # Cache interface name → index.
         iface_idx: dict[str, int] = {}
 
-        def _idx(name: str) -> int | None:
-            if name in iface_idx:
-                return iface_idx[name]
-            try:
-                links = ipr.link_lookup(ifname=name)
-            except NetlinkError:
-                return None
-            if not links:
-                return None
-            iface_idx[name] = links[0]
-            return links[0]
-
         # Step 2: per-provider fwmark → table ip rules.
         if not skip_fwmark:
             for prov in providers:
@@ -372,7 +334,7 @@ def apply_iproute2_rules(
 
         # Step 3: per-provider routing table setup (default route + source rules).
         for prov in providers:
-            iface_id = _idx(prov.interface) if prov.interface else None
+            iface_id = resolve_iface_idx(ipr, prov.interface, iface_idx) if prov.interface else None
             if iface_id is None and prov.interface:
                 errors.append(
                     f"provider {prov.name}: interface {prov.interface!r} "
@@ -437,7 +399,7 @@ def apply_iproute2_rules(
                 nh: dict = {"hops": p.balance - 1}  # hops = weight-1 in iproute2
                 if p.gateway:
                     nh["gateway"] = p.gateway
-                p_idx = _idx(p.interface) if p.interface else None
+                p_idx = resolve_iface_idx(ipr, p.interface, iface_idx) if p.interface else None
                 if p_idx is not None:
                     nh["oif"] = p_idx
                 nexthops.append(nh)
@@ -461,7 +423,7 @@ def apply_iproute2_rules(
                 }
                 if p.gateway:
                     fb_kwargs["gateway"] = p.gateway
-                p_idx = _idx(p.interface) if p.interface else None
+                p_idx = resolve_iface_idx(ipr, p.interface, iface_idx) if p.interface else None
                 if p_idx is not None:
                     fb_kwargs["oif"] = p_idx
                 try:
@@ -481,7 +443,7 @@ def apply_iproute2_rules(
                 route_kwargs["gateway"] = route.gateway
             dev_name = route.device or (prov.interface if prov else None)
             if dev_name:
-                dev_id = _idx(dev_name)
+                dev_id = resolve_iface_idx(ipr, dev_name, iface_idx)
                 if dev_id is not None:
                     route_kwargs["oif"] = dev_id
             try:
@@ -576,13 +538,9 @@ def remove_iproute2_rules(
     if not providers and not routes and not rtrules:
         return 0, 0, []
 
-    def _bool_setting(key: str, default: bool) -> bool:
-        val = settings.get(key, "Yes" if default else "No").strip().lower()
-        return val in ("yes", "1", "true")
-
-    restore_default_route = _bool_setting("RESTORE_DEFAULT_ROUTE", True)
-    use_default_rt = _bool_setting("USE_DEFAULT_RT", False)
-    optimize_use_first = _bool_setting("OPTIMIZE_USE_FIRST", False)
+    restore_default_route = settings_bool(settings, "RESTORE_DEFAULT_ROUTE", True)
+    use_default_rt = settings_bool(settings, "USE_DEFAULT_RT", False)
+    optimize_use_first = settings_bool(settings, "OPTIMIZE_USE_FIRST", False)
 
     from shorewall_nft.compiler.providers import _build_provider_index
     active = [p for p in providers if p.mark]
@@ -603,18 +561,6 @@ def remove_iproute2_rules(
 
     try:
         iface_idx: dict[str, int] = {}
-
-        def _idx(name: str) -> int | None:
-            if name in iface_idx:
-                return iface_idx[name]
-            try:
-                links = ipr.link_lookup(ifname=name)
-            except NetlinkError:
-                return None
-            if not links:
-                return None
-            iface_idx[name] = links[0]
-            return links[0]
 
         def _del_rule(**kwargs: object) -> None:
             nonlocal removed, skipped
@@ -662,7 +608,7 @@ def remove_iproute2_rules(
 
             # Source routing rules for this provider's interface addresses.
             if not prov.loose:
-                iface_id = _idx(prov.interface) if prov.interface else None
+                iface_id = resolve_iface_idx(ipr, prov.interface, iface_idx) if prov.interface else None
                 if iface_id is not None:
                     try:
                         addrs = ipr.get_addr(index=iface_id, family=2)

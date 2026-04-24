@@ -28,6 +28,7 @@ from shorewall_nft.compiler.ir import (
     Verdict,
 )
 from shorewall_nft.compiler.verdicts import MasqueradeVerdict
+from shorewall_nft.runtime.pyroute2_helpers import settings_bool
 
 
 def setup_docker(ir: FirewallIR, settings: dict[str, str]) -> None:
@@ -36,8 +37,7 @@ def setup_docker(ir: FirewallIR, settings: dict[str, str]) -> None:
     DOCKER=Yes enables Docker network support.
     DOCKER_BRIDGE specifies the bridge interface (default: docker0).
     """
-    docker = settings.get("DOCKER", "No")
-    if docker.lower() not in ("yes", "1"):
+    if not settings_bool(settings, "DOCKER", False):
         return
 
     bridge = settings.get("DOCKER_BRIDGE", "docker0")

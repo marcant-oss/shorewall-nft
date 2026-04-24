@@ -27,6 +27,7 @@ from shorewall_nft.runtime.cli._common import (
     _try_notify_shorewalld,
     config_options,
 )
+from shorewall_nft.runtime.pyroute2_helpers import settings_bool
 
 
 def _apply_and_register(
@@ -451,8 +452,7 @@ def stop(directory, netns, shorewalld_socket, instance_name,
     try:
         from shorewall_nft.runtime.apply import remove_ip_aliases
         _settings_stop = getattr(ir, "settings", {}) or {}
-        retain = _settings_stop.get(
-            "RETAIN_ALIASES", "No").strip().lower() in ("yes", "1", "true")
+        retain = settings_bool(_settings_stop, "RETAIN_ALIASES", False)
         if not retain:
             aliases = getattr(ir, "ip_aliases", []) if ir is not None else []
             if aliases:

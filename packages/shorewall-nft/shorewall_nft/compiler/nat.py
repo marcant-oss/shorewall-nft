@@ -41,6 +41,7 @@ from shorewall_nft.compiler.verdicts import (
     SnatVerdict,
 )
 from shorewall_nft.config.parser import ConfigLine
+from shorewall_nft.runtime.pyroute2_helpers import settings_bool
 
 # ACTION column patterns
 _SNAT_ADDR_RE = re.compile(r'^SNAT\+?\((.+)\)$', re.IGNORECASE)
@@ -401,8 +402,7 @@ def _process_snat_line(ir: FirewallIR, line: ConfigLine) -> None:
     #   4. The SNAT target is a plain IP (not a range start/end nor a
     #      port-only specification).
     if isinstance(verdict_args, SnatVerdict) and dest_iface and dest_iface != "-":
-        add_snat_aliases = ir.settings.get(
-            "ADD_SNAT_ALIASES", "No").strip().lower() in ("yes", "1", "true")
+        add_snat_aliases = settings_bool(ir.settings, "ADD_SNAT_ALIASES", False)
         if add_snat_aliases:
             snat_target = verdict_args.target
             # Skip if target looks like an iface-variable reference (&/%)
@@ -689,8 +689,7 @@ def process_static_nat(ir: FirewallIR, nat_lines: list[ConfigLine]) -> None:
 
     # ADD_IP_ALIASES: auto-add /32 aliases for 1:1 NAT external IPs.
     # Default upstream value is Yes.
-    add_ip_aliases = ir.settings.get(
-        "ADD_IP_ALIASES", "Yes").strip().lower() in ("yes", "1", "true")
+    add_ip_aliases = settings_bool(ir.settings, "ADD_IP_ALIASES", True)
 
     for line in nat_lines:
         cols = line.columns

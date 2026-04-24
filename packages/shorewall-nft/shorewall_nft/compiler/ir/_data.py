@@ -21,6 +21,7 @@ from shorewall_nft.compiler.verdicts import SpecialVerdict
 from shorewall_nft.config.zones import ZoneModel
 from shorewall_nft.nft.dns_sets import DnsrRegistry, DnsSetRegistry
 from shorewall_nft.nft.nfsets import NfSetRegistry
+from shorewall_nft.runtime.pyroute2_helpers import settings_bool
 
 if TYPE_CHECKING:
     pass
@@ -211,11 +212,8 @@ class MarkGeometry:
         faithfully, including the default-computation order and the
         PROVIDER_OFFSET clamping rule.
         """
-        def _is_set(key: str) -> bool:
-            return settings.get(key, "No").strip().lower() in ("yes", "1", "true")
-
-        wide = _is_set("WIDE_TC_MARKS")
-        high = _is_set("HIGH_ROUTE_MARKS")
+        wide = settings_bool(settings, "WIDE_TC_MARKS", False)
+        high = settings_bool(settings, "HIGH_ROUTE_MARKS", False)
 
         def _int_setting(key: str, default: int) -> int:
             raw = settings.get(key)

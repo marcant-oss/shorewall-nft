@@ -72,6 +72,7 @@ from shorewall_nft.nft.nfsets import (
     build_nfset_registry,
     nfset_to_set_name,
 )
+from shorewall_nft.runtime.pyroute2_helpers import settings_bool
 
 _log = logging.getLogger(__name__)
 
@@ -154,7 +155,7 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     zones = build_zone_model(config)
     ir = FirewallIR(zones=zones, settings=config.settings)
     ir.mark_geometry = MarkGeometry.from_settings(config.settings)
-    ir._fastaccept = config.settings.get("FASTACCEPT", "Yes").lower() in ("yes", "1")
+    ir._fastaccept = settings_bool(config.settings, "FASTACCEPT", True)
 
     # Validate log-infrastructure settings early so errors surface at
     # compile time rather than at nft script-generation time.

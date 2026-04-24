@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from shorewall_nft.compiler.ir._data import Provider, Route, RoutingRule
 from shorewall_nft.config.parser import ConfigLine
+from shorewall_nft.runtime.pyroute2_helpers import settings_bool
 
 # Re-export so existing ``from shorewall_nft.compiler.providers import Provider``
 # imports continue to work unchanged.
@@ -322,14 +323,10 @@ def emit_iproute2_setup(
       skip fwmark routing rules entirely.
     """
 
-    def _bool_setting(key: str, default: bool) -> bool:
-        val = settings.get(key, "Yes" if default else "No").strip().lower()
-        return val in ("yes", "1", "true")
-
-    use_default_rt = _bool_setting("USE_DEFAULT_RT", False)
-    balance_providers = _bool_setting("BALANCE_PROVIDERS", False)
-    restore_default_route = _bool_setting("RESTORE_DEFAULT_ROUTE", True)
-    optimize_use_first = _bool_setting("OPTIMIZE_USE_FIRST", False)
+    use_default_rt = settings_bool(settings, "USE_DEFAULT_RT", False)
+    balance_providers = settings_bool(settings, "BALANCE_PROVIDERS", False)
+    restore_default_route = settings_bool(settings, "RESTORE_DEFAULT_ROUTE", True)
+    optimize_use_first = settings_bool(settings, "OPTIMIZE_USE_FIRST", False)
 
     if not providers and not routes and not rtrules:
         return "# No providers configured\n"

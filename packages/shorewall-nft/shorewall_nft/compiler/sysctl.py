@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from shorewall_nft.config.parser import ShorewalConfig
 from shorewall_nft.config.zones import build_zone_model
+from shorewall_nft.runtime.pyroute2_helpers import settings_bool
 
 
 def generate_sysctl_script(config: ShorewalConfig) -> str:
@@ -39,21 +40,21 @@ def generate_sysctl_script(config: ShorewalConfig) -> str:
         lines.append("")
 
     # Route filter (reverse path filtering)
-    if settings.get("ROUTE_FILTER", "").lower() in ("yes", "1"):
+    if settings_bool(settings, "ROUTE_FILTER", False):
         lines.append("# Enable reverse path filtering (global)")
         lines.append("sysctl -w net.ipv4.conf.all.rp_filter=1")
         lines.append("sysctl -w net.ipv4.conf.default.rp_filter=1")
         lines.append("")
 
     # Log martians
-    if settings.get("LOG_MARTIANS", "").lower() in ("yes", "1"):
+    if settings_bool(settings, "LOG_MARTIANS", False):
         lines.append("# Log martian packets (global)")
         lines.append("sysctl -w net.ipv4.conf.all.log_martians=1")
         lines.append("sysctl -w net.ipv4.conf.default.log_martians=1")
         lines.append("")
 
     # Clamp MSS
-    if settings.get("CLAMPMSS", "").lower() in ("yes", "1"):
+    if settings_bool(settings, "CLAMPMSS", False):
         lines.append("# Note: MSS clamping handled via nft rules")
         lines.append("")
 
