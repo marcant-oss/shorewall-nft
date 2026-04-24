@@ -1237,7 +1237,23 @@ def _emit_rule_lines(rule: Rule, debug_ctx: "_DebugContext | None" = None,
     if isinstance(rl, RateLimitSpec) and rl.per_source:
         # Build the meter-drop guard using only the non-address matches
         # from the original rule (protocol, port, etc.), plus ip saddr.
-        meter_name = rl.name or "shorewall_meter"
+        #
+        # nft requires every ``meter NAME size N { … }`` declaration to
+        # be unique across the table; iptables hashlimit allowed multiple
+        # rules to share a NAME with different rate parameters (each rule
+        # had its own counter against the shared per-saddr table). To
+        # match nft semantics we suffix the meter NAME with the chain +
+        # rule index so each declaration is unique. The base name (LOGIN
+        # / mailclnt / …) is preserved as a prefix so ``nft list meters``
+        # is still readable.
+        base_name = rl.name or "shorewall_meter"
+        if chain_name:
+            # nft identifiers: [A-Za-z_][A-Za-z0-9_]*. Zone-pair chains
+            # use ``-`` which isn't valid; replace with ``_``.
+            chain_id = chain_name.replace("-", "_")
+            meter_name = f"{base_name}_{chain_id}_{rule_idx}"
+        else:
+            meter_name = base_name
         meter_stmt = (
             f"meter {meter_name} size 65535 "
             f"{{ ip saddr limit rate over {rl.rate}/{rl.unit} "

@@ -296,6 +296,40 @@ class TestHashlimitMeterEmit:
         assert len(stmts) == 2
         assert "shorewall_meter" in stmts[0]
 
+    def test_meter_name_unique_per_chain_and_index(self):
+        """Multiple rules with the same hashlimit NAME but different rates
+        emit DIFFERENT meter identifiers.
+
+        Regression: nft requires every ``meter NAME size N { … }`` to
+        be unique within the table; iptables-hashlimit allowed multiple
+        rules to share a NAME (each with its own counter against the
+        per-saddr table). Reusing the bare NAME made nft reject the load
+        with ``File exists; meter 'LOGIN' overlaps an existing set
+        'LOGIN' in family inet`` — verified against a real 6.11 kernel.
+
+        Suffix the NAME with chain + rule_idx so each declaration is
+        distinct while keeping the base name as a readable prefix.
+        """
+        rl_a = RateLimitSpec(rate=12, unit="minute", burst=60,
+                             name="LOGIN", per_source=True)
+        rl_b = RateLimitSpec(rate=4, unit="minute", burst=60,
+                             name="LOGIN", per_source=True)
+        rule_a = Rule(rate_limit=rl_a, verdict=Verdict.ACCEPT)
+        rule_b = Rule(rate_limit=rl_b, verdict=Verdict.ACCEPT)
+        stmts_a = _emit_rule_lines(rule_a, chain_name="adm-cdn", rule_idx=5)
+        stmts_b = _emit_rule_lines(rule_b, chain_name="adm-cdn", rule_idx=6)
+        # Identifier is the second token of the meter declaration.
+        meter_id_a = stmts_a[0].split()[1]
+        meter_id_b = stmts_b[0].split()[1]
+        assert meter_id_a != meter_id_b
+        # Base name preserved as prefix for readability.
+        assert meter_id_a.startswith("LOGIN_")
+        assert meter_id_b.startswith("LOGIN_")
+        # Zone-pair chain dashes are sanitised to underscores
+        # (nft identifier syntax: [A-Za-z_][A-Za-z0-9_]*).
+        assert "-" not in meter_id_a
+        assert "_adm_cdn_" in meter_id_a
+
 
 class TestUnitForms:
     """All four unit forms normalize correctly."""
