@@ -19,6 +19,7 @@
 | [pyroute2-audit-2026-04-24-final.md](pyroute2-audit-2026-04-24-final.md) | Post-Phase-6 audit — verdict: PASS (zero new production shell-outs) |
 | [shorewalld-log-dispatcher-todo.md](shorewalld-log-dispatcher-todo.md) | Standalone TODO — extend WP-E1 with LOGFORMAT/LOGRULENUMBERS + shorewalld as the per-netns nflog dispatcher (replaces ulogd2 plumbing) |
 | [maintainability-audit-2026-04-24.md](maintainability-audit-2026-04-24.md) | Post-Phase-6 maintainability audit — 3 hot items, 5 warm, 2 cold; P8 leak points + suggested first step |
+| [nfset-map-bindings-todo.md](nfset-map-bindings-todo.md) | TODO — extend nfsets with map (value=mark) + `nfset_bindings` file: ingress-mark / membership-gate / GRE tunnel-key egress+ingress. nft-only (no tc); dual-stack first-class |
 
 ## See also
 
