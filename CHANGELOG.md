@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-04-24/25 — surfaced via simlab full-mode on real configs)
+
+- **LIMIT action log-level prefix kept in meter name** (#85) —
+  ``Limit:info:LOGIN,4,60`` now emits ``meter LOGIN {…}`` instead of
+  the nft-invalid ``meter info:LOGIN {…}``. Peels any leading syslog
+  priority tokens (and the 0-7 numeric aliases upstream accepts) from
+  the name before it becomes an nft meter identifier.
+  `compiler/ir/_data.py::_strip_limit_log_prefix`,
+  `tests/test_rule_limit.py` +4 cases. Commit `2856c9f`.
+- **IPsec emit used nonexistent nft ``policy`` statement** (#86) —
+  ``policy out ipsec proto ah mode tunnel accept`` is not a thing in
+  nft 1.1.x and was rejected with ``unexpected policy``. Two emit
+  sites rewritten to use the forms nft does support:
+  ``meta secpath exists`` (broad ingress IPsec check) and
+  ``ipsec {in|out} [reqid N] [spi 0xN]`` (narrow SPD match when the
+  zone carries ``reqid=`` / ``spi=``). ``proto=`` / ``mode=`` /
+  ``mark=`` filters have no nft counterpart and are silently dropped.
+  `compiler/ir/rules.py::_build_ipsec_policy_clause`,
+  `compiler/nat.py::_build_ipsec_matches`,
+  `nft/emitter.py` (dead ``field="policy …"`` handler removed),
+  golden snapshot regenerated. Commit `62de4ea`.
+- **Egress IPsec match kernel-rejected on output hooks** (#87) —
+  ``meta secpath`` is populated only during ingress xfrm decap; the
+  kernel returns ``Operation not supported`` for any form of the
+  match on output / postrouting. When an IPsec zone lacks reqid/spi,
+  the egress direction now emits no match at all (with a compile
+  warning) rather than an unloadable rule. Interface/route dispatch
+  still confines traffic. ``_build_ipsec_matches`` (snat/masq IPSEC
+  column) always egress and now returns an empty match list.
+  Commit `1861498`.
+- **``UNTRACKED_DISPOSITION=CONTINUE`` silently dropped packets**
+  (#88) — ``_disposition_to_verdict`` mapped anything unrecognised
+  (including the well-defined Shorewall keywords CONTINUE and NONE)
+  to ``Verdict.DROP``. Combined with the reference config's
+  ``UNTRACKED_DISPOSITION=CONTINUE`` this emitted a synthetic
+  ``ct state untracked drop`` that blackholed new connections whose
+  conntrack entry wasn't yet installed. The helper now returns
+  ``None`` as a "no-rule" sentinel for CONTINUE / NONE / empty;
+  every caller (three built-in action-chain helpers + the zone-pair
+  ct-prefix builder + the per-iface protection emitter + the
+  blacklist processor) skips emit when that sentinel arrives.
+  BLACKLIST sites still fall back to DROP (a blacklist with no
+  terminal verdict defeats itself). `compiler/actions.py`,
+  `compiler/ir/_build.py`, `tests/test_disposition_settings.py`
+  +7 cases. Commit `eeb8b55`.
+- **`tools/simlab-collect.sh` marked empty captures as "captured"**
+  (#89) — ``iptables-save`` on iptables-nft exits 0 with empty
+  output when the invoking uid lacks CAP_NET_ADMIN. The manifest
+  now reports ``skipped-empty (likely unprivileged)`` and removes
+  the zero-byte file so operators notice before feeding the dump
+  into simlab. Commit `855bd14`.
+
+Validated end-to-end by ``shorewall-nft-simlab full`` against four
+live-dump fixtures:
+
+| fixture   | probes (pos/neg) | fail_drop | fail_accept |
+|-----------|------------------|-----------|-------------|
+| reference | 33 / 18          | 0         | 0           |
+| elgar     | 125 / 9          | 0         | 0           |
+| portalfw  | 5 / 0            | 0         | 0           |
+| tropheus  | 0 / 0 (all autorepair-filtered; iptables dead rules) | 0 | 0 |
+
 ### Added (Phase II — shared-infrastructure merge into netkit)
 
 - **`shorewall_nft_netkit.validators`** — new package in
