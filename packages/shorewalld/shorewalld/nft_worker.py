@@ -592,6 +592,12 @@ def _worker_main_loop_with_nflog(
     # the largest datagram each socket can deliver.
     nflog_buf = bytearray(65536)   # kernel nfnetlink default cap
     log_enc_buf = bytearray(LOG_ENCODE_BUF_SIZE)
+    # Local drop counter — if the parent event loop is slow to drain
+    # our SEQPACKET, send_nowait returns False and we count here. Logged
+    # at warn/rate-limited so operators notice; parent-side metrics
+    # don't see these drops because the parent never received them.
+    drop_local: int = 0
+    drop_log_every = 1024
 
     sel = selectors.DefaultSelector()
     sel.register(transport.fileno, selectors.EVENT_READ, "transport")
@@ -653,12 +659,22 @@ def _worker_main_loop_with_nflog(
                     except LogWireError as e:
                         log.debug("log-event encode failed: %s", e)
                         continue
+                    # Non-blocking push: if the parent event loop is
+                    # slow and our SEQPACKET buffer is full, DROP the
+                    # event rather than stalling the worker (which
+                    # would also starve batch + read RPCs).
                     try:
-                        transport.send(encoded)
+                        sent = transport.send_nowait(encoded)
                     except OSError as e:
                         log.warning(
-                            "nflog push-to-parent failed: %s", e)
+                            "nflog push-to-parent transport error: %s", e)
                         return 1
+                    if not sent:
+                        drop_local += 1
+                        if drop_local % drop_log_every == 0:
+                            log.warning(
+                                "nflog: parent SEQPACKET full — %d events "
+                                "dropped since worker start", drop_local)
     finally:
         try:
             sel.close()

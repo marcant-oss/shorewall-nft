@@ -223,6 +223,35 @@ def build_parser() -> argparse.ArgumentParser:
              "single nft transaction (default: 0.010 = 10 ms).  Increase "
              "to reduce nft round-trips under heavy load; decrease for lower "
              "latency on sparse traffic.")
+    # ── NFLOG log dispatcher ──────────────────────────────────────────
+    p.add_argument(
+        "--log-dispatch", default="none",
+        choices=("shorewalld", "ulogd2", "none"),
+        help="Who consumes nfnetlink_log traffic in each managed netns. "
+             "``shorewalld`` (this daemon subscribes via "
+             ":mod:`shorewalld.nflog_netlink`); ``ulogd2`` (operator runs "
+             "their own per-netns ulogd2 unit); ``none`` — no dispatcher "
+             "(default).")
+    p.add_argument(
+        "--log-nflog-group", type=int, default=None, metavar="N",
+        help="nfnetlink_log group number to subscribe to when "
+             "``--log-dispatch=shorewalld``. Must match ``nft log group N``.")
+    p.add_argument(
+        "--log-dispatch-file", default=None, metavar="PATH",
+        help="Optional plain-text append-only log sink for the NFLOG "
+             "dispatcher. Lines: ``<ts> netns=X chain=Y disposition=Z``.")
+    p.add_argument(
+        "--log-dispatch-socket", default=None, metavar="PATH",
+        help="Optional unix-socket sink — any connected client receives "
+             "newline-JSON events. Slow clients are dropped, not throttled.")
+    p.add_argument(
+        "--log-dispatch-journald", action="store_true", default=False,
+        help="Forward NFLOG events to systemd-journald via "
+             "/run/systemd/journal/socket (structured fields).")
+    p.add_argument(
+        "--log-dispatch-syslog", default=None, metavar="PATH",
+        help="Forward NFLOG events to a syslog daemon as RFC 3164 "
+             "datagrams. Typical value: /dev/log.")
     for sub in SUBSYSTEMS:
         p.add_argument(
             f"--log-level-{sub}", default=None, metavar="LEVEL",
@@ -313,6 +342,16 @@ def _merge_conf_defaults(
     # DNS-set pipeline tuning knobs.
     take("dns_dedup_refresh_threshold", defaults.dns_dedup_refresh_threshold)
     take("batch_window_seconds", defaults.batch_window_seconds)
+
+    # NFLOG log dispatcher.
+    take("log_dispatch", defaults.log_dispatch)
+    take("log_nflog_group", defaults.log_nflog_group)
+    take("log_dispatch_file", defaults.log_dispatch_file)
+    take("log_dispatch_socket", defaults.log_dispatch_socket)
+    if ("log_dispatch_journald" not in explicit
+            and defaults.log_dispatch_journald is True):
+        args.log_dispatch_journald = True
+    take("log_dispatch_syslog", defaults.log_dispatch_syslog)
 
     return args
 
@@ -457,6 +496,12 @@ def main(argv: list[str] | None = None) -> int:
         vrrp_snmp_timeout=args.vrrp_snmp_timeout,
         dns_dedup_refresh_threshold=args.dns_dedup_refresh_threshold,
         batch_window_seconds=args.batch_window_seconds,
+        log_dispatch=args.log_dispatch,
+        log_nflog_group=args.log_nflog_group,
+        log_dispatch_file=args.log_dispatch_file,
+        log_dispatch_socket=args.log_dispatch_socket,
+        log_dispatch_journald=args.log_dispatch_journald,
+        log_dispatch_syslog=args.log_dispatch_syslog,
     )
     daemon = Daemon(config=cfg)
     try:

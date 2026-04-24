@@ -96,3 +96,20 @@ class DaemonConfig:
     # ── DNS-set pipeline tuning ───────────────────────────────────────
     dns_dedup_refresh_threshold: float = 0.5
     batch_window_seconds: float = 0.010
+
+    # ── NFLOG log dispatcher ──────────────────────────────────────────
+    # When ``log_dispatch == "shorewalld"``, workers subscribe to
+    # ``log_nflog_group`` inside each managed netns and push decoded
+    # LogEvents to the parent via MAGIC_NFLOG. See
+    # :mod:`shorewalld.log_dispatcher`. The sinks are all optional;
+    # ``shorewall_log_total`` Prometheus counter is always emitted
+    # when the dispatcher runs.
+    #
+    # ``ulogd2`` / ``none`` — no worker-side subscription; operator
+    # either runs their own ulogd2 (per-netns) or has no dispatcher.
+    log_dispatch: str = "none"
+    log_nflog_group: int | None = None
+    log_dispatch_file: str | None = None     # path; plain-line append
+    log_dispatch_socket: str | None = None   # path; unix-socket JSON fan-out
+    log_dispatch_journald: bool = False      # structured journal entries
+    log_dispatch_syslog: str | None = None   # path to /dev/log (RFC 3164)

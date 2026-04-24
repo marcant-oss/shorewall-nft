@@ -228,6 +228,7 @@ class Daemon:
 
         self._prom_server: Any | None = None
         self._dnstap_server: Any | None = None
+        self._log_dispatcher: Any | None = None
 
         # DNS-set pipeline subsystems (opt-in via allowlist_file).
         self._tracker: Any | None = None
@@ -413,6 +414,14 @@ class Daemon:
         # Optional dnstap consumer (Phase 4). Off by default.
         if self._config.api_socket:
             await self._start_dnstap_server(netns_list)
+
+        # Optional NFLOG log dispatcher. Off unless an operator opts in
+        # via LOG_DISPATCH=shorewalld + LOG_NFLOG_GROUP=<N>. Must start
+        # AFTER the worker router exists (which is created at line 323)
+        # so attach_log_dispatcher can wire the parent-side sink in.
+        if (self._config.log_dispatch == "shorewalld"
+                and self._config.log_nflog_group is not None):
+            await self._start_log_dispatcher(netns_list)
 
         # Control socket server.
         if self._config.control_socket:
@@ -1084,6 +1093,62 @@ class Daemon:
             self._dnstap_server.serve_forever(),
             name="shorewalld.dnstap")
 
+    async def _start_log_dispatcher(self, netns_list: list[str]) -> None:
+        """Wire up the NFLOG log dispatcher + per-netns worker subscription.
+
+        Creates the :class:`LogDispatcher`, attaches it to the worker
+        router (which propagates the NFLOG group to all per-netns
+        workers — existing ones get their pointer updated, future
+        spawns inherit the group), registers the
+        :class:`LogCollector`, and eagerly spawns workers for the
+        operator-requested netns list so subscriptions start on
+        daemon boot instead of waiting for the first scrape to
+        lazy-spawn them.
+        """
+        assert self._router is not None
+        assert self._registry is not None
+        assert self._config.log_nflog_group is not None
+
+        from .collectors.log import LogCollector
+        from .log_dispatcher import LogDispatcher
+
+        self._log_dispatcher = LogDispatcher(
+            drop_file=self._config.log_dispatch_file,
+            drop_socket_path=self._config.log_dispatch_socket,
+            journald=self._config.log_dispatch_journald,
+            syslog_path=self._config.log_dispatch_syslog,
+        )
+        await self._log_dispatcher.start()
+
+        self._router.attach_log_dispatcher(
+            self._log_dispatcher,
+            nflog_group=self._config.log_nflog_group,
+        )
+
+        # Eagerly spawn workers so NFLOG subscriptions start on boot.
+        # add_netns is idempotent and safe for the default ("") netns
+        # (LocalWorker path, no fork).
+        for netns in netns_list:
+            try:
+                await self._router.add_netns(netns)
+            except Exception:
+                log.exception(
+                    "log dispatcher: failed to spawn worker for netns %r",
+                    netns)
+
+        self._registry.add(LogCollector(self._log_dispatcher))
+
+        log.info(
+            "shorewalld log dispatcher enabled: group=%d sinks=[%s]",
+            self._config.log_nflog_group,
+            ",".join(filter(None, [
+                "file" if self._config.log_dispatch_file else None,
+                "socket" if self._config.log_dispatch_socket else None,
+                "journald" if self._config.log_dispatch_journald else None,
+                "syslog" if self._config.log_dispatch_syslog else None,
+            ])) or "counter-only",
+        )
+
     async def _reprobe_loop(self) -> None:
         """Tick every ``reprobe_interval`` seconds and refresh profiles."""
         try:
@@ -1165,6 +1230,14 @@ class Daemon:
             await _safe_async(
                 "control_server", self._control_server.shutdown())
             self._control_server = None
+
+        # Log dispatcher: sinks must flush before we tear down the
+        # worker router (the router drains NFLOG events into the
+        # dispatcher; once it closes, events stop arriving).
+        if self._log_dispatcher is not None:
+            await _safe_async(
+                "log_dispatcher", self._log_dispatcher.shutdown())
+            self._log_dispatcher = None
 
         # Pull resolver.
         if self._pull_resolver is not None:

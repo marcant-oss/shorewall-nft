@@ -101,11 +101,16 @@ def find_default_config() -> Path | None:
 
 # Keys documented in docs/reference/shorewalld.md. All optional —
 # anything unset falls back to the CLI default.
-_BOOL_KEYS = frozenset({"STATE_ENABLED", "VRRP_SNMP_ENABLED"})
+_BOOL_KEYS = frozenset({
+    "STATE_ENABLED",
+    "VRRP_SNMP_ENABLED",
+    "LOG_DISPATCH_JOURNALD",
+})
 _INT_KEYS = frozenset({
     "PEER_PORT",
     "PEER_BIND_PORT",
     "VRRP_SNMP_PORT",
+    "LOG_NFLOG_GROUP",
 })
 _FLOAT_KEYS = frozenset({
     "SCRAPE_INTERVAL",
@@ -186,6 +191,13 @@ class ConfDefaults:
     # DNS-set pipeline tuning knobs (M-3).
     dns_dedup_refresh_threshold: float | None = None
     batch_window_seconds: float | None = None
+    # NFLOG log dispatcher (MVP — shorewalld, ulogd2, or none).
+    log_dispatch: str | None = None
+    log_nflog_group: int | None = None
+    log_dispatch_file: str | None = None
+    log_dispatch_socket: str | None = None
+    log_dispatch_journald: bool | None = None
+    log_dispatch_syslog: str | None = None
 
 
 # Map config key → ConfDefaults attribute. Keys not in this map are
@@ -222,6 +234,13 @@ _CONF_KEY_MAP: dict[str, str] = {
     "VRRP_SNMP_TIMEOUT": "vrrp_snmp_timeout",
     "DNS_DEDUP_REFRESH_THRESHOLD": "dns_dedup_refresh_threshold",
     "BATCH_WINDOW_SECONDS": "batch_window_seconds",
+    # NFLOG log dispatcher.
+    "LOG_DISPATCH": "log_dispatch",
+    "LOG_NFLOG_GROUP": "log_nflog_group",
+    "LOG_DISPATCH_FILE": "log_dispatch_file",
+    "LOG_DISPATCH_SOCKET": "log_dispatch_socket",
+    "LOG_DISPATCH_JOURNALD": "log_dispatch_journald",
+    "LOG_DISPATCH_SYSLOG": "log_dispatch_syslog",
 }
 
 

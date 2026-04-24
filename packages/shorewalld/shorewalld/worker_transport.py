@@ -174,6 +174,38 @@ class WorkerTransport:
         self.stats.send_bytes_total += n
         return n
 
+    def send_nowait(self, view: memoryview | bytes) -> bool:
+        """Non-blocking send: drop-on-full contract.
+
+        Sends with ``MSG_DONTWAIT`` so if the kernel SEQPACKET buffer
+        on the *receiving* side is full (parent event loop is busy and
+        isn't draining), ``send`` returns ``EAGAIN`` / ``EWOULDBLOCK``
+        and we return ``False`` **without** raising. Used for
+        unsolicited push datagrams (NFLOG events) where a slow parent
+        must cause drops, not back-pressure into the worker.
+
+        Returns:
+            ``True`` when the datagram was accepted by the kernel.
+            ``False`` when the peer's buffer is full and the datagram
+            was dropped.
+
+        Any other ``OSError`` (e.g. ECONNRESET on transport teardown)
+        is re-raised to trigger the normal transport-error path.
+        """
+        try:
+            n = self._sock.send(view, socket.MSG_DONTWAIT)
+        except BlockingIOError:
+            # Parent isn't draining fast enough — drop this datagram,
+            # count it at the caller, keep the worker hot.
+            self.stats.send_errors_total += 1
+            return False
+        except OSError:
+            self.stats.send_errors_total += 1
+            raise
+        self.stats.sends_total += 1
+        self.stats.send_bytes_total += n
+        return True
+
     def recv_into(
         self, buf: bytearray | memoryview | None = None
     ) -> memoryview:
