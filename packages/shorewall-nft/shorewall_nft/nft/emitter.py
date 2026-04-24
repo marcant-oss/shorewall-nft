@@ -58,6 +58,9 @@ _VALID_NFT_LOG_LEVELS = frozenset(
 _KNOWN_LOG_BACKENDS = frozenset({"LOG", "NETLINK", "NFLOG", "ULOG"})
 
 
+_DEFAULT_LOGFORMAT = "Shorewall:%s:%s:"
+
+
 @dataclass
 class LogSettings:
     """Resolved log-infrastructure settings from shorewall.conf.
@@ -72,17 +75,49 @@ class LogSettings:
     ``group`` is only meaningful when ``backend == "netlink"``.  It
     maps to the ``log group N`` nft fragment.
 
-    This dataclass is an emit-time concern only.  Validation (invalid
-    backend, non-integer group) is done at ``build_ir()`` time so
-    errors surface at compile time, not at script-generation time.
+    ``log_format`` is a printf-style template with two ``%s`` slots:
+    chain name and disposition (upper-case, e.g. ``DROP``).  Default
+    ``"Shorewall:%s:%s:"`` matches upstream Shorewall and the MVP
+    shorewalld dispatcher's prefix parser.  Operators who override
+    ``LOGFORMAT`` must adjust their dispatcher config accordingly.
 
-    Option C (LOGFORMAT / LOGRULENUMBERS / MAXZONENAMELENGTH) is
-    intentionally absent here — it will be slotted in as a separate
-    work package.
+    ``max_zone_name_length`` truncates the first path component of the
+    chain-name substitution (the zone pair).  Default 5 matches
+    upstream Shorewall's MAXZONENAMELENGTH.  0 disables truncation.
+
+    ``rule_numbers`` is parsed from ``LOGRULENUMBERS`` but NOT yet
+    wired into prefix generation — per-rule sequence numbers would
+    require threading a counter through every _add_rule call site.
+    Parsed today so operators see a clean error when setting it; full
+    wiring is filed as a follow-up.
+
+    Validation (invalid backend, non-integer group) is done at
+    ``build_ir()`` time so errors surface at compile time, not at
+    script-generation time.
     """
-    backend: str = "LOG"        # "LOG" or "netlink"
+    backend: str = "LOG"
     default_level: str = "info"
     group: int = 1
+    log_format: str = _DEFAULT_LOGFORMAT
+    max_zone_name_length: int = 5
+    rule_numbers: bool = False
+
+    def format_prefix(self, chain_name: str, disposition: str) -> str:
+        """Render a log prefix string using the configured LOGFORMAT.
+
+        ``chain_name`` may contain a zone-pair separator (``-`` in
+        shorewall-nft; ``2`` in upstream for historical reasons).  The
+        first component is truncated to ``max_zone_name_length``
+        characters when that setting is > 0.
+        """
+        chain = chain_name
+        if self.max_zone_name_length > 0 and "-" in chain:
+            left, _, rest = chain.partition("-")
+            chain = f"{left[: self.max_zone_name_length]}-{rest}"
+        try:
+            return self.log_format % (chain, disposition.upper())
+        except (TypeError, ValueError):
+            return _DEFAULT_LOGFORMAT % (chain, disposition.upper())
 
 
 def _log_settings_from_ir(ir: FirewallIR) -> LogSettings:
@@ -110,7 +145,26 @@ def _log_settings_from_ir(ir: FirewallIR) -> LogSettings:
     except (TypeError, ValueError):
         group = 1
 
-    return LogSettings(backend=backend, default_level=default_level, group=group)
+    log_format = ir.settings.get("LOGFORMAT", _DEFAULT_LOGFORMAT) or _DEFAULT_LOGFORMAT
+
+    try:
+        max_zone_name_length = int(ir.settings.get("MAXZONENAMELENGTH", "5"))
+    except (TypeError, ValueError):
+        max_zone_name_length = 5
+    if max_zone_name_length < 0:
+        max_zone_name_length = 0
+
+    raw_rulenums = ir.settings.get("LOGRULENUMBERS", "No").strip().lower()
+    rule_numbers = raw_rulenums in ("yes", "1", "true")
+
+    return LogSettings(
+        backend=backend,
+        default_level=default_level,
+        group=group,
+        log_format=log_format,
+        max_zone_name_length=max_zone_name_length,
+        rule_numbers=rule_numbers,
+    )
 
 
 def emit_nft(ir: FirewallIR, static_nft: str | None = None,

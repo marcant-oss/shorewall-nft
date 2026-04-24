@@ -347,3 +347,58 @@ class TestNflogVerdictGroupField:
         ir.chains["test-chain"] = ch
         out = emit_nft(ir)
         assert "log group 9" in out
+
+
+# ---------------------------------------------------------------------------
+# Option C — LOGFORMAT / MAXZONENAMELENGTH (LOGRULENUMBERS is parsed only)
+# ---------------------------------------------------------------------------
+
+
+class TestLogFormat:
+    """LOGFORMAT + MAXZONENAMELENGTH apply at compile time to log_prefix."""
+
+    def _settings(self, **kw):
+        from shorewall_nft.nft.emitter import LogSettings, _log_settings_from_ir
+        ir = FirewallIR(settings=kw)
+        return _log_settings_from_ir(ir), LogSettings
+
+    def test_default_template(self):
+        s, _ = self._settings()
+        assert s.format_prefix("net-loc", "drop") == "Shorewall:net-loc:DROP:"
+
+    def test_disables_truncation_when_length_0(self):
+        s, _ = self._settings(MAXZONENAMELENGTH="0")
+        assert s.format_prefix("internal-loc", "accept") == \
+            "Shorewall:internal-loc:ACCEPT:"
+
+    def test_honors_max_zone_name_length(self):
+        s, _ = self._settings(MAXZONENAMELENGTH="3")
+        assert s.format_prefix("internal-loc", "drop") == \
+            "Shorewall:int-loc:DROP:"
+
+    def test_custom_logformat(self):
+        s, _ = self._settings(LOGFORMAT="fw[%s][%s]:")
+        assert s.format_prefix("net-loc", "reject") == "fw[net-loc][REJECT]:"
+
+    def test_non_zone_chain_untouched(self):
+        s, _ = self._settings()
+        assert s.format_prefix("blacklist", "drop") == "Shorewall:blacklist:DROP:"
+
+    def test_broken_logformat_falls_back(self):
+        # Only one %s slot → formatting raises, fallback template is used.
+        s, _ = self._settings(LOGFORMAT="only-one:%s:")
+        assert s.format_prefix("net-loc", "drop") == "Shorewall:net-loc:DROP:"
+
+    def test_logrulenumbers_parsed(self):
+        s, _ = self._settings(LOGRULENUMBERS="Yes")
+        assert s.rule_numbers is True
+        # NOT yet wired into format_prefix — parsing only.
+        assert s.format_prefix("net-loc", "drop") == "Shorewall:net-loc:DROP:"
+
+    def test_invalid_maxzonenamelength_falls_back(self):
+        s, _ = self._settings(MAXZONENAMELENGTH="notanint")
+        assert s.max_zone_name_length == 5
+
+    def test_negative_maxzonenamelength_clamped_to_zero(self):
+        s, _ = self._settings(MAXZONENAMELENGTH="-4")
+        assert s.max_zone_name_length == 0

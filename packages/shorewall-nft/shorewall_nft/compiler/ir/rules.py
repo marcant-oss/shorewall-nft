@@ -1011,8 +1011,11 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                         rule.matches.append(Match(field=f"{proto} sport", value=sport))
 
             if log_prefix:
-                # Generate Shorewall-style log prefix: "Shorewall:chain:action:"
-                nft_log_prefix = f"Shorewall:{chain_name}:{verdict.value.upper()}:"
+                # Render the prefix via LOGFORMAT / MAXZONENAMELENGTH from
+                # shorewall.conf (default template: "Shorewall:%s:%s:").
+                from shorewall_nft.nft.emitter import _log_settings_from_ir
+                nft_log_prefix = _log_settings_from_ir(ir).format_prefix(
+                    chain_name, verdict.value)
                 log_level = log_prefix  # The original value is the syslog level
                 log_rule = Rule(
                     matches=list(rule.matches),
