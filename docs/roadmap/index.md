@@ -21,6 +21,7 @@
 | [maintainability-audit-2026-04-24.md](maintainability-audit-2026-04-24.md) | Post-Phase-6 maintainability audit — 3 hot items, 5 warm, 2 cold; P8 leak points + suggested first step |
 | [nfset-map-bindings-todo.md](nfset-map-bindings-todo.md) | TODO — extend nfsets with map (value=mark) + `nfset_bindings` file: ingress-mark / membership-gate / GRE tunnel-key egress+ingress. nft-only (no tc); dual-stack first-class |
 | [rawnat-stateless-todo.md](rawnat-stateless-todo.md) | TODO — true stateless bidirectional rawnat via `ip[6] (s\|d)addr set` + `notrack`. STATIC supports single IP / CIDR prefix / range; nft-only; dual-stack; rootless integration via `unshare` |
+| [simlab-dual-stack-merge.md](simlab-dual-stack-merge.md) | TODO (4 phases) — dual-stack v4/v6 production parity on both simulate.py + simlab, shared-infra merge into netkit, simlab feature parity (INPUT / REJECT), + new NAT + deep conntrack verification. No deletion of simulate.py. |
 
 ## See also
 
