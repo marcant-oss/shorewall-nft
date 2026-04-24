@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (tools/shorewall-compile.sh)
+
+- **`tools/shorewall-compile.sh`** — bash helper that compiles a
+  Shorewall (and/or Shorewall6) config dir to `iptables-save` text
+  AND its nft equivalent (via `iptables-restore-translate`),
+  without loading rules into the kernel and without requiring
+  root. Bootstraps upstream Shorewall from
+  `gitlab.com/shorewall/code.git` into a per-user cache, runs
+  upstream's own `install.sh` per component (Shorewall-core,
+  Shorewall, Shorewall6) so all action files / macros / version
+  markers are produced identically to a real install, then invokes
+  `compiler.pl --preview` inside an unprivileged user+net+mount
+  namespace (with tmpfs-mounted `/run` so `iptables` can drop its
+  xtables.lock without real root). The compile output is
+  post-filtered out of Shorewall's bash-script wrapper to give
+  clean `iptables-save` text, then piped through
+  `iptables-restore-translate` / `ip6tables-restore-translate`.
+  Always emits a yellow WARNING banner naming the Shorewall
+  features whose output depends on live host state (`routeback`,
+  `BROADCAST=detect`, `DETECT_DNAT_IPADDRS`, `&iface`, proxyarp
+  `HAVEROUTE`, providers, DHCP). GitLab-CI snippet documented
+  inline + in `tools/README.md`.
+
 ### Refactor (maintainability pass — April 2026)
 
 Internal restructuring driven by a multi-agent audit. No behavioural
