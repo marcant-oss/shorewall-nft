@@ -1,3 +1,23 @@
+shorewall-nft (1.10.2-1) unstable; urgency=medium
+
+  * Release 1.10.2: Phase 6 upstream-Shorewall config-coverage parity.
+    Full snat / classic 1:1 nat / providers (multi-ISP) / routes / rtrules /
+    tcinterfaces (HTB/HFSC/cake) / tcpri / synparams / blacklist / hosts
+    OPTIONS / interfaces OPTIONS extras / zones IPsec OPTIONS /
+    proxyarp+proxyndp nft emit / disposition settings / dynamic blacklist
+    modes / LIMIT / CONNLIMIT / LOG_LEVEL+LOG_BACKEND+LOG_GROUP /
+    MarkGeometry / IP-alias setup. New CLI: generate-iproute2-rules.
+    pyroute2-first standard locked: zero new production shell-outs.
+    Architecture: P8 backend-pluggable + P9 resource-efficient agent
+    execution principles added.  Maintenance refactors:
+    runtime/pyroute2_helpers extracted (8 _idx + 16 settings_bool sites
+    consolidated); FirewallIR list fields fully typed; BackendEmitter
+    protocol scaffolded for future VPP/eBPF backends.
+    Tests grew 1041 -> 1616 (+575).
+  * See CHANGELOG.md for full details.
+
+ -- André Valentin <avalentin@marcant.net>  Fri, 24 Apr 2026 00:00:00 +0000
+
 shorewall-nft (1.10.0-1) unstable; urgency=medium
 
   * Release 1.10.0: security-test-plan feature — standards-driven catalogue

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.2] - 2026-04-24
+
+Phase 6 — upstream-Shorewall config-coverage parity, plus pyroute2-first
+migration, two new architecture principles (P8 backend-pluggable, P9
+resource-efficient agent execution), and three maintenance refactors
+(pyroute2_helpers, typed FirewallIR list fields, BackendEmitter
+protocol scaffold).
+
+Tests grew **1041 → 1616 (+575)**. Zero new production shell-outs
+(pyroute2-first audit PASSED).
+
 ### Added (Phase 6 — upstream-Shorewall config-coverage parity)
 
 Closes the largest remaining gaps between the Python compiler and
