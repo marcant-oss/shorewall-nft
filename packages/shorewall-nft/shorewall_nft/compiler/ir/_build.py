@@ -136,12 +136,16 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
 
     related_disp = ir.settings.get("RELATED_DISPOSITION", "ACCEPT")
     invalid_disp = ir.settings.get("INVALID_DISPOSITION", "DROP")
-    # UNTRACKED_DISPOSITION: only emit a rule when explicitly configured;
-    # absence means "no special handling for untracked" (upstream CONTINUE).
+    # UNTRACKED_DISPOSITION: only emit a rule when explicitly configured
+    # AND the disposition resolves to an actual verdict. CONTINUE / NONE /
+    # missing → no rule (upstream Shorewall behaviour; emitting a synthetic
+    # ``ct state untracked drop`` used to blackhole probes whose packets
+    # hadn't yet been pushed through conntrack).
     untracked_disp = ir.settings.get("UNTRACKED_DISPOSITION")
 
-    related_verdict, related_audit = _disposition_to_verdict(related_disp)
-    invalid_verdict, invalid_audit = _disposition_to_verdict(invalid_disp)
+    related_resolved = _disposition_to_verdict(related_disp)
+    invalid_resolved = _disposition_to_verdict(invalid_disp)
+    untracked_resolved = _disposition_to_verdict(untracked_disp)
 
     all_zones = set(ir.zones.all_zone_names())
     for name, chain in ir.chains.items():
@@ -155,7 +159,8 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
         if src not in all_zones or dst not in all_zones:
             continue
         ct_rules: list[Rule] = []
-        if include_established:
+        if include_established and related_resolved is not None:
+            related_verdict, related_audit = related_resolved
             if related_audit is not None:
                 ct_rules.append(Rule(
                     matches=[Match(field="ct state",
@@ -167,19 +172,20 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
                 matches=[Match(field="ct state", value="established,related")],
                 verdict=related_verdict,
             ))
-        if invalid_audit is not None:
+        if invalid_resolved is not None:
+            invalid_verdict, invalid_audit = invalid_resolved
+            if invalid_audit is not None:
+                ct_rules.append(Rule(
+                    matches=[Match(field="ct state", value="invalid")],
+                    verdict=Verdict.ACCEPT,
+                    verdict_args=invalid_audit,
+                ))
             ct_rules.append(Rule(
                 matches=[Match(field="ct state", value="invalid")],
-                verdict=Verdict.ACCEPT,
-                verdict_args=invalid_audit,
+                verdict=invalid_verdict,
             ))
-        ct_rules.append(Rule(
-            matches=[Match(field="ct state", value="invalid")],
-            verdict=invalid_verdict,
-        ))
-        if untracked_disp is not None:
-            untracked_verdict, untracked_audit = _disposition_to_verdict(
-                untracked_disp)
+        if untracked_resolved is not None:
+            untracked_verdict, untracked_audit = untracked_resolved
             if untracked_audit is not None:
                 ct_rules.append(Rule(
                     matches=[Match(field="ct state", value="untracked")],
@@ -387,10 +393,17 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
         return
 
     from shorewall_nft.compiler.actions import _disposition_to_verdict
-    tcpflags_verdict, tcpflags_audit = _disposition_to_verdict(
+    tcpflags_resolved = _disposition_to_verdict(
         ir.settings.get("TCP_FLAGS_DISPOSITION", "DROP"))
-    smurf_verdict, smurf_audit = _disposition_to_verdict(
+    smurf_resolved = _disposition_to_verdict(
         ir.settings.get("SMURF_DISPOSITION", "DROP"))
+    # CONTINUE / NONE / missing → skip the per-iface protection emit.
+    tcpflags_verdict, tcpflags_audit = (
+        tcpflags_resolved if tcpflags_resolved is not None else (None, None)
+    )
+    smurf_verdict, smurf_audit = (
+        smurf_resolved if smurf_resolved is not None else (None, None)
+    )
 
     protection_rules: list[Rule] = []
 
@@ -399,7 +412,7 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
             opts = set(iface.options)
             oval = iface.option_values
 
-            if "tcpflags" in opts:
+            if "tcpflags" in opts and tcpflags_verdict is not None:
                 # SYN+FIN
                 if tcpflags_audit is not None:
                     protection_rules.append(Rule(
@@ -441,7 +454,7 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
                     comment=f"tcpflags:{iface.name}",
                 ))
 
-            if "nosmurfs" in opts:
+            if "nosmurfs" in opts and smurf_verdict is not None:
                 if smurf_audit is not None:
                     protection_rules.append(Rule(
                         matches=[
@@ -701,7 +714,10 @@ def _process_blacklist(ir: FirewallIR,
 
     from shorewall_nft.compiler.actions import _disposition_to_verdict
     disp = ir.settings.get("BLACKLIST_DISPOSITION", "DROP")
-    verdict, _audit = _disposition_to_verdict(disp)
+    resolved = _disposition_to_verdict(disp)
+    # CONTINUE / NONE on the blacklist file makes no sense (every entry
+    # would fall through); fall back to DROP.
+    verdict, _audit = resolved if resolved is not None else (Verdict.DROP, None)
 
     if "blacklist" not in ir.chains:
         ir.add_chain(Chain(name="blacklist"))

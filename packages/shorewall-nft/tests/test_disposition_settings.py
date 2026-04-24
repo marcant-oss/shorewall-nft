@@ -62,12 +62,26 @@ class TestDispositionToVerdict:
         ("A_REJECT", Verdict.REJECT, AuditVerdict("REJECT")),
         ("drop",     Verdict.DROP,   None),   # case-insensitive
         ("a_drop",   Verdict.DROP,   AuditVerdict("DROP")),
-        ("unknown",  Verdict.DROP,   None),   # fallback
     ])
     def test_mapping(self, value, exp_verdict, exp_audit):
-        v, a = _disposition_to_verdict(value)
+        resolved = _disposition_to_verdict(value)
+        assert resolved is not None
+        v, a = resolved
         assert v == exp_verdict
         assert a == exp_audit
+
+    @pytest.mark.parametrize("value", [
+        "CONTINUE", "continue", "NONE", "none", "unknown", "", None,
+    ])
+    def test_no_rule_sentinel(self, value):
+        """CONTINUE / NONE / unrecognised → None so callers skip emit.
+
+        Regression: mapping CONTINUE silently to DROP caused
+        ``UNTRACKED_DISPOSITION=CONTINUE`` to emit a synthetic
+        ``ct state untracked drop`` that blackholed probes whose
+        conntrack entry hadn't yet been installed.
+        """
+        assert _disposition_to_verdict(value) is None
 
 
 # ── BLACKLIST_DISPOSITION ───────────────────────────────────────────────────

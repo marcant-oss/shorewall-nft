@@ -21,8 +21,8 @@ from shorewall_nft.compiler.verdicts import AuditVerdict, SpecialVerdict
 
 
 def _disposition_to_verdict(
-    value: str,
-) -> tuple[Verdict, SpecialVerdict | None]:
+    value: str | None,
+) -> tuple[Verdict, SpecialVerdict | None] | None:
     """Map a Shorewall disposition string to (Verdict, optional AuditVerdict).
 
     Accepted values (case-insensitive): DROP, REJECT, ACCEPT,
@@ -30,9 +30,21 @@ def _disposition_to_verdict(
     the emitter logs via the kernel audit subsystem before applying
     the base action.
 
-    Returns ``(Verdict.DROP, None)`` for any unrecognised string.
+    Upstream Shorewall also accepts CONTINUE (no action; fall through
+    to the next rule) and NONE (skip emit entirely). Both are modelled
+    here by returning ``None`` — callers MUST check for that sentinel
+    and skip emitting a rule. Silently defaulting these to DROP (the
+    pre-2026-04 behaviour) caused ``UNTRACKED_DISPOSITION=CONTINUE``
+    to emit an unintended ``ct state untracked drop`` that blackholed
+    probes with no conntrack state.
+
+    Returns ``None`` for CONTINUE / NONE / empty / unrecognised input.
     """
+    if value is None:
+        return None
     canon = value.upper().strip()
+    if canon in ("", "CONTINUE", "NONE"):
+        return None
     if canon == "DROP":
         return Verdict.DROP, None
     if canon == "REJECT":
@@ -43,7 +55,7 @@ def _disposition_to_verdict(
         return Verdict.DROP, AuditVerdict(base_action="DROP")
     if canon == "A_REJECT":
         return Verdict.REJECT, AuditVerdict(base_action="REJECT")
-    return Verdict.DROP, None
+    return None
 
 
 def create_action_chains(ir: FirewallIR) -> None:
@@ -161,8 +173,12 @@ def _create_drop_smurfs_chain(ir: FirewallIR) -> None:
     The verdict is controlled by ``SMURF_DISPOSITION`` (DROP or A_DROP).
     """
     disp = ir.settings.get("SMURF_DISPOSITION", "DROP")
-    verdict, audit = _disposition_to_verdict(disp)
+    resolved = _disposition_to_verdict(disp)
     chain = ir.get_or_create_chain("sw_DropSmurfs")
+    if resolved is None:
+        # CONTINUE / NONE — create the chain but emit no rule.
+        return
+    verdict, audit = resolved
     if audit is not None:
         chain.rules.append(Rule(
             matches=[Match(field="fib saddr type", value="broadcast")],
@@ -253,8 +269,12 @@ def _create_blacklist_chain(ir: FirewallIR) -> None:
     (DROP / REJECT / A_DROP / A_REJECT).
     """
     disp = ir.settings.get("BLACKLIST_DISPOSITION", "DROP")
-    verdict, audit = _disposition_to_verdict(disp)
+    resolved = _disposition_to_verdict(disp)
     chain = ir.get_or_create_chain("sw_BLACKLIST")
+    # BLACKLIST_DISPOSITION=CONTINUE / NONE would leave no terminal
+    # verdict; treat as explicit DROP (the chain is named BLACKLIST —
+    # falling through would defeat its purpose).
+    verdict, audit = resolved if resolved is not None else (Verdict.DROP, None)
     # Broadcast/multicast silent drop
     chain.rules.append(Rule(
         matches=[Match(field="fib daddr type", value="broadcast")],
@@ -303,8 +323,11 @@ def _create_tcp_flags_chain(ir: FirewallIR) -> None:
     (DROP / REJECT / A_DROP / A_REJECT / ACCEPT).
     """
     disp = ir.settings.get("TCP_FLAGS_DISPOSITION", "DROP")
-    verdict, audit = _disposition_to_verdict(disp)
+    resolved = _disposition_to_verdict(disp)
     chain = ir.get_or_create_chain("sw_TCPFlags")
+    if resolved is None:
+        return
+    verdict, audit = resolved
     for flags in [
         ("fin | syn", "fin | syn"),
         ("syn | rst", "syn | rst"),
