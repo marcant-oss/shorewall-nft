@@ -30,4 +30,59 @@ agentXSocket unix:/var/run/agentx.sock
 # Allow read-only community access from localhost.
 # Replace with a stronger community string in production, or use
 # view-based access control (VACM) to restrict OID subtrees.
+#
+# Note: net-snmp uses the community string for authentication even on a
+# Unix-socket transport.  "public" with a Unix socket is acceptable when
+# filesystem permissions (socket mode + group ownership) are the real
+# ACL — the community string is a second factor, not the primary guard.
+# For stricter deployments, use a non-default community string:
+#   rocommunity mysecret localhost
+# Or move to SNMPv3 createUser / usmUser for full auth + privacy
+# (overkill for most keepalived-only deployments on a Unix socket, but
+# the right answer if you also expose the UDP port externally).
 rocommunity public default
+
+# ── Net-SNMP 5.8+ socket permission syntax ──────────────────────────────────
+#
+# The agentAddress line above uses the 5.8+ comma-extension form:
+#   unix:<path>,<mode>,<owner>,<group>
+#
+# This sets the socket file permissions at creation time so shorewalld
+# can connect without running as root.  Example:
+#
+#   agentAddress unix:/run/snmpd/snmpd.sock,0660,root,shorewalld
+#
+# With this form, snmpd creates the socket owned root:shorewalld mode 0660.
+# Any process in the "shorewalld" group can connect — no chgrp ExecStartPost
+# override needed.
+#
+# Older net-snmp (pre-5.8): omit the comma fields and use a systemd
+# override instead (see docs/shorewalld/keepalived-snmp.md,
+# "Filesystem ACLs and socket permissions").
+
+# ── Multi-netns deployments ──────────────────────────────────────────────────
+#
+# When each firewall netns runs its own keepalived + snmpd instance, each
+# snmpd needs a SEPARATE config file pointing at a per-netns socket path.
+# There is no mechanism to share one snmpd instance across network namespaces;
+# each snmpd process is bound to the netns it started in and sees only
+# that netns's network interfaces and routing table.
+#
+# Example for a second netns "fw-blue"
+# (/etc/snmp/fw-blue.conf, loaded with: ip netns exec fw-blue snmpd -C -c /etc/snmp/fw-blue.conf):
+#
+#   agentAddress unix:/run/shorewalld/netns/fw-blue/snmpd.sock,0660,root,shorewalld
+#   trap2sink    unix:/run/shorewalld/netns/fw-blue/snmp-trap.sock
+#   master agentx
+#   agentXSocket unix:/run/shorewalld/netns/fw-blue/agentx.sock
+#   rocommunity public default
+#
+# The /run/shorewalld/netns/fw-blue/ directory must exist before snmpd starts:
+#   install -d -m 0750 -o root -g shorewalld /run/shorewalld/netns/fw-blue
+#
+# Unix sockets cross network namespaces because named netns shares the host
+# mount namespace — see docs/shorewalld/keepalived-snmp.md for the full
+# explanation and topology diagram.
+
+# ── Full reference for this file ─────────────────────────────────────────────
+# docs/shorewalld/keepalived-snmp.md
