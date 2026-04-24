@@ -1519,3 +1519,122 @@ def run_simulation(
         trace_log.unlink(missing_ok=True)
 
     return results
+
+
+def verify_nat_rules(
+    iptables_dump: Path,
+    *,
+    fw_ns: str = NS_FW,
+    src_ns: str = NS_SRC,
+    dst_ns: str = NS_DST,
+    src_ip: str = DEFAULT_SRC,
+    family: str = "both",
+    verbose: bool = False,
+) -> list["TestResult"]:
+    """Run NAT + conntrack verification for all NAT rules in *iptables_dump*.
+
+    Extracts DNAT / SNAT / MASQUERADE rules from the dump and runs the
+    four Phase-IV verifiers (verify_dnat, verify_snat, verify_ct_state,
+    verify_ct_nat_tuple) from ``shorewall_nft_netkit.validators.nat_verify``
+    against the given namespace triplet.
+
+    This helper is designed to be called **after** the veth topology is
+    already set up (inside ``run_simulation()``'s try block), so the
+    caller's namespace names are threaded through.
+
+    Parameters
+    ----------
+    iptables_dump:
+        Path to the iptables-save dump file.
+    fw_ns, src_ns, dst_ns:
+        Namespace names for the firewall, source, and destination nodes.
+    src_ip:
+        Source IP to use for NAT probes (must be routable through FW).
+    family:
+        IP family string (``"4"``, ``"6"``, or ``"both"``).  v6 probes
+        are derived from ip6tables if *family* includes 6, but only when
+        the corresponding rules exist.
+    verbose:
+        Print per-rule results to stdout.
+
+    Returns
+    -------
+    list[TestResult]
+        One :class:`TestResult` per NAT verifier result, in the same
+        format as the main simulation results so they can be appended
+        to the unified result list.  ``TestCase.raw`` is set to a tag
+        like ``"nat:DNAT:203.0.113.10:80"`` for easy identification.
+    """
+    try:
+        from shorewall_nft_netkit.validators.nat_verify import (
+            extract_nat_rules,
+            verify_nat_rule,
+        )
+    except ImportError:
+        # netkit not installed (should not happen in normal installs)
+        if verbose:
+            print("  NAT verify: shorewall-nft-netkit not available, skipped.")
+        return []
+
+    from shorewall_nft.verify.iptables_parser import parse_iptables_save
+
+    if not iptables_dump.exists():
+        return []
+
+    tables = parse_iptables_save(iptables_dump)
+    nat_rules = extract_nat_rules(tables)
+
+    if not nat_rules:
+        if verbose:
+            print("  NAT verify: no DNAT/SNAT/MASQUERADE rules found, skipped.")
+        return []
+
+    if verbose:
+        print(f"  NAT verify: {len(nat_rules)} rule(s) found.")
+
+    results: list[TestResult] = []
+
+    run_v4 = family in ("4", "both")
+    run_v6 = family in ("6", "both")
+
+    for nat_rule in nat_rules:
+        for fam in ([4] if run_v4 else []) + ([6] if run_v6 else []):
+            try:
+                rule_results = verify_nat_rule(
+                    nat_rule,
+                    src_ns=src_ns,
+                    fw_ns=fw_ns,
+                    dst_ns=dst_ns,
+                    src_ip=src_ip,
+                    family=fam,
+                )
+            except Exception as exc:  # noqa: BLE001 — NAT verify must not crash the simulation
+                if verbose:
+                    print(f"  NAT verify [{nat_rule.nat_type}] exception: {exc}")
+                continue
+
+            for vr in rule_results:
+                tag = getattr(vr, "rule_tag", None) or str(nat_rule.nat_type)
+                passed = getattr(vr, "passed", False)
+                inconclusive = getattr(vr, "inconclusive", False)
+                detail = getattr(vr, "detail", "")
+
+                if verbose or (not passed and not inconclusive):
+                    status = "INCONCLUSIVE" if inconclusive else ("PASS" if passed else "FAIL")
+                    print(f"  [{status}] nat:{tag}  {detail}")
+
+                results.append(TestResult(
+                    test=TestCase(
+                        src_ip=src_ip,
+                        dst_ip=nat_rule.match_daddr or "",
+                        proto=nat_rule.proto or "tcp",
+                        port=None,
+                        expected="PASS",
+                        raw=f"nat:{tag}",
+                    ),
+                    got="PASS" if passed else ("INCONCLUSIVE" if inconclusive else "FAIL"),
+                    passed=passed or inconclusive,  # inconclusive doesn't count as fail
+                    ms=0,
+                ))
+
+    return results

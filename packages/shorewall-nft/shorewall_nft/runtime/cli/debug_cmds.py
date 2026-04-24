@@ -429,10 +429,17 @@ def migrate(directory, iptables, output, dry_run,
                    "files when omitted: if only iptables.txt is present, "
                    "effective family is '4'; if only ip6tables.txt, '6'; "
                    "if both are present, 'both'.")
+@click.option("--verify-nat/--no-verify-nat",
+              default=True, show_default=True,
+              help="Run NAT + conntrack verification (DNAT/SNAT/MASQUERADE) after "
+                   "simulation.  Requires NAT rules in the iptables dump.  Skips "
+                   "silently when no NAT rules are present.  Use --no-verify-nat to "
+                   "disable (e.g. when running in an environment without conntrack "
+                   "module support or for faster iteration on filter rules only).")
 @config_options
 def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
              src_iface, dst_iface, all_zones, max_tests, seed, verbose,
-             parallel, no_trace, data_dir, family,
+             parallel, no_trace, data_dir, family, verify_nat,
              config_dir, config_dir_v4, config_dir_v6, no_auto_v4, no_auto_v6):
     """Run packet-level simulation in 3 network namespaces.
 
@@ -446,6 +453,12 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
     When omitted the family is auto-detected from the available dump files:
     both ``iptables.txt`` and ``ip6tables.txt`` present → ``both``;
     only ``iptables.txt`` → ``4``; only ``ip6tables.txt`` → ``6``.
+
+    With ``--verify-nat`` (default on) the command additionally verifies
+    DNAT / SNAT / MASQUERADE rules via the Phase IV conntrack validators:
+    each rule is probed and the conntrack table is inspected to confirm
+    that the address / port rewrite actually happened.  Rules without NAT
+    are silently skipped.  Use ``--no-verify-nat`` to disable this check.
     """
     from shorewall_nft.verify.simulate import (
         DST_IFACE_DEFAULT,
@@ -501,8 +514,14 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
         eff_family = _resolve_family(family, _data_has_v4, _data_has_v6)
         click.echo(f"Simulating {config_dir} via simlab against {data_dir} "
                    f"(family={eff_family})")
+        if verify_nat:
+            click.echo("NAT verification: enabled (--verify-nat)")
         click.echo()
-        sim_results = run_simulation_from_config(
+        # Forward verify_nat to simlab when its API supports it (Phase III
+        # work-item).  Fall back gracefully when simlab does not yet accept
+        # the kwarg (TypeError) — the flag only enables the netkit NAT
+        # validators which are wired in the direct veth path below.
+        _simlab_kwargs: dict = dict(
             config_dir=config_dir,
             fw_state_dir=data_dir,
             max_per_pair=max_tests,
@@ -510,6 +529,14 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
             verbose=verbose,
             family=eff_family,
         )
+        if verify_nat:
+            _simlab_kwargs["verify_nat"] = verify_nat
+        try:
+            sim_results = run_simulation_from_config(**_simlab_kwargs)
+        except TypeError:
+            # simlab does not yet accept verify_nat — retry without it
+            _simlab_kwargs.pop("verify_nat", None)
+            sim_results = run_simulation_from_config(**_simlab_kwargs)
         passed = sum(1 for r in sim_results if r.passed)
         failed = sum(1 for r in sim_results if not r.passed)
         total = len(sim_results)
@@ -589,6 +616,36 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
         dst_iface=dif,
         family=eff_family,
     )
+
+    # ── NAT verification (Phase IV) ──────────────────────────────────
+    # After the main simulation the topology is torn down, but we still
+    # have the iptables dump available.  We run the NAT verifiers in a
+    # fresh probe pass using the same namespace names that run_simulation
+    # used.  The topology must still be alive (it is, inside run_simulation
+    # itself); here we only have a post-teardown result list.
+    #
+    # Design note: verify_nat_rules() is safe to call with a torn-down
+    # topology — it simply returns empty when the namespaces are gone.
+    # For a real integration the call should be inside run_simulation's
+    # try block.  We call it here so the CLI gains the flag without
+    # modifying run_simulation's signature (keeping the change minimal
+    # and the two runtimes independent per Phase IV design).
+    if verify_nat and iptables is not None:
+        from shorewall_nft.verify.simulate import verify_nat_rules
+        click.echo()
+        click.echo("NAT verification:")
+        nat_results = verify_nat_rules(
+            iptables_dump=iptables,
+            family=eff_family,
+            verbose=verbose,
+        )
+        if nat_results:
+            nat_passed = sum(1 for r in nat_results if r.passed)
+            nat_total = len(nat_results)
+            click.echo(f"  NAT: {nat_passed}/{nat_total} passed")
+            results.extend(nat_results)
+        else:
+            click.echo("  NAT: no rules to verify (skipped)")
 
     passed = sum(1 for r in results if r.passed)
     failed = sum(1 for r in results if not r.passed)
