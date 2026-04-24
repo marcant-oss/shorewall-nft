@@ -13,6 +13,7 @@
 | [post-1.0-nft-features.md](post-1.0-nft-features.md) | Post-1.0 nftables feature wishlist, ranked by impact |
 | [nfsets-deferred.md](nfsets-deferred.md) | Deferred nfsets features + shorewalld audit backlog (W7b) |
 | [HOWTO-CLAUDE-hw-offload-addition.md](HOWTO-CLAUDE-hw-offload-addition.md) | AI-agent entry point for the hardware-offload feature addition |
+| [phase6-coverage-plan.md](phase6-coverage-plan.md) | Phase 6 work-package plan: close upstream-Shorewall config-coverage gaps (Sonnet-agent runbook) |
 
 ## See also
 
