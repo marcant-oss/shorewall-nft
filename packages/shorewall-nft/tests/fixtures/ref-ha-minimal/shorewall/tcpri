@@ -1,0 +1,5 @@
+#BAND	PROTO	PORT	ADDRESS		INTERFACE	HELPER
+# Prioritise SSH traffic to band 1 (highest)
+1	tcp	22	-		-		-
+# Bulk traffic to band 3 (lowest) by protocol
+3	tcp	-	192.168.1.0/24	-		-

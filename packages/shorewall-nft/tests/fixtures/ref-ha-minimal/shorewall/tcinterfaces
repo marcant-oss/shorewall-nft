@@ -1,0 +1,6 @@
+#INTERFACE	TYPE		IN_BANDWIDTH	OUT_BANDWIDTH
+# HTB-based row: external interface with 100mbit ingress policing and TBF egress
+eth0		external	100mbit		50mbit:10kb:200ms
+
+# Cake row: internal interface (flow_type=dst), egress-only shaping
+eth1		internal	-		20mbit

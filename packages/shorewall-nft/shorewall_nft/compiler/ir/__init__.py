@@ -209,6 +209,51 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
         from shorewall_nft.compiler.tc import process_mangle
         process_mangle(ir, config.tcrules, config.mangle, zones)
 
+    # Process tcinterfaces (simple-device TC shaping) and tcpri (DSCP→priority).
+    from shorewall_nft.compiler.tc import (
+        _tc_enabled_mode,
+        emit_tcpri_nft,
+        parse_tcinterfaces,
+        parse_tcpri,
+    )
+    tc_mode = _tc_enabled_mode(config.settings)
+    if tc_mode and getattr(config, "tcinterfaces", None):
+        ir.tcinterfaces = parse_tcinterfaces(config.tcinterfaces)
+    if tc_mode and getattr(config, "tcpri", None):
+        ir.tcpris = parse_tcpri(config.tcpri)
+        # Emit nft meta mark set rules for each tcpri entry into the
+        # mangle-prerouting chain (or forward chain when
+        # MARK_IN_FORWARD_CHAIN=Yes).
+        from shorewall_nft.compiler.ir._data import ChainType, Hook
+        from shorewall_nft.compiler.tc import _mark_in_forward
+        if _mark_in_forward(config.settings):
+            chain_name = "forward"
+        else:
+            chain_name = "mangle-prerouting"
+        if chain_name not in ir.chains:
+            ir.add_chain(Chain(
+                name=chain_name,
+                chain_type=ChainType.ROUTE,
+                hook=Hook.PREROUTING,
+                priority=-150,
+            ))
+        _chain = ir.chains[chain_name]
+        from shorewall_nft.compiler.ir._data import Match, Rule, Verdict
+        from shorewall_nft.compiler.verdicts import MarkVerdict
+        for entry in ir.tcpris:
+            rule = Rule()
+            if entry.interface != "-":
+                rule.matches.append(Match(field="iifname", value=entry.interface))
+            if entry.address != "-":
+                rule.matches.append(Match(field="ip saddr", value=entry.address))
+            if entry.proto != "-":
+                rule.matches.append(Match(field="meta l4proto", value=entry.proto))
+                if entry.port != "-":
+                    rule.matches.append(Match(field=f"{entry.proto} dport", value=entry.port))
+            rule.verdict = Verdict.ACCEPT
+            rule.verdict_args = MarkVerdict(value=entry.band)
+            _chain.rules.append(rule)
+
     # Add interface-level protections (tcpflags, nosmurfs) and DHCP
     _process_interface_options(ir, zones)
 

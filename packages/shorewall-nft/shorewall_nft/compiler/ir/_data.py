@@ -272,6 +272,12 @@ class FirewallIR:
     routes: list = field(default_factory=list)
     rtrules: list = field(default_factory=list)
 
+    # TC simple-device shaping — populated by build_ir() from tcinterfaces
+    # and tcpri config files.  Channel-2 consumers (generate-tc, apply_tcinterfaces)
+    # read these after build_ir().
+    tcinterfaces: list = field(default_factory=list)
+    tcpris: list = field(default_factory=list)
+
     # Macro registry: populated by _load_standard_macros (bundled Shorewall
     # macros) and _load_custom_macros (user macros override).  Per-compile
     # state — moved here from module-level _CUSTOM_MACROS so repeated

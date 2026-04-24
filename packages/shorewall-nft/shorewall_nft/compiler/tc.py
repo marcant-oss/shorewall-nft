@@ -10,10 +10,21 @@ by setting marks in nft which are then used by tc qdiscs configured
 separately. The tcdevices/tcclasses/tcfilters configs generate the
 corresponding `tc` commands, not nft rules.
 
-Native kernel apply path: ``apply_tc`` uses pyroute2 to configure
-qdiscs/classes/filters directly via netlink — no tc(8) binary needed.
-The ``emit_tc_commands`` / ``generate-tc`` bash-script path is kept as
-a portable fallback.
+Native kernel apply path: ``apply_tc`` and ``apply_tcinterfaces`` use
+pyroute2 to configure qdiscs/classes/filters directly via netlink —
+no tc(8) binary needed.  The ``emit_tc_commands`` / ``generate-tc``
+bash-script path is kept as a portable fallback.
+
+TC mode toggles (WP-C4):
+- TC_ENABLED=Internal (default): full qdisc/class setup emitted.
+- TC_ENABLED=No: all TC emission skipped.
+- TC_ENABLED=Yes or Shared: only mark rules are emitted; qdisc/class
+  setup is the operator's responsibility (external TC).
+- TC_EXPERT=Yes: skip the mark-mask collision guard.
+- MARK_IN_FORWARD_CHAIN=Yes: emit packet-mark rules in FORWARD instead
+  of PREROUTING.
+- CLEAR_TC=Yes: emit ``tc qdisc del dev <iface> root`` per managed
+  interface during clear/stop.
 """
 
 from __future__ import annotations
@@ -85,6 +96,484 @@ class TcConfig:
     devices: list[TcDevice] = field(default_factory=list)
     classes: list[TcClass] = field(default_factory=list)
     filters: list[TcFilter] = field(default_factory=list)
+
+
+# ── Simple-device (tcinterfaces) structures ─────────────────────────────────
+
+@dataclass
+class TcInterface:
+    """A simple-device TC entry from the tcinterfaces file.
+
+    Maps to ``process_simple_device`` in upstream Tc.pm.
+    Upstream format: INTERFACE TYPE IN_BANDWIDTH OUT_BANDWIDTH
+    where TYPE is 'external' (→ nfct-src) | 'internal' (→ dst) | '-'.
+    OUT_BANDWIDTH accepts burst:latency:peak:minburst suffixes (colon-separated).
+    """
+    interface: str
+    flow_type: str = "-"          # '-' | 'nfct-src' | 'dst'
+    in_bandwidth: str = ""
+    out_bandwidth: str = ""
+    out_burst: str = "10kb"       # default upstream burst
+    out_latency: str = "200ms"    # default upstream latency
+    out_peak: str = ""
+    out_minburst: str = ""
+    qdisc: str = "htb"            # 'htb' | 'hfsc' | 'cake'
+    overhead: str = ""
+    mtu: str = ""
+    mpu: str = ""
+
+
+@dataclass
+class TcPri:
+    """A single tcpri DSCP-to-priority mapping row.
+
+    Maps to ``process_tc_priority`` in upstream Tc.pm.
+    Upstream format: BAND PROTO PORT ADDRESS INTERFACE HELPER
+    BAND is 1-3 (Linux prio band).
+    """
+    band: int                    # 1–3
+    proto: str = "-"
+    port: str = "-"
+    address: str = "-"
+    interface: str = "-"
+    helper: str = "-"
+
+
+# ── TC mode helpers ──────────────────────────────────────────────────────────
+
+def _tc_enabled_mode(settings: dict[str, str]) -> str:
+    """Return normalised TC_ENABLED value: 'Internal', 'Yes', 'Shared', or ''.
+
+    '' means TC_ENABLED=No (disabled).
+    """
+    raw = settings.get("TC_ENABLED", "Internal").strip().lower()
+    _MAP = {
+        "internal": "Internal",
+        "yes": "Yes",
+        "shared": "Shared",
+        "simple": "Simple",
+        "no": "",
+        "": "",
+    }
+    return _MAP.get(raw, "Internal")
+
+
+def _tc_expert(settings: dict[str, str]) -> bool:
+    return settings.get("TC_EXPERT", "No").strip().lower() in ("yes", "1", "true")
+
+
+def _mark_in_forward(settings: dict[str, str]) -> bool:
+    return settings.get("MARK_IN_FORWARD_CHAIN", "No").strip().lower() in ("yes", "1", "true")
+
+
+def _clear_tc(settings: dict[str, str]) -> bool:
+    return settings.get("CLEAR_TC", "No").strip().lower() in ("yes", "1", "true")
+
+
+# ── Parse helpers ────────────────────────────────────────────────────────────
+
+def _parse_out_bandwidth_field(raw: str) -> tuple[str, str, str, str, str]:
+    """Split OUT_BANDWIDTH into (bw, burst, latency, peak, minburst).
+
+    Upstream format: bw[:burst[:latency[:peak[:minburst]]]]
+    """
+    if not raw or raw == "-":
+        return ("", "10kb", "200ms", "", "")
+    parts = raw.split(":")
+    bw = parts[0] if parts else ""
+    burst = parts[1] if len(parts) > 1 and parts[1] else "10kb"
+    latency = parts[2] if len(parts) > 2 and parts[2] else "200ms"
+    peak = parts[3] if len(parts) > 3 else ""
+    minburst = parts[4] if len(parts) > 4 else ""
+    return (bw, burst, latency, peak, minburst)
+
+
+def parse_tcinterfaces(lines: list) -> "list[TcInterface]":
+    """Parse tcinterfaces config lines into TcInterface objects.
+
+    Upstream columns: INTERFACE TYPE IN_BANDWIDTH OUT_BANDWIDTH
+    TYPE values: 'external' → 'nfct-src', 'internal' → 'dst', '-' → '-'
+    OUT_BANDWIDTH may carry :burst:latency:peak:minburst suffixes.
+    """
+    result: list[TcInterface] = []
+    for line in lines:
+        cols = line.columns
+        if len(cols) < 1:
+            continue
+        iface = cols[0]
+        if iface == "-":
+            continue
+
+        raw_type = cols[1] if len(cols) > 1 else "-"
+        raw_type_lc = raw_type.lower()
+        if raw_type_lc == "external":
+            flow_type = "nfct-src"
+        elif raw_type_lc == "internal":
+            flow_type = "dst"
+        else:
+            flow_type = "-"
+
+        raw_in = cols[2] if len(cols) > 2 else "-"
+        in_bw = raw_in if raw_in and raw_in != "-" else ""
+
+        raw_out = cols[3] if len(cols) > 3 else "-"
+        out_bw, out_burst, out_latency, out_peak, out_minburst = _parse_out_bandwidth_field(raw_out)
+
+        result.append(TcInterface(
+            interface=iface,
+            flow_type=flow_type,
+            in_bandwidth=in_bw,
+            out_bandwidth=out_bw,
+            out_burst=out_burst,
+            out_latency=out_latency,
+            out_peak=out_peak,
+            out_minburst=out_minburst,
+        ))
+    return result
+
+
+def parse_tcpri(lines: list) -> "list[TcPri]":
+    """Parse tcpri config lines into TcPri objects.
+
+    Upstream columns: BAND PROTO PORT ADDRESS INTERFACE HELPER
+    BAND must be 1–3.  At least one of PROTO/PORT/ADDRESS/INTERFACE/HELPER
+    must be set (not '-').
+    """
+    result: list[TcPri] = []
+    for line in lines:
+        cols = line.columns
+        if len(cols) < 1:
+            continue
+        try:
+            band = int(cols[0])
+        except (ValueError, IndexError):
+            continue
+        if band < 1 or band > 3:
+            continue
+
+        proto = cols[1] if len(cols) > 1 and cols[1] != "-" else "-"
+        port = cols[2] if len(cols) > 2 and cols[2] != "-" else "-"
+        address = cols[3] if len(cols) > 3 and cols[3] != "-" else "-"
+        interface = cols[4] if len(cols) > 4 and cols[4] != "-" else "-"
+        helper = cols[5] if len(cols) > 5 and cols[5] != "-" else "-"
+
+        if proto == "-" and port == "-" and address == "-" and interface == "-" and helper == "-":
+            continue
+
+        result.append(TcPri(
+            band=band, proto=proto, port=port,
+            address=address, interface=interface, helper=helper,
+        ))
+    return result
+
+
+# ── Shell-script generators ──────────────────────────────────────────────────
+
+def emit_tcinterfaces_shell(tcinterfaces: "list[TcInterface]",
+                             settings: "dict[str, str] | None" = None) -> str:
+    """Generate shell tc commands for simple-device shaping (tcinterfaces file).
+
+    Mirrors the Perl ``process_simple_device`` / ``setup_${dev}_tc``
+    function output.  Returns a shell fragment suitable for inclusion in
+    the ``generate-tc`` script.
+
+    TC_ENABLED=No: returns empty string.
+    TC_ENABLED=Yes or Shared: returns empty string (operator manages qdiscs).
+    TC_ENABLED=Internal (default): returns full qdisc setup.
+    CLEAR_TC=Yes: includes ``tc qdisc del`` teardown lines.
+    """
+    if settings is None:
+        settings = {}
+    mode = _tc_enabled_mode(settings)
+    if not mode or mode in ("Yes", "Shared"):
+        return ""
+
+    clear = _clear_tc(settings)
+    lines: list[str] = []
+
+    for dev in tcinterfaces:
+        iface = dev.interface
+        lines.append(f"# Simple TC device: {iface}")
+        lines.append(f"if ip link show {iface} > /dev/null 2>&1; then")
+
+        if clear:
+            lines.append(f"  tc qdisc del dev {iface} root 2>/dev/null || true")
+            lines.append(f"  tc qdisc del dev {iface} ingress 2>/dev/null || true")
+        else:
+            lines.append(f"  tc qdisc del dev {iface} root 2>/dev/null || true")
+            lines.append(f"  tc qdisc del dev {iface} ingress 2>/dev/null || true")
+
+        if dev.in_bandwidth:
+            lines.append(f"  tc qdisc add dev {iface} ingress handle ffff:")
+            lines.append(
+                f"  tc filter add dev {iface} parent ffff: protocol all"
+                f" u32 match u32 0 0 police rate {dev.in_bandwidth} burst 10k drop"
+            )
+
+        if dev.out_bandwidth:
+            tbf_cmd = (
+                f"  tc qdisc add dev {iface} root handle 1: tbf"
+                f" rate {dev.out_bandwidth}"
+                f" burst {dev.out_burst}"
+                f" latency {dev.out_latency}"
+                f" mpu 64"
+            )
+            if dev.out_peak:
+                tbf_cmd += f" peakrate {dev.out_peak}"
+            if dev.out_minburst:
+                tbf_cmd += f" minburst {dev.out_minburst}"
+            lines.append(tbf_cmd)
+            lines.append(f"  tc qdisc add dev {iface} parent 1:1 handle 100: prio bands 3")
+
+            for band in (1, 2, 3):
+                lines.append(f"  tc qdisc add dev {iface} parent 100:{band} sfq quantum 1875 limit 127 perturb 10")
+                lines.append(f"  tc filter add dev {iface} protocol all prio {16 + band} parent 100: handle {band} fw classid 100:{band}")
+                if dev.flow_type != "-":
+                    lines.append(
+                        f"  tc filter add dev {iface} protocol all prio 1"
+                        f" parent 100{band}: handle {band + 3}"
+                        f" flow hash keys {dev.flow_type} divisor 1024"
+                    )
+                lines.append("")
+
+        lines.append("else")
+        lines.append(f"  echo 'WARNING: Device {iface} is not UP — TC skipped' >&2")
+        lines.append("fi")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def emit_tcpri_nft(tcpris: "list[TcPri]", settings: "dict[str, str] | None" = None) -> str:
+    """Emit nft mangle rules that set meta priority (tc handle) from tcpri rows.
+
+    Upstream: ``process_tc_priority1`` marks packets in the mangle table
+    using ``MARK --set-mark <band>``.  In nft the equivalent is
+    ``meta mark set <band>`` in the mangle-prerouting chain (or forward
+    chain when MARK_IN_FORWARD_CHAIN=Yes).
+
+    Returns a raw nft rule fragment string.  The caller (build_ir) is
+    responsible for inserting these rules into the correct chain.
+    Returns empty string when TC_ENABLED=No or no tcpris.
+    """
+    if settings is None:
+        settings = {}
+    mode = _tc_enabled_mode(settings)
+    if not mode:
+        return ""
+    if not tcpris:
+        return ""
+
+    forward_chain = _mark_in_forward(settings)
+    chain_name = "forward" if forward_chain else "mangle-prerouting"
+    lines: list[str] = []
+    lines.append(f"# tcpri DSCP/proto → priority mark rules (chain: {chain_name})")
+
+    for entry in tcpris:
+        mark = entry.band
+        parts: list[str] = []
+
+        if entry.interface != "-":
+            parts.append(f"iifname {entry.interface!r}")
+
+        if entry.address != "-":
+            parts.append(f"ip saddr {entry.address}")
+
+        if entry.proto != "-":
+            parts.append(f"meta l4proto {entry.proto}")
+            if entry.port != "-":
+                parts.append(f"{entry.proto} dport {entry.port}")
+
+        match_str = " ".join(parts)
+        lines.append(f"  {match_str} meta mark set {mark}")
+
+    return "\n".join(lines)
+
+
+# ── pyroute2 apply path for tcinterfaces ────────────────────────────────────
+
+@dataclass
+class TcInterfaceApplyResult:
+    """Summary of a tcinterfaces native apply via pyroute2."""
+    applied: int
+    failed: int
+    errors: list[str]
+
+
+def apply_tcinterfaces(
+    tcinterfaces: "list[TcInterface]",
+    settings: "dict[str, str] | None" = None,
+    *,
+    netns: str | None = None,
+) -> TcInterfaceApplyResult:
+    """Apply simple-device TC setup via pyroute2.
+
+    Configures TBF root qdisc + prio qdisc + SFQ leaf qdiscs and fw
+    filters for each interface in *tcinterfaces* directly via netlink —
+    no tc(8) binary required.  Opens ``IPRoute(netns=netns)`` when
+    *netns* is set; otherwise uses the default (caller's) network
+    namespace.
+
+    TC_ENABLED=No: returns immediately with applied=0, failed=0.
+    TC_ENABLED=Yes or Shared: skips qdisc setup (operator manages TC),
+    returns applied=0, failed=0.
+
+    Idempotence: root and ingress qdiscs are deleted then re-added.
+    NetlinkError(errno=ENOENT) during the delete step is silently
+    ignored.
+    """
+    if settings is None:
+        settings = {}
+
+    mode = _tc_enabled_mode(settings)
+    if not mode or mode in ("Yes", "Shared"):
+        return TcInterfaceApplyResult(applied=0, failed=0, errors=[])
+
+    try:
+        from pyroute2 import IPRoute
+    except ImportError:
+        return TcInterfaceApplyResult(
+            applied=0, failed=0,
+            errors=["pyroute2 not installed — cannot apply tcinterfaces natively"],
+        )
+
+    applied = 0
+    failed = 0
+    errors: list[str] = []
+
+    def _record_error(msg: str) -> None:
+        nonlocal failed
+        failed += 1
+        errors.append(msg)
+        logger.warning("apply_tcinterfaces: %s", msg)
+
+    try:
+        ipr: IPRoute = IPRoute(netns=netns) if netns else IPRoute()
+    except Exception as ex:
+        return TcInterfaceApplyResult(
+            applied=0, failed=0,
+            errors=[f"IPRoute init failed: {ex}"],
+        )
+
+    iface_idx: dict[str, int] = {}
+
+    def _idx(name: str) -> "int | None":
+        if name in iface_idx:
+            return iface_idx[name]
+        try:
+            links = ipr.link_lookup(ifname=name)
+        except Exception:
+            return None
+        if not links:
+            return None
+        iface_idx[name] = links[0]
+        return links[0]
+
+    try:
+        for dev in tcinterfaces:
+            idx = _idx(dev.interface)
+            if idx is None:
+                _record_error(f"tcinterface {dev.interface!r}: not found, skipped")
+                continue
+
+            # Teardown existing qdiscs (idempotent).
+            for qdisc_handle, qdisc_kind in ((0x10000, "tbf"), (0xffff0000, "ingress")):
+                try:
+                    ipr.tc("del", qdisc_kind, idx, qdisc_handle)
+                except Exception as ex:
+                    code = getattr(ex, "code", None)
+                    if code != 2:  # not ENOENT
+                        logger.debug("apply_tcinterfaces: del %s on %s: %s",
+                                     qdisc_kind, dev.interface, ex)
+
+            # Ingress qdisc for in_bandwidth policing.
+            if dev.in_bandwidth:
+                try:
+                    ipr.tc("add", "ingress", idx, 0xffff0000)
+                    applied += 1
+                except Exception as ex:
+                    _record_error(f"tcinterface {dev.interface!r}: add ingress qdisc: {ex}")
+
+            # Root TBF qdisc + prio + SFQ leaves for out_bandwidth.
+            if dev.out_bandwidth:
+                try:
+                    ipr.tc(
+                        "add", "tbf", idx, 0x10000,
+                        rate=dev.out_bandwidth,
+                        burst=dev.out_burst or "10kb",
+                        latency=dev.out_latency or "200ms",
+                    )
+                    applied += 1
+                except Exception as ex:
+                    _record_error(
+                        f"tcinterface {dev.interface!r}: add tbf root qdisc: {ex}")
+                    continue
+
+                # Parent 1: — add prio qdisc (handle 0x01000000 = 100:)
+                prio_handle = 0x01000000
+                try:
+                    ipr.tc("add", "prio", idx, prio_handle,
+                           parent=0x10000, bands=3)
+                    applied += 1
+                except Exception as ex:
+                    _record_error(
+                        f"tcinterface {dev.interface!r}: add prio qdisc: {ex}")
+                    continue
+
+                # SFQ leaf qdiscs and fw filters for bands 1–3.
+                for band in (1, 2, 3):
+                    sfq_handle = (prio_handle | band) << 4
+                    parent = prio_handle | band
+                    try:
+                        ipr.tc("add", "sfq", idx, sfq_handle,
+                               parent=parent, quantum=1875, limit=127, perturb=10)
+                        applied += 1
+                    except Exception as ex:
+                        _record_error(
+                            f"tcinterface {dev.interface!r} band {band}: add sfq: {ex}")
+                        continue
+
+                    classid = prio_handle | band
+                    try:
+                        ipr.tc(
+                            "add-filter", "fw", idx,
+                            parent=prio_handle,
+                            prio=16 + band,
+                            handle=band,
+                            classid=classid,
+                        )
+                        applied += 1
+                    except Exception as ex:
+                        _record_error(
+                            f"tcinterface {dev.interface!r} band {band}: add fw filter: {ex}")
+
+    finally:
+        try:
+            ipr.close()
+        except Exception:
+            pass
+
+    return TcInterfaceApplyResult(applied=applied, failed=failed, errors=errors)
+
+
+def emit_clear_tc_shell(tcinterfaces: "list[TcInterface]",
+                         settings: "dict[str, str] | None" = None) -> str:
+    """Generate ``tc qdisc del`` teardown lines for use in stop/clear.
+
+    Only emits when CLEAR_TC=Yes in *settings*.  Returns empty string
+    otherwise.
+    """
+    if settings is None:
+        settings = {}
+    if not _clear_tc(settings):
+        return ""
+
+    lines: list[str] = []
+    for dev in tcinterfaces:
+        iface = dev.interface
+        lines.append(f"tc qdisc del dev {iface} root 2>/dev/null || true")
+        lines.append(f"tc qdisc del dev {iface} ingress 2>/dev/null || true")
+    return "\n".join(lines)
 
 
 def parse_tc_config(config) -> TcConfig:

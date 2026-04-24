@@ -112,8 +112,19 @@ def generate_conntrackd(directory, sync_iface, peer_ip, local_ip, cluster_ip,
 @config_options
 def generate_tc(directory, config_dir, config_dir_v4, config_dir_v6,
                 no_auto_v4, no_auto_v6):
-    """Generate tc (traffic control) commands."""
-    from shorewall_nft.compiler.tc import emit_tc_commands, parse_tc_config
+    """Generate tc (traffic control) commands.
+
+    Covers both the advanced tcdevices/tcclasses model and the simple
+    tcinterfaces (TBF+prio+SFQ) model.  When CLEAR_TC=Yes a teardown
+    section is appended.
+    """
+    from shorewall_nft.compiler.tc import (
+        emit_clear_tc_shell,
+        emit_tc_commands,
+        emit_tcinterfaces_shell,
+        parse_tc_config,
+        parse_tcinterfaces,
+    )
     from shorewall_nft.config.parser import load_config
 
     primary, secondary, skip = _resolve_config_paths(
@@ -121,9 +132,34 @@ def generate_tc(directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     config = load_config(primary, config6_dir=secondary,
                          skip_sibling_merge=skip)
+    settings = config.settings
     tc = parse_tc_config(config)
+    tcinterfaces = parse_tcinterfaces(getattr(config, "tcinterfaces", []))
+
+    output_parts: list[str] = []
+
+    # Advanced tcdevices/tcclasses section.
     if tc.devices or tc.classes:
-        click.echo(emit_tc_commands(tc))
+        output_parts.append(emit_tc_commands(tc))
+
+    # Simple tcinterfaces section.
+    if tcinterfaces:
+        fragment = emit_tcinterfaces_shell(tcinterfaces, settings)
+        if fragment:
+            output_parts.append(fragment)
+
+    # Clear-TC teardown section (all managed interfaces).
+    all_ifaces = [d.interface for d in tc.devices] + [t.interface for t in tcinterfaces]
+    if all_ifaces:
+        from shorewall_nft.compiler.tc import TcInterface
+        synthetic = [TcInterface(interface=i) for i in all_ifaces]
+        clear_section = emit_clear_tc_shell(synthetic, settings)
+        if clear_section:
+            output_parts.append("# CLEAR_TC teardown")
+            output_parts.append(clear_section)
+
+    if output_parts:
+        click.echo("\n".join(output_parts))
     else:
         click.echo("No TC configuration found.")
 
