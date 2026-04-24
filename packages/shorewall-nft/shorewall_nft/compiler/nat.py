@@ -20,7 +20,10 @@ Entry points: ``process_nat(ir, masq_lines, dnat_rules)``,
 
 from __future__ import annotations
 
+import logging
 import re
+
+_log = logging.getLogger("shorewall_nft.compiler.nat")
 
 from shorewall_nft.compiler.ir import (
     Chain,
@@ -236,23 +239,31 @@ def _add_snat_matches(rule: Rule, cols: list[str]) -> None:
 def _build_ipsec_matches(ipsec: str, direction: str) -> list[Match]:
     """Build the nft IPsec match for the IPSEC column of snat/masq rules.
 
-    nftables 1.1.x does not expose ``proto=`` / ``mode=`` on its ``ipsec``
-    match; the two workable forms are ``meta secpath exists`` (any
-    xfrm-decoded packet) and ``ipsec <dir> reqid N`` / ``spi 0xN``.
-    Since the IPSEC column usually just carries ``yes`` / ``no`` / extras,
-    map to those two forms: ``yes``/``ipsec`` → ``meta secpath exists``,
-    ``no``/``none`` → ``meta secpath missing``. Extras (``proto=…`` etc.)
-    are dropped with the broad match preserved.
+    snat / masq live in the postrouting hook, which is an egress path.
+    The nft ``meta secpath`` match is populated only on ingress (during
+    xfrm decap) — the kernel rejects both ``meta secpath exists`` and
+    ``meta secpath missing`` in postrouting with ``Operation not
+    supported``. ``ipsec out`` requires a reqid or spi to narrow, which
+    the IPSEC column does not carry.
+
+    Consequence: no nft expression reproduces the shorewall IPSEC=yes /
+    IPSEC=no discriminator on snat/masq rules. We return an empty match
+    list with a compile-time warning; the snat/masq rule fires on the
+    non-ipsec matches alone. Users needing the discriminator must either
+    restructure their snat dispatch (by interface) or use the
+    iptables-nft-restore fallback for that subset.
     """
     val = ipsec.strip().lower()
-    if val in ("no", "none"):
-        return [Match(field="inline", value="meta secpath missing")]
-    # "yes", "ipsec", or any extras → broad "came through IPsec" check.
-    # direction is not meaningful for secpath (kernel marks both ingress
-    # decode and egress encrypt), so we keep the argument for signature
-    # compatibility but don't use it.
+    if val in ("", "-"):
+        return []
     _ = direction
-    return [Match(field="inline", value="meta secpath exists")]
+    _log.warning(
+        "IPSEC=%r in snat/masq has no nft counterpart on postrouting "
+        "(meta secpath is ingress-only; ipsec out requires reqid/spi). "
+        "Emitting no IPsec match; the rule fires on its other matches "
+        "alone.", ipsec,
+    )
+    return []
 
 
 def _build_mark_match(mark: str) -> Match:

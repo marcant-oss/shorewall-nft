@@ -15,8 +15,11 @@ config dir).  Both functions write into ``ir.macros`` on the
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
+
+_log = logging.getLogger("shorewall_nft.compiler.ir.rules")
 
 from shorewall_nft.compiler.ir._data import (
     FirewallIR,
@@ -1089,26 +1092,36 @@ def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
                                 direction: str) -> str | None:
     """Build the IPsec policy match nft clause for *zone_name*.
 
-    Returns ``None`` when the zone is not an ipsec zone (no clause needed).
+    Returns ``None`` when the zone is not an ipsec zone OR when the
+    requested direction cannot be expressed in nft given the available
+    zone options (no clause injectable — caller skips emit).
 
     ``direction`` must be ``"in"`` (traffic *from* the zone) or ``"out"``
     (traffic *to* the zone).
 
-    nftables 1.1.x exposes two mutually-exclusive IPsec match forms:
+    nftables 1.1.x exposes two IPsec match forms, each with its own
+    scope:
 
-    * ``meta secpath exists`` — matches any packet that arrived through
-      an xfrm SA (direction-agnostic; the kernel marks both decoded
-      ingress and encrypted egress). Used when the zone only restricts
-      by ``proto=`` / ``mode=``, which nft cannot express on the
-      ``ipsec`` match.
-    * ``ipsec {in|out} [reqid N] [spi 0xN]`` — narrow match against a
-      specific SPD entry. Used when the zone carries ``reqid=`` or
-      ``spi=``.
+    * ``meta secpath exists`` — matches any packet the kernel decoded
+      via xfrm on **ingress**. Rejected by the kernel on egress hooks
+      with ``Operation not supported`` because the secpath is populated
+      during decap, not encap.
+    * ``ipsec {in|out} [reqid N] [spi 0xN]`` — narrow SPD match. Works
+      on both ingress (SA that decoded) and egress (SPD entry that
+      will encap), but requires reqid/spi to narrow.
+
+    Consequences for the shorewall ipsec zone emit:
+
+    * ``direction="in"`` + no reqid/spi → ``meta secpath exists``.
+    * ``direction="in"`` with reqid/spi → ``ipsec in reqid N`` / ``spi …``.
+    * ``direction="out"`` + no reqid/spi → **no nft equivalent**; returns
+      ``None`` with a compile-time warning. Emergency fallback is
+      iptables-nft-restore's ``xt match "policy"`` — see
+      ``reference_iptables_nft_restore`` note.
+    * ``direction="out"`` with reqid/spi → ``ipsec out reqid N`` / ``spi …``.
 
     Shorewall's ``proto=`` / ``mode=`` filters have no nft counterpart
-    and are dropped with an advisory at compile time; traffic via any
-    other SA type still matches ``meta secpath exists`` so the rule is
-    still safer than no match at all.
+    and are silently dropped in all cases.
     """
     z = zones.zones.get(zone_name)
     if z is None:
@@ -1125,9 +1138,25 @@ def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
             parts.append(f"spi {opts.spi:#x}")
         return " ".join(parts)
 
-    # No reqid/spi — fall back to the broad "came through IPsec" check.
-    # proto= / mode= / mark= are silently lost (no nft equivalent).
-    return "meta secpath exists"
+    if direction == "in":
+        # Ingress: ``meta secpath exists`` is the broad "decoded by xfrm"
+        # check. proto=/mode=/mark= are silently lost.
+        return "meta secpath exists"
+
+    # Egress: nft has no direction-agnostic SPD match. Without reqid/spi
+    # the only expressible alternative is the kernel-rejected
+    # ``meta secpath exists`` on an output hook. Skip the match with a
+    # warning — the caller omits the entire match, leaving the rule to
+    # rely on interface/route dispatch for IPsec confinement.
+    _log.warning(
+        "ipsec zone %r (direction=out) has no reqid/spi — cannot express "
+        "egress SPD match in nft. Emitting no match; packets reach the "
+        "zone-pair rules solely by interface/route dispatch. Set reqid= "
+        "or spi= on the zone to re-enable a narrow ``ipsec out reqid N`` "
+        "match.",
+        zone_name,
+    )
+    return None
 
 
 def _inject_ipsec_policy_match(rule: "Rule", src_zone: str, dst_zone: str,

@@ -207,18 +207,31 @@ def test_policy_clause_bare_ipsec_zone():
     assert clause == "meta secpath exists"
 
 
-def test_policy_clause_with_proto():
-    """proto= has no nft counterpart — the broad secpath fallback applies."""
+def test_policy_clause_with_proto_direction_in():
+    """proto= on ingress falls back to the broad secpath match."""
     zones = _zones_with_ipsec(["proto=esp"])
     clause = _build_ipsec_policy_clause("vpn", zones, "in")
     assert clause == "meta secpath exists"
 
 
-def test_policy_clause_with_mode():
-    """mode= has no nft counterpart — the broad secpath fallback applies."""
+def test_policy_clause_with_mode_direction_out_returns_none():
+    """mode= on egress has no nft expression — returns None (caller skips).
+
+    ``meta secpath`` is populated only during ingress xfrm decap; the
+    kernel rejects it on output hooks with ``Operation not supported``.
+    Without reqid/spi on the zone, there is no narrow ``ipsec out`` match
+    to fall back on, so the emitter drops the match entirely.
+    """
     zones = _zones_with_ipsec(["mode=tunnel"])
     clause = _build_ipsec_policy_clause("vpn", zones, "out")
-    assert clause == "meta secpath exists"
+    assert clause is None
+
+
+def test_policy_clause_no_opts_direction_out_returns_none():
+    """A bare ipsec zone on egress also falls through to None."""
+    zones = _zones_with_ipsec([])
+    clause = _build_ipsec_policy_clause("vpn", zones, "out")
+    assert clause is None
 
 
 def test_policy_clause_with_reqid():
@@ -267,15 +280,35 @@ def test_inject_ipsec_policy_adds_match_when_src_is_ipsec():
     assert rule.matches[0].value == "meta secpath exists"
 
 
-def test_inject_ipsec_policy_adds_match_when_dst_is_ipsec():
-    """When dst zone is ipsec, an IPsec-match inline is appended."""
-    zones = _zones_with_ipsec(["proto=esp"])
+def test_inject_ipsec_policy_adds_match_when_dst_is_ipsec_with_reqid():
+    """When dst zone is ipsec and reqid is set, a narrow ``ipsec out reqid N``
+    match is appended.
+
+    Without reqid/spi the egress direction has no nft expression and
+    ``_build_ipsec_policy_clause`` returns ``None`` (no match appended).
+    """
+    zones = _zones_with_ipsec(["reqid=42"])
     rule = Rule()
     rule.matches.append(Match(field="meta l4proto", value="tcp"))
     _inject_ipsec_policy_match(rule, "fw", "vpn", zones)
     last = rule.matches[-1]
     assert last.field == "inline"
-    assert last.value == "meta secpath exists"
+    assert last.value == "ipsec out reqid 42"
+
+
+def test_inject_ipsec_policy_skips_out_match_without_reqid():
+    """dst-ipsec zone without reqid/spi emits no egress match.
+
+    ``meta secpath`` is ingress-only in the kernel; without a narrow
+    ``ipsec out reqid N`` to fall back on, the compiler warns and
+    drops the match so the rule at least remains loadable.
+    """
+    zones = _zones_with_ipsec(["proto=esp"])
+    rule = Rule()
+    rule.matches.append(Match(field="meta l4proto", value="tcp"))
+    _inject_ipsec_policy_match(rule, "fw", "vpn", zones)
+    assert len(rule.matches) == 1
+    assert rule.matches[0].field == "meta l4proto"
 
 
 def test_inject_ipsec_no_match_for_non_ipsec_zones():
@@ -303,20 +336,21 @@ def test_ipsec_zone_rules_carry_policy_in_match():
     )
 
 
-def test_ipsec_zone_rules_carry_policy_out_match():
-    """Rules whose destination is an ipsec zone must carry a ``meta secpath
-    exists`` (or narrow ``ipsec out …``) match in the emitted nft output."""
+def test_ipsec_zone_rules_out_direction_no_match_without_reqid():
+    """Rules to an ipsec zone without reqid/spi must NOT carry a ``meta
+    secpath`` match — the kernel rejects that on egress hooks."""
     config = _make_config_with_ipsec("proto=esp,mode=tunnel")
     ir = build_ir(config)
     nft = emit_nft(ir)
-    assert "meta secpath exists" in nft, (
-        "Expected 'meta secpath exists' (or narrow 'ipsec out') in emitted "
-        "nft for ipsec zone dst"
-    )
+    # No egress secpath and no stale policy-ism.
+    assert "policy out ipsec" not in nft
+    # The broad secpath may still appear on ingress-side rules.
+    # If it does, it's only in chains reached from input/prerouting hooks.
 
 
 def test_ipsec_zone_proto_mode_dropped_in_emit():
-    """proto= / mode= are silently dropped; the broad secpath match remains.
+    """proto= / mode= are silently dropped; ingress rules still get the
+    broad ``meta secpath exists`` match, egress rules get no IPsec match.
 
     Regression guard: earlier emitter output ``policy in ipsec proto ah mode
     tunnel`` which ``nft -f`` rejects with ``unexpected policy``. There is
@@ -329,6 +363,7 @@ def test_ipsec_zone_proto_mode_dropped_in_emit():
     assert "policy out ipsec" not in nft
     assert "proto ah" not in nft
     assert "mode transport" not in nft
+    # Ingress-side rules keep secpath; egress-side rules drop the match.
     assert "meta secpath exists" in nft
 
 

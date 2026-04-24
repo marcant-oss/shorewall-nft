@@ -275,21 +275,31 @@ class TestSnatEmit:
         assert chain.rules[0].verdict == Verdict.LOG
         assert isinstance(chain.rules[1].verdict_args, SnatVerdict)
 
-    def test_ipsec_column_yes(self):
-        """IPSEC=yes → ``meta secpath exists`` (any xfrm-decoded packet)."""
+    def test_ipsec_column_yes_emits_no_match(self):
+        """IPSEC=yes on snat/masq has no nft counterpart in postrouting.
+
+        nft ``meta secpath`` is ingress-only; ``ipsec out`` needs reqid/spi
+        which the IPSEC column doesn't carry. The compiler drops the match
+        and warns — the rule fires on its other columns alone.
+        """
         out = self._emit_line(
             "SNAT(198.51.100.1)", "192.0.2.0/24", "eth0",
             "-", "-", "yes", "-", "-", "-", "-", "-",
         )
-        assert "meta secpath exists" in out
+        assert "meta secpath" not in out
+        assert "ipsec " not in out
+        # The SNAT rule itself must still be present.
+        assert "snat to 198.51.100.1" in out
 
-    def test_ipsec_column_no(self):
-        """IPSEC=no → ``meta secpath missing`` (packet bypassed xfrm)."""
+    def test_ipsec_column_no_emits_no_match(self):
+        """IPSEC=no on snat/masq also has no nft counterpart."""
         out = self._emit_line(
             "SNAT(198.51.100.1)", "192.0.2.0/24", "eth0",
             "-", "-", "no", "-", "-", "-", "-", "-",
         )
-        assert "meta secpath missing" in out
+        assert "meta secpath" not in out
+        assert "ipsec " not in out
+        assert "snat to 198.51.100.1" in out
 
     def test_proto_dport_columns(self):
         out = self._emit_line(
