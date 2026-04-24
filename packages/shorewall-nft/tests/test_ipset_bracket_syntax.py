@@ -246,6 +246,56 @@ class TestRewriteAndMultiset:
         names = {i[1] for i in infos}
         assert names == {"a", "b", "c"}
 
+    def test_per_member_negation(self):
+        """``!`` before a member negates only that member."""
+        stripped, infos = _rewrite_bracket_spec("+[a,!b,c]", "src")
+        assert stripped == "+a"
+        # a=False, b=True (per-member !), c=False
+        assert infos == [
+            ("src", "a", False),
+            ("src", "b", True),
+            ("src", "c", False),
+        ]
+
+    def test_all_members_negated(self):
+        """Tropheus-style: +[!DE-ipv4,!BA-ipv4] — every member negated."""
+        stripped, infos = _rewrite_bracket_spec(
+            "net:+[!DE-ipv4,!BA-ipv4]", "src", "test:42")
+        assert stripped == "net:+DE-ipv4"
+        assert infos == [
+            ("src", "DE-ipv4", True),
+            ("src", "BA-ipv4", True),
+        ]
+
+    def test_outer_bang_xor_per_member_bang(self):
+        """Outer ``!+[...]`` XORs with per-member ``!`` prefixes."""
+        # !+[a,!b] — outer ! + per-member (!a negated, b not negated after XOR)
+        stripped, infos = _rewrite_bracket_spec("!+[a,!b]", "src")
+        assert stripped == "!+a"
+        # outer_negate=True XOR member_negate per entry:
+        # a: True XOR False = True
+        # b: True XOR True  = False
+        assert infos == [
+            ("src", "a", True),
+            ("src", "b", False),
+        ]
+
+    def test_empty_member_name_raises(self):
+        """A dangling ``!`` with no name is a parse error, not a silent pass."""
+        with pytest.raises(ValueError, match="empty member name"):
+            _rewrite_bracket_spec("+[!]", "src", "test:1")
+
+    def test_unparseable_plus_bracket_raises(self):
+        """A ``+[…]`` that matches no regex raises instead of looping.
+
+        Historical bug: the function silently returned the spec unchanged
+        in this case; the caller at rules.py:479 then recursed forever
+        because ``_spec_contains_bracket_ipset`` still saw ``[``.
+        Raising here breaks the recursion cleanly.
+        """
+        with pytest.raises(ValueError, match="unparseable bracket-ipset"):
+            _rewrite_bracket_spec("+[a,b$invalid]", "src", "rules:9")
+
 
 # ---------------------------------------------------------------------------
 # Integration: bracket syntax through build_ir / emitter

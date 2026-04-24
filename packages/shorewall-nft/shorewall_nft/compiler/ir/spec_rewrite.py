@@ -368,10 +368,13 @@ _BRACKET_SET_RE = re.compile(
     r'^\+([A-Za-z0-9_-]+)(?:\[([A-Za-z,]*)\])?$'
 )
 
-# Matches the AND-multi-set form: +[name1,name2,…] (no brackets on names)
-# Group 1: comma-separated set names
+# Matches the AND-multi-set form: +[name1,!name2,…]
+# Per-member negation (``!name``) is allowed — shorewall syntax for
+# "packet must NOT be in this set".  No other punctuation is permitted
+# inside the list.  Group 1 is the raw comma-separated body; per-member
+# ``!`` prefixes are parsed downstream.
 _AND_MULTISET_RE = re.compile(
-    r'^\+\[([A-Za-z0-9_,\- ]+)\]$'
+    r'^\+\[([A-Za-z0-9_,\-! ]+)\]$'
 )
 
 _VALID_BRACKET_FLAGS: frozenset[str] = frozenset({"src", "dst", "src,dst", "dst,src"})
@@ -482,24 +485,36 @@ def _rewrite_bracket_spec(
         negate = True
         body = body[1:]
 
-    # AND-multi-set: +[a,b,c]
+    # AND-multi-set: +[a,!b,c]
+    # Per-member negation via leading ``!`` is supported — maps to a
+    # negated Match object for that specific member.  The outer
+    # whole-spec ``!`` (parsed above as ``negate``) XORs with each
+    # per-member bang.
     m_and = _AND_MULTISET_RE.match(body)
     if m_and:
-        names = [n.strip() for n in m_and.group(1).split(",") if n.strip()]
-        if not names:
+        raw_names = [n.strip() for n in m_and.group(1).split(",") if n.strip()]
+        if not raw_names:
             where = f"{line_ctx}: " if line_ctx else ""
             raise ValueError(
                 f"{where}empty AND-multi-set list in {spec!r}")
-        sides = [column_side]  # AND-multi-set uses column_side for all members
-        match_infos = [
-            (side, name, negate) for name in names for side in sides
-        ]
+        match_infos = []
+        for raw in raw_names:
+            mem_negate = raw.startswith("!")
+            name = raw[1:] if mem_negate else raw
+            if not name:
+                where = f"{line_ctx}: " if line_ctx else ""
+                raise ValueError(
+                    f"{where}empty member name in AND-multi-set {spec!r}")
+            # XOR: outer ``!`` flips per-member negation.
+            effective_negate = negate ^ mem_negate
+            match_infos.append((column_side, name, effective_negate))
         # Return a sentinel spec using the first set name (no brackets).
         # This ensures the recursive _process_rules call does NOT re-fire
         # the bracket pre-pass (no [...] present), while still providing a
         # non-empty address part so _add_rule enters the src_addrs / dst_addrs
         # branch where it reads _bsrc / _bdst for the actual Match objects.
-        first = names[0]
+        first_raw = raw_names[0]
+        first = first_raw[1:] if first_raw.startswith("!") else first_raw
         sentinel_body = f"+{first}"
         if negate:
             sentinel_body = f"!{sentinel_body}"
@@ -509,7 +524,21 @@ def _rewrite_bracket_spec(
     # Single set with optional bracket flags: +setname[flags]
     m_bracket = _BRACKET_SET_RE.match(body)
     if not m_bracket:
-        # Not a bracket form we recognise — return unchanged, no infos
+        # ``body`` is the spec after stripping zone prefix + whole-spec
+        # negation.  If it starts with ``+`` we're in ipset territory
+        # (``_spec_contains_bracket_ipset`` already returned True at the
+        # caller) but neither regex matched — that is an unparseable
+        # bracket form.  Returning ``spec`` unchanged here would let the
+        # caller at rules.py:479 recurse forever on the same input, so
+        # raise with a clear context.  Non-``+`` specs (plain addresses,
+        # zone refs, DNS tokens, …) pass through unchanged — some call
+        # paths feed them in and expect a no-op.
+        if body.startswith("+"):
+            where = f"{line_ctx}: " if line_ctx else ""
+            raise ValueError(
+                f"{where}unparseable bracket-ipset spec {spec!r}; "
+                f"expected +setname[flags] or +[name1,!name2,...]"
+            )
         return spec, []
 
     set_name = m_bracket.group(1)
