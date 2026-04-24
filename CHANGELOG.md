@@ -70,11 +70,24 @@ once, plus 200 random probes per config):
 | portalfw  | 461          | 0         | 0           | 88 routing artifacts          |
 | tropheus  | 2            | 0         | 0           | 42k routing-incompatible (autorepair) |
 
-\* the 2 reference fail_accepts are random-ICMPv6 probes that hit
-``Ping(ACCEPT) all all`` over-expansion — see
-``todo_ping_all_all_overexpansion`` memory; not a release blocker
-(direction is over-permissive on a global ping rule the operator
-explicitly added).
+\* the random-ICMPv6 fail_accepts trace to two distinct emit-side
+issues uncovered during this validation pass; both are filed as
+follow-ups (no fix shipped yet because each needs a non-trivial
+emitter refactor):
+
+  * ``Ping(ACCEPT) all all`` macro-expansion divergence: nft emits
+    ICMPv6-echo accepts into 1 377 zone-pair chains where iptables-
+    save lists 55. Single-pass attempt at filtering by
+    "chain-already-populated" broke chains whose only content comes
+    from interface-option DHCP / tcpflags emit (those phases run
+    after rule processing). The full fix requires moving the
+    interface-protection emit before user-rule processing.
+  * Per-family policy merge: when shorewall/policy and shorewall6/
+    policy disagree on a zone-pair (e.g. ``dmz net ACCEPT`` v4 +
+    ``dmz all REJECT`` v6), our merged inet-table chain currently
+    emits a single ``accept`` terminal that v6 traffic also matches.
+    Per-family terminal rules (``meta nfproto ipv4 accept`` /
+    ``meta nfproto ipv6 jump sw_Reject``) are needed.
 
 \*\* elgar's 5743 ``observed=DROP`` are 502-ms timeouts under load,
 not verdict mismatches; 28 ``observed=REJECT`` are ICMPv6
