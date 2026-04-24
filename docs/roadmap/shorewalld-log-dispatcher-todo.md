@@ -39,9 +39,17 @@
    rate, which JSON schema. Worker topology is one decoder per
    (netns, group); fan-out to K sinks is cheap within that worker.
 
-## MVP scope — shorewalld side (2026-04-24, approval pending)
+## MVP scope — shorewalld side (2026-04-24, SHIPPED)
 
-**Implementation is gated. Do not start without explicit user freigabe.**
+**Status (2026-04-24): shipped on branch ``log-dispatcher-mvp`` in
+four commits — docs, M0+M1 (NFULogSocket + prefix parser, 33 tests),
+M2+M3 (worker IPC + dispatcher + collector, 26 tests), M4+M5 (config
+knobs + four sinks with drop-on-full, 19 tests), M6+M7 (systemd unit
+update + integration tests + operator docs, 6 tests). Sink surface
+expanded mid-build per user directive from 2 (file, unix socket) to
+4 (added journald + /dev/log). Total 824 tests passing.**
+
+Original plan preserved below for historical context.
 
 Concrete deliverables narrower than the full "Scope (proposed)" below.
 Dual-format / Wazuh / sampling / multi-group work is a follow-up
