@@ -20,4 +20,16 @@ Module layout:
   dispatcher, pattern-borrowed from :class:`shorewalld.log_dispatcher.LogDispatcher`.
 * :mod:`shorewalld.keepalived.metrics` — auto-registered Prometheus
   families derived from the MIB at daemon startup.
+
+Public re-exports (for ``from shorewalld.keepalived import X``):
 """
+
+from shorewalld.keepalived.dispatcher import KeepalivedDispatcher
+from shorewalld.keepalived.metrics import KeepalivedCollector
+from shorewalld.keepalived.snmp_client import KeepalivedSnapshot
+
+__all__ = [
+    "KeepalivedCollector",
+    "KeepalivedDispatcher",
+    "KeepalivedSnapshot",
+]
