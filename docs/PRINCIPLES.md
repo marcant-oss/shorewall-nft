@@ -98,3 +98,69 @@ Every `pyproject.toml` + `__init__.py` + RPM spec + Debian changelog +
 `CHANGELOG.md` moves together in a single commit. Never a divergent
 version floor across the monorepo. See `CLAUDE.md` release-state
 section for the full list of files.
+
+## P8 — Backend-pluggable architecture
+
+The compiler must keep `IR → backend emit` and `IR → backend apply`
+behind clean interfaces so that **alternative kernel backends can
+replace nftables without touching the IR or the parser**. Concrete
+near-term target: **VPP** (Vector Packet Processing) as a userspace
+fast-path alternative.
+
+Practical implications for every change:
+
+- `shorewall_nft.compiler.ir.*` is **backend-agnostic** — no nft,
+  iptables, or VPP-specific concepts in `Rule`, `Chain`, `Match`,
+  `Verdict`, `FirewallIR`, or any field on them. Specifically:
+  - Match field names describe **what** is matched (`saddr`, `dport`,
+    `proto`, `iif`, `ct_state`), not **how** the backend expresses it.
+  - Verdicts describe semantic intent (`SnatVerdict`, `MarkVerdict`,
+    `LogVerdict`), not the backend syntax.
+- `shorewall_nft.nft.*` is **one** backend. Adding a sibling
+  `shorewall_nft.vpp.*` (or `shorewall_nft.bpf.*`, etc.) must not
+  require any change to `compiler/` or `config/`.
+- Runtime apply paths live alongside the backend they target. A
+  backend selector in `runtime/` decides which `apply_*()` to call
+  based on a `BACKEND` setting in `shorewall.conf` (default `nft`).
+- Capability probing is per-backend (`nft/capabilities.py` already
+  exists; future `vpp/capabilities.py` would be the parallel).
+- Tests that assert on emitted nft strings live under
+  `tests/backends/nft/` (or are tagged `backend=nft`); IR-level tests
+  must stay backend-agnostic so the same suite catches regressions
+  for any backend.
+
+The test for whether code violates this principle: would adding a
+new backend require editing this file? If yes, the abstraction is
+wrong. Refactor before adding the new backend, not after.
+
+This is a **direction**, not a current implementation. The codebase
+today has `nft` baked deeply into many places (chain types, hook
+priorities, set semantics). Each refactor that touches those areas
+should leave them more backend-neutral than it found them.
+
+## P9 — Resource-efficient agent execution
+
+Every multi-step task — especially Sonnet-agent dispatch — must be
+planned for **token + time + cost** efficiency before the first
+agent call:
+
+- Bundle related work into clusters; one PR per cluster, not per WP.
+- Extract upstream / reference material **once** into compact excerpts
+  (see `docs/roadmap/upstream-excerpts/` for the model) so each
+  agent reads excerpts, not the full source tree.
+- Use the **cheapest model** that can do the job correctly:
+  - Haiku for trivial / well-specified mechanical tasks.
+  - Sonnet for code-writing with judgement calls.
+  - Opus for architecture decisions and review.
+- Run truly independent agents **in parallel** (background dispatch,
+  await notifications). Sequence only when files conflict.
+- Defer or drop low-value work surfaced during planning — explicit
+  deferral with reason beats silent skipping.
+- Reuse fixtures across tests instead of building one per WP.
+- Verify with `pytest -q` and commit incrementally; do not let work
+  pile up unverified.
+
+The yardstick: would a human reviewer think the dispatch / commit
+cadence is sensible? If a single agent run takes 5 minutes when a
+parallel pair could finish in 3, the dispatcher (this assistant) is
+the bottleneck — fix that.
