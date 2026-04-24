@@ -1,8 +1,15 @@
 # TODO — Simlab alignment with `(config_dir, iptables_dump)` model
 
-**Status**: pending investigation (Task #38)
-**Owner**: unassigned
-**Priority**: low — not on the critical path; pure refactor opportunity.
+**Status**: analysis complete (2026-04-24). Full decision + follow-up
+tasks in `docs/testing/simlab-alignment-analysis.md`.
+
+**Decision**: Option 1 (conservative migration via `--data DIR`
+delegation, simulate.py stays as default backend). Follow-up tasks
+#73 (fix `cli` symbol), #74 (add `api.py` + wire `--data`),
+#75 (rename `simulate.ns()` → `exec_in_ns()`), #76 (deferred —
+`FwState` synthesis from config for eventual simulate.py deletion).
+
+**Original investigation brief** (kept for context):
 
 ## Context
 
