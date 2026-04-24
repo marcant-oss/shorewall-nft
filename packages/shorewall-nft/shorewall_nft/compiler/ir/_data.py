@@ -34,6 +34,15 @@ _UNIT_MAP: dict[str, str] = {
     "day": "day",
 }
 
+# Log-level tokens the Shorewall ACTION column may carry as a
+# ``:level[:tag]`` suffix on ``Limit:...``. Accepted forms mirror
+# syslog priorities plus the numeric 0-7 aliases upstream permits.
+_SHOREWALL_LOG_LEVELS: frozenset[str] = frozenset({
+    "emerg", "alert", "crit", "err", "error", "warn", "warning",
+    "notice", "info", "debug",
+    "0", "1", "2", "3", "4", "5", "6", "7",
+})
+
 
 class Verdict(Enum):
     ACCEPT = "accept"
@@ -498,6 +507,37 @@ def _parse_rate_limit(rate_str: str) -> RateLimitSpec | None:
     return None
 
 
+def _strip_limit_log_prefix(name_field: str) -> str | None:
+    """Strip an optional ``<level>[:<tag>]:`` prefix from a LIMIT name.
+
+    Shorewall ACTION columns accept the standard ``:level[:tag]`` suffix
+    on any action. In ``Limit:info:LOGIN,4,60`` the fragment ``info:LOGIN``
+    arrives here as a single comma-segmented token — the ``:`` must be
+    peeled off because nft meter identifiers reject ``:``.
+
+    Examples::
+
+        "info:LOGIN"        → "LOGIN"
+        "debug:mailclnt"    → "mailclnt"
+        "info:SSH:LOGIN"    → "LOGIN"   (level + tag + name)
+        "LOGIN"             → "LOGIN"   (unchanged, no colon)
+        ""                  → None
+
+    Returns ``None`` when nothing meter-nameable remains (e.g. the input
+    was empty or contained only log-level tokens).
+    """
+    if ":" not in name_field:
+        return name_field or None
+    tokens = name_field.split(":")
+    while tokens and tokens[0].lower() in _SHOREWALL_LOG_LEVELS:
+        tokens.pop(0)
+    if not tokens:
+        return None
+    # Remaining head ``tag:name`` keeps only the trailing ``name`` —
+    # the tag belongs on the logging side, not on the nft meter.
+    return tokens[-1] or None
+
+
 def _parse_limit_action(param: str) -> RateLimitSpec | None:
     """Parse the ``LIMIT:name,rate,burst`` action-column form.
 
@@ -507,10 +547,15 @@ def _parse_limit_action(param: str) -> RateLimitSpec | None:
 
     Examples::
 
-        "LOGIN,12,60"   → RateLimitSpec(rate=12, unit="minute", burst=60,
-                                        name="LOGIN", per_source=True)
-        "12,60"         → RateLimitSpec(rate=12, unit="minute", burst=60,
-                                        name=None,  per_source=True)
+        "LOGIN,12,60"         → RateLimitSpec(rate=12, unit="minute",
+                                              burst=60, name="LOGIN",
+                                              per_source=True)
+        "12,60"               → RateLimitSpec(rate=12, unit="minute",
+                                              burst=60, name=None,
+                                              per_source=True)
+        "info:LOGIN,4,60"     → RateLimitSpec(rate=4,  unit="minute",
+                                              burst=60, name="LOGIN",
+                                              per_source=True)
 
     The upstream Shorewall ``LIMIT:`` action always implies per-source
     (srcip hashlimit) and uses ``/minute`` as the default unit — see
@@ -528,7 +573,7 @@ def _parse_limit_action(param: str) -> RateLimitSpec | None:
         # name,rate/unit,burst  OR  name,rate,burst (rate implied /minute)
         if "/" in rate_or_unit:
             # name,rate/unit,burst
-            name = name_or_rate or None
+            name = _strip_limit_log_prefix(name_or_rate) if name_or_rate else None
             m = re.match(r'^(\d+)/(sec|min|hour|day|second|minute)$', rate_or_unit)
             if not m:
                 return None
@@ -536,7 +581,7 @@ def _parse_limit_action(param: str) -> RateLimitSpec | None:
             unit = _UNIT_MAP.get(m.group(2), m.group(2))
         else:
             # name,rate,burst — rate in /minute
-            name = name_or_rate or None
+            name = _strip_limit_log_prefix(name_or_rate) if name_or_rate else None
             try:
                 rate = int(rate_or_unit)
             except ValueError:
@@ -565,7 +610,8 @@ def _parse_limit_action(param: str) -> RateLimitSpec | None:
         except ValueError:
             return None
         return RateLimitSpec(rate=rate, unit="minute", burst=5,
-                             name=a or None, per_source=True)
+                             name=(_strip_limit_log_prefix(a) if a else None),
+                             per_source=True)
     if len(parts) == 1:
         # bare rate/unit
         return _parse_rate_limit(parts[0])

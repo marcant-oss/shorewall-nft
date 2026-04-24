@@ -154,6 +154,42 @@ class TestParseLimitAction:
         assert rl is not None
         assert rl.per_source is True
 
+    def test_log_level_prefix_stripped(self):
+        """``Limit:info:LOGIN,4,60`` — level ``info`` is stripped from name.
+
+        Regression: nft meter identifiers reject ``:``. Without stripping,
+        the emitter produced ``meter info:LOGIN ...`` which ``nft -f``
+        rejects with ``unexpected colon``.
+        """
+        rl = _parse_limit_action("info:LOGIN,4,60")
+        assert rl is not None
+        assert rl.name == "LOGIN"
+        assert rl.rate == 4
+        assert rl.unit == "minute"
+        assert rl.burst == 60
+        assert rl.per_source is True
+
+    def test_log_level_prefix_stripped_with_unit(self):
+        """``Limit:debug:mailclnt,1/sec,3`` — level stripped, unit honoured."""
+        rl = _parse_limit_action("debug:mailclnt,1/sec,3")
+        assert rl is not None
+        assert rl.name == "mailclnt"
+        assert rl.rate == 1
+        assert rl.unit == "second"
+        assert rl.burst == 3
+
+    def test_log_level_and_tag_stripped(self):
+        """``Limit:info:SSH:LOGIN,4,60`` — level+tag both peeled; name=LOGIN."""
+        rl = _parse_limit_action("info:SSH:LOGIN,4,60")
+        assert rl is not None
+        assert rl.name == "LOGIN"
+
+    def test_numeric_log_level_prefix_stripped(self):
+        """``Limit:6:LOGIN,4,60`` — numeric syslog level stripped."""
+        rl = _parse_limit_action("6:LOGIN,4,60")
+        assert rl is not None
+        assert rl.name == "LOGIN"
+
 
 # ── Integration: IR rule + emitter ──────────────────────────────────────────
 
