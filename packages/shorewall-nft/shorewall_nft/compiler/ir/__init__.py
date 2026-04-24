@@ -14,6 +14,7 @@ from shorewall_nft.compiler.ir._data import (
     ChainType,
     FirewallIR,
     Hook,
+    MarkGeometry,
     Match,
     Rule,
     Verdict,
@@ -109,6 +110,7 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     """Build the complete IR from a parsed config."""
     zones = build_zone_model(config)
     ir = FirewallIR(zones=zones, settings=config.settings)
+    ir.mark_geometry = MarkGeometry.from_settings(config.settings)
     ir._fastaccept = config.settings.get("FASTACCEPT", "Yes").lower() in ("yes", "1")
 
     # Seed DNS set registry with global defaults from shorewall.conf;

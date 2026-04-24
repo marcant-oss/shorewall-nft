@@ -106,6 +106,123 @@ class Chain:
         return self.hook is not None
 
 
+def _make_mask(bits: int) -> int:
+    """Return a bitmask with the low *bits* bits set (equivalent to Perl make_mask)."""
+    if bits <= 0:
+        return 0
+    return (1 << bits) - 1
+
+
+@dataclass(frozen=True)
+class MarkGeometry:
+    """Packet-mark field layout derived from shorewall.conf geometry settings.
+
+    Mirrors the Perl Config.pm mark-geometry block so that all mask
+    constants in the emitter are derived from a single, consistent source
+    rather than scattered literals.
+
+    Use ``MarkGeometry.from_settings(config.settings)`` to build from a
+    parsed shorewall.conf, or ``MarkGeometry.default()`` for the upstream
+    defaults when no config is available.
+    """
+    tc_bits: int
+    mask_bits: int
+    provider_bits: int
+    provider_offset: int
+    zone_bits: int
+    zone_offset: int
+
+    @property
+    def tc_max(self) -> int:
+        return _make_mask(self.tc_bits)
+
+    @property
+    def tc_mask(self) -> int:
+        return _make_mask(self.mask_bits)
+
+    @property
+    def provider_mask(self) -> int:
+        return _make_mask(self.provider_bits) << self.provider_offset
+
+    @property
+    def zone_mask(self) -> int:
+        if self.zone_bits:
+            return _make_mask(self.zone_bits) << self.zone_offset
+        return 0
+
+    @property
+    def exclusion_mask(self) -> int:
+        return 1 << (self.zone_offset + self.zone_bits)
+
+    @property
+    def tproxy_mark(self) -> int:
+        return self.exclusion_mask << 1
+
+    @property
+    def event_mark(self) -> int:
+        return self.tproxy_mark << 1
+
+    @property
+    def user_mask(self) -> int:
+        userbits = self.provider_offset - self.tc_bits
+        if userbits > 0:
+            return _make_mask(userbits) << self.tc_bits
+        return 0
+
+    @classmethod
+    def from_settings(cls, settings: dict[str, str]) -> MarkGeometry:
+        """Build from a shorewall.conf settings dict.
+
+        Replicates the Perl Config.pm mark-geometry initialization block
+        faithfully, including the default-computation order and the
+        PROVIDER_OFFSET clamping rule.
+        """
+        def _is_set(key: str) -> bool:
+            return settings.get(key, "No").strip().lower() in ("yes", "1", "true")
+
+        wide = _is_set("WIDE_TC_MARKS")
+        high = _is_set("HIGH_ROUTE_MARKS")
+
+        def _int_setting(key: str, default: int) -> int:
+            raw = settings.get(key)
+            if raw is None:
+                return default
+            try:
+                return int(raw.strip(), 0)
+            except (ValueError, AttributeError):
+                return default
+
+        tc_bits = _int_setting("TC_BITS", 14 if wide else 8)
+        mask_bits = _int_setting("MASK_BITS", 16 if wide else 8)
+
+        provider_offset_default = (16 if wide else 8) if high else 0
+        provider_offset = _int_setting("PROVIDER_OFFSET", provider_offset_default)
+        provider_bits = _int_setting("PROVIDER_BITS", 8)
+        zone_bits = _int_setting("ZONE_BITS", 0)
+
+        if provider_offset:
+            if provider_offset < mask_bits:
+                provider_offset = mask_bits
+            zone_offset = provider_offset + provider_bits
+        elif mask_bits >= provider_bits:
+            zone_offset = mask_bits
+        else:
+            zone_offset = provider_bits
+
+        return cls(
+            tc_bits=tc_bits,
+            mask_bits=mask_bits,
+            provider_bits=provider_bits,
+            provider_offset=provider_offset,
+            zone_bits=zone_bits,
+            zone_offset=zone_offset,
+        )
+
+    @classmethod
+    def default(cls) -> MarkGeometry:
+        return cls.from_settings({})
+
+
 @dataclass
 class FirewallIR:
     """Complete intermediate representation of the firewall."""
@@ -141,6 +258,12 @@ class FirewallIR:
     # list of hosts/providers.  The emitter declares the nft sets; shorewalld
     # populates them at runtime via ``NfSetsManager``.
     nfset_registry: NfSetRegistry = field(default_factory=NfSetRegistry)
+
+    # Mark field layout derived from WIDE_TC_MARKS / HIGH_ROUTE_MARKS /
+    # TC_BITS / MASK_BITS / PROVIDER_BITS / PROVIDER_OFFSET / ZONE_BITS.
+    # Populated by build_ir() immediately after the IR is constructed.
+    # Default is the upstream defaults (8-bit TC, 8-bit total, low routes).
+    mark_geometry: MarkGeometry = field(default_factory=MarkGeometry.default)
 
     # Macro registry: populated by _load_standard_macros (bundled Shorewall
     # macros) and _load_custom_macros (user macros override).  Per-compile
