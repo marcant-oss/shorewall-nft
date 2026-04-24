@@ -26,6 +26,7 @@ factoring, not privilege mode.
 | **II — Shared-infrastructure merge** | Move validators (tc_validate, connstate) into netkit, rebuild them to accept a `ns_name` parameter, parameterise probe-derivation for family. Both runtimes consume the shared layer; neither is retired. | Phase I done. |
 | **III — Feature-parity additions in simlab** | Port INPUT-chain coverage + REJECT-vs-DROP distinction into simlab so it covers the same semantic surface as simulate.py. simulate.py keeps those features; simlab gains them. | Phase II done. |
 | **IV — NAT + deep conntrack verification** | **New capability, missing from both runtimes today.** Verify that DNAT/SNAT actually rewrote the packet (daddr / saddr + reverse-direction symmetry); verify conntrack state (NEW / ESTABLISHED / RELATED) and tuplehash_orig/reply divergence on NAT'd flows; verify mark is set as expected for fw-mark-based routing. | Phase II done (leverages the shared-validator layer). |
+| **V — Bidirectional probe sink (simlab)** | **New infrastructure.** Today simlab injects one-way probes — observed verdict = packet seen at expected-iface. User idea: the sink side should **respond** (TCP SYN-ACK, UDP fake reply, ICMP echo-reply, etc.). This creates a real conntrack entry on the firewall (NEW → ESTABLISHED), lets the sink verify the response packet actually returns, and exercises the stateful-firewall return path. End-to-end bidi verification per probe. Strongly enables / simplifies Phase IV (which needs bidi traffic to reliably populate conntrack for tuple assertions). | Phase II done. Runs in parallel with Phase IV; Phase IV can gate its ct-tuple tests on Phase V sink responses when both are landed. |
 
 Nothing is deleted. Tests for both runtimes run side-by-side; CI
 gate ensures verdicts stay consistent across the two.
@@ -264,6 +265,136 @@ not just porting; adds ~600 LOC of validator + tests).
 
 ---
 
+## Phase V — Bidirectional probe sink (simlab)
+
+Today simlab injects a probe on the source interface and records
+the verdict as **whether the probe arrived at the expected-iface**.
+That is a one-way observation: nothing on the sink side actively
+responds, so the firewall's conntrack table sees a single NEW
+packet and never reaches ESTABLISHED. Stateful-firewall bugs (like
+a missing `ct state established accept` in the return-path chain)
+are invisible.
+
+### User idea (2026-04-24)
+
+> "wenn die sink auf die probe antworten würde (SYN-ACK, oder udp
+> einfach ein fake, weitere dito), dann gäbe es einen conntrack
+> eintrag. die antwort selber sollte dann auch erwartet werden,
+> quasi checkt die sink das antwortpacket. also bidi am ende."
+
+Operationalised:
+
+1. Every TUN/TAP egress interface in simlab gains a **sink
+   responder** on its reader side.
+2. When the reader observes a probe arrive on `expect_iface`,
+   instead of only recording the ACCEPT verdict, it **synthesises
+   a reply** appropriate to the probe's protocol and writes it
+   back to the same fd.
+3. The reply traverses the firewall in reverse (conntrack
+   recognises it as the reply half of the flow, state transitions
+   NEW → ESTABLISHED).
+4. The reader on the **original inject fd** then observes the
+   reply. The probe's verdict becomes ACCEPT only when the reply
+   is ALSO seen — true bidirectional coverage.
+5. If no reply arrives (stateful-filter dropped the return), the
+   probe reports a new verdict `ACCEPT_FWD_ONLY` so operators
+   can tell the difference from pure DROP.
+
+### Per-protocol sink responder
+
+| Protocol | Sink-side response | What's exercised on the return path |
+|---|---|---|
+| TCP | SYN-ACK (step 2 of handshake) | ct state NEW + established-accept rules; seq/ack tracking |
+| UDP | Single-packet "reply" (any byte) with src/dst swapped | ct state NEW; established-accept |
+| ICMP echo-request | ICMP echo-reply | ICMP conntrack helper |
+| ICMPv6 echo-request | ICMPv6 echo-reply | ICMPv6 conntrack helper |
+| GRE / ESP / OSPF | Minimal tunnel echo if the protocol supports it; otherwise report `ACCEPT_FWD_ONLY` with a note | (n/a) |
+
+### Implementation sketch
+
+Files to touch (shorewall-nft-simlab only):
+
+- `shorewall_nft_simlab/sink.py` (NEW) — per-protocol reply
+  synthesis. Pattern: mirror `packets.py` builders but for the
+  reply direction (src/dst swapped, flags set appropriately).
+  TCP: `SYN-ACK` with the correct seq/ack-number derived from the
+  observed frame. UDP: 1-byte payload with swapped ports. ICMP:
+  flip type from request to reply.
+- `shorewall_nft_simlab/controller.py::_on_tap_read` — after
+  matching an observed probe, call
+  `sink.synthesise_reply(probe, observed_frame)` and write it to
+  the same fd. Track the probe in a new `_await_return` dict
+  keyed by reply's expected 5-tuple.
+- `shorewall_nft_simlab/controller.py::_on_observed_fast` — extend
+  to recognise reply frames by reverse-5-tuple match against
+  `_await_return`; when a reply lands on the inject side, flip
+  the probe's verdict to fully-bidirectional ACCEPT.
+- `shorewall_nft_simlab/smoketest.py` — new CLI flag
+  `--bidi {on,off,auto}` (default `auto` — on for tcp/udp/icmp,
+  off for raw protocols). Report schema adds `return_observed:
+  bool` and `return_elapsed_ms: float`.
+
+Config: a `--no-bidi` flag for operators who specifically want
+the legacy one-way observation (slightly cheaper, ~5 % fewer
+writes per probe).
+
+### Phase V exit criteria
+
+- For a fixture with `ct state established accept` in the FORWARD
+  chain, probes report `ACCEPT` with both `forward_observed=True`
+  and `return_observed=True`.
+- For a fixture with **no** `established accept` (regression),
+  probes report `ACCEPT_FWD_ONLY` — operator sees the stateful-
+  path bug.
+- Conntrack entries on the firewall netns actually transition
+  NEW → ESTABLISHED for bidi-successful probes; verified by
+  `NFCTSocket.dump()` immediately after the probe.
+- Phase IV's ct-tuple assertions become much more reliable when
+  run after Phase V lands (real conntrack state to inspect
+  instead of NEW-only half-flows).
+
+### Risks
+
+- **Reply synthesis fidelity** — TCP SYN-ACK requires correct
+  `ack=seq+1` and a reasonable initial `seq` of its own. Wrong
+  values → conntrack rejects the reply as "unexpected" and it
+  never reaches the inject side. Needs explicit unit tests.
+- **Simultaneous probes on the same 5-tuple** — if two probes
+  concurrently target the same `(src, dst, sport, dport)`, their
+  replies collide. Mitigation: enforce unique sport per probe at
+  inject time (already done for sport randomisation).
+- **ICMPv6 type parity** — reply type depends on request type
+  (echo-request → echo-reply, type 128 → 129). Lookup table
+  required.
+- **Throughput impact** — for each probe there's now an extra
+  write (reply synthesis) + extra read (reply observation). Fold
+  into the existing writer queue; expected throughput drop
+  ~15-20 % but conntrack coverage and bidi verification are
+  worth it. Document in the perf table of simlab.md.
+
+### Effort estimate
+
+- Sink responders + controller wiring: ~1.5 days.
+- `--bidi` CLI flag + report schema + tests: ~0.5 day.
+- `ACCEPT_FWD_ONLY` verdict plumbing + report rendering:
+  ~0.5 day.
+- Integration test for the stateful-missing regression case:
+  ~0.5 day.
+- Total: **~3 days** Sonnet-agent time.
+
+Verification (rootless):
+
+```bash
+unshare --user --map-root-user --net --mount -- \
+    shorewall-nft-simlab --config tests/fixtures/ref-ha-minimal/shorewall46 \
+                         --data /tmp/snap full --bidi on
+# Expect: every ACCEPT probe shows return_observed=True in
+# report.json; ct state for each flow is ESTABLISHED in the
+# final NFCTSocket dump.
+```
+
+---
+
 ## Rollback / risk posture
 
 All three phases are purely **additive**. No deletions, no
@@ -410,8 +541,9 @@ unshare --user --map-root-user --net --mount -- bash -c '
 | II  — shared infra | ~2 days | Phase I done |
 | III — simlab parity | ~3 days | Phase II done |
 | IV  — NAT + deep ct | ~3 days | Phase II done (parallel with III possible) |
+| V   — bidi probe sink | ~3 days | Phase II done; strongly complements Phase IV |
 
-**Wall-clock**: ~10–11 days Sonnet-agent time. Waits on the
+**Wall-clock**: ~13–14 days Sonnet-agent time. Waits on the
 shorewalld-Claude's keepalived feat branch to land before Phase I
 starts (to avoid branch/stash churn that has already cost time
 twice this session).
