@@ -39,6 +39,93 @@
    rate, which JSON schema. Worker topology is one decoder per
    (netns, group); fan-out to K sinks is cheap within that worker.
 
+## MVP scope — shorewalld side (2026-04-24, approval pending)
+
+**Implementation is gated. Do not start without explicit user freigabe.**
+
+Concrete deliverables narrower than the full "Scope (proposed)" below.
+Dual-format / Wazuh / sampling / multi-group work is a follow-up
+increment after MVP is landed and proven.
+
+1. **`shorewalld/log_dispatcher.py`** — NFLOG reader. pyroute2-first
+   per `pyroute2-audit-2026-04-24.md`: try `pyroute2.NFLOGSocket`;
+   fall back to raw `AF_NETLINK` / `NFNL_SUBSYS_ULOG` only if the
+   pyroute2 API is unstable for our needs. Runs inside the target
+   netns via the existing `WorkerRouter` fork-and-setns pattern
+   (same model as `nft_worker.py` + `READ_KIND_CTNETLINK`). Includes
+   prefix parser (chain, disposition, optional rule number) and a
+   bounded queue to the collector.
+2. **`shorewalld/collectors/log.py`** — `LogCollector` exporting
+   `shorewall_log_total{chain,disposition,netns}` as the MVP's only
+   metric. Wired into `ShorewalldRegistry` alongside existing
+   collectors.
+3. **`shorewalld.conf` knobs** (MVP subset — full catalogue under
+   "Scope (proposed)" below):
+   - `LOG_DISPATCH={shorewalld, ulogd2, none}` — default `none`
+     preserves current behaviour.
+   - `LOG_NFLOG_GROUP=<int>` — single group in MVP (multi-group is
+     a follow-up; see `LOG_GROUPS` in "Scope (proposed)").
+   - `LOG_DISPATCH_SOCKET=/run/shorewalld/log.sock` — optional
+     newline-JSON tap for external consumers.
+   - `LOG_DISPATCH_FILE=/var/log/shorewall-nft.log` — optional plain
+     fallback for `shorewall-nft show log`.
+4. **Tests under `packages/shorewalld/tests/`**:
+   - Mock `NFLOGSocket` fixture feeds synthetic netlink frames;
+     no kernel interaction (same pattern as
+     `worker_test_helpers.py::inproc_worker_pair` for the nft worker).
+   - Prefix parser unit tests (well-formed, malformed, truncated).
+   - Collector test asserts counter increments per
+     (chain, disposition, netns) triple.
+   - Integration-style test with an `inproc_worker_pair`-style
+     stand-in for the setns fork path.
+5. **Systemd unit extension**: the `shorewalld.service` unit (and
+   the `shorewall-nft generate-systemd --netns ...` output) must
+   start the nflog-listener worker when `LOG_DISPATCH=shorewalld`.
+   No separate unit — the listener is a subsystem of the existing
+   daemon, identical lifecycle to the DNS pipeline / collectors.
+
+**Performance + API invariants (MUST for every item above)** — these
+are inherited from `packages/shorewalld/CLAUDE.md` § Performance
+doctrine and from "Hard requirements" at the top of this file; they
+apply to MVP code, not just the "fully hardened" follow-up.
+
+- **Zero-copy decode.** `memoryview` / slice the raw NFLOG frame in
+  place; no intermediate `bytes(frame)` copies between reader, prefix
+  parser and collector. Two-pass peek of the log prefix before any
+  full L3/L4 parse (same pattern as `dnstap._peek_message_type` /
+  `pbdns._peek_type_and_qname`). Frames whose prefix mismatches the
+  expected `LOGFORMAT` are dropped before full decode — no speculative
+  allocation.
+- **Asyncio for I/O; threads only for GIL-bound CPU.** NFLOG-socket
+  read, `LOG_DISPATCH_SOCKET` writes and `LOG_DISPATCH_FILE` appends
+  live on the daemon event loop. No thread pool for I/O. Prefix
+  parse runs inline; only if profiling shows it dominates do we move
+  to a bounded `ThreadPoolExecutor` (same pattern as `DecodeWorkerPool`
+  uses for dnstap). Collector counter bumps ride the existing
+  atomic-int fast path (`_IngressMetricsBase` subclass with
+  pre-registered keys — GIL-atomic `dict[int] += 1`, no lock).
+- **API-only — never shell out, never file-tail.** `libnetfilter_log`
+  through `pyroute2.NFLOGSocket` (or raw `AF_NETLINK` /
+  `NFNL_SUBSYS_ULOG` via pyroute2 primitives if the high-level class
+  is unstable). No `subprocess.run(["ulogd", ...])`, no tailing an
+  external ulogd output file, no parsing `dmesg`. Matches the
+  zero-fork-for-new-work + persistent-fork-per-netns rule.
+- **Bounded queue + visible drops.** Fixed-size asyncio queue between
+  reader and collector; slow consumer = oldest-dropped, drop surfaced
+  as a Prometheus counter (e.g. `shorewall_log_dropped_total` — label
+  set to be finalised when multi-sink follow-up lands). No unbounded
+  backpressure into the netlink socket; `LOG_NETLINK_RCVBUF` is the
+  kernel-side cap, the asyncio queue is the userspace-side cap, both
+  explicit.
+- **Setns happens at fork, not on the event loop.** The nflog listener
+  inherits the worker's netns — scrape thread / event loop never call
+  `setns(2)` themselves, same invariant as `READ_KIND_CTNETLINK`.
+
+**Out of scope for MVP** (all still in "Scope (proposed)" below):
+dual-format fan-out, Wazuh/ECS JSON schema, sampling, multi-group
+per netns, `recvmmsg` batching, per-sink drop counters. MVP validates
+the end-to-end pipeline; performance + fan-out hardening follows.
+
 ## Context
 
 WP-E1 was implemented as Option B (see commit message): `LOG_BACKEND` is honoured and `nft log group <N>` is emitted when `LOG_BACKEND=netlink` is set. But **what listens on that netlink group** is left to the operator (typically `ulogd2`).
@@ -209,6 +296,54 @@ three-stage pipeline:
 - In-process aggregation beyond counters (percentile histograms,
   top-N source IPs). Let downstream (Prometheus + PromQL, or Wazuh
   rules) handle it.
+
+## ulogd2 reference
+
+`ulogd2` (Debian `ulogd2` 2.0.8-3, installed locally 2026-04-24) is
+the incumbent userspace consumer for `nfnetlink_log`. Architecture
+relevant to our design:
+
+- **Input plugins** (`ulogd_inppkt_NFLOG.so`, `ulogd_inpflow_NFCT.so`,
+  legacy `ulogd_inppkt_ULOG.so`) — one instance per netfilter
+  subsystem; NFLOG uses libnetfilter_log over `nfnetlink_log`.
+- **Interpreter plugins** (`raw2packet_BASE`, `filter_IP2STR`,
+  `filter_PRINTPKT`, …) — stackable transforms between input and
+  output.
+- **Output plugins**: LOGEMU (plain text), OPRINT, SYSLOG, PCAP,
+  JSON (via `ulogd2-json`), MySQL / PostgreSQL / SQLite3 (separate
+  Debian packages).
+- **Stack model**: operators wire `stack=input:X,filter:Y,output:Z`
+  per log stream in `ulogd.conf`; each stream independent.
+- **Netns handling**: not first-class. Operators run one `ulogd`
+  systemd unit per netns with `NetworkNamespacePath=`, one
+  `ulogd.conf` per netns, manual group-number allocation.
+- **Local refs for deeper dives**: `/usr/share/doc/ulogd2/README`,
+  `/usr/share/doc/ulogd2/ulogd.txt.gz`, `/usr/share/doc/ulogd2/examples/`
+  (sample `ulogd.conf` stacks), `/etc/ulogd.conf` (Debian default —
+  requires root to read).
+
+Borrow-ables for `log_dispatcher.py`:
+- Per-stream sink config (maps to our `LOG_GROUP_<N>_SINKS`) —
+  follow-up, not MVP.
+- JSON field naming (`oob.*`, `raw.*`, `ip.*`, `orig.*` prefixes in
+  ulogd2-json output) — worth a quick compare when our JSON sink
+  lands, for operator muscle memory. Not locking our schema to
+  theirs; Wazuh / ECS wins for the SIEM consumer.
+
+Deliberate divergences:
+- **Daemon integration**: listener is a shorewalld subsystem, not
+  a separate process. One fork per netns is already paid for; no
+  new systemd unit, no per-netns config file duplication.
+- **Transport**: libnetfilter_log via pyroute2 `NFLOGSocket` (or
+  raw `AF_NETLINK` fallback), not the C plugin ABI. Matches the
+  rest of the pyroute2-first codebase.
+- **Metrics-first**: `shorewall_log_total` ships before any on-disk
+  sink wiring — fits the existing exporter contract.
+
+Upstream source: `https://git.netfilter.org/ulogd2/` (the public
+`https://` endpoint is Anubis-gated against scraping; clone via
+`git clone git://git.netfilter.org/ulogd2` or read via
+`apt-get source ulogd2` when deeper reference is needed).
 
 ## See also
 

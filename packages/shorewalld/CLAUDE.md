@@ -327,3 +327,16 @@ Key decisions recorded here to avoid re-debating them:
    (The dnstap smoke harness is shipped as
    `tools/setup-shorewalld-dnstap-smoke.sh`; target host is your
    simulation test host.)
+2. **Log dispatcher** (`shorewalld/log_dispatcher.py` +
+   `collectors/log.py`, planned — not yet shipped) — reads
+   `nfnetlink_log` groups inside each managed netns; emits
+   `shorewall_log_total{chain,disposition,netns}` plus optional
+   plain-file and unix-socket sinks. Replaces the per-netns
+   `ulogd2` plumbing for operators who already run shorewalld per
+   netns. Reuses the existing `WorkerRouter` fork-and-setns pattern
+   (same model as `nft_worker.py` + `READ_KIND_CTNETLINK`) — no new
+   IPC machinery. Design + MVP scope in
+   `docs/roadmap/shorewalld-log-dispatcher-todo.md` (MVP section is
+   the approval-sized deliverable; broader dual-format / Wazuh /
+   sampling work is follow-up). **Implementation gated — do not
+   start without explicit user freigabe.**
