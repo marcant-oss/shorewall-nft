@@ -11,15 +11,12 @@ Covers:
 
 from __future__ import annotations
 
-from pathlib import Path
 
-import pytest
 
 from shorewall_nft.compiler.ir import (
     Chain,
     ChainType,
     FirewallIR,
-    Match,
     Rule,
     Verdict,
 )

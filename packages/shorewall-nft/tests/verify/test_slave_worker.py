@@ -20,16 +20,10 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import threading
-import time
 from unittest.mock import MagicMock, patch
 
-import pytest
 
-import shorewall_nft.verify.slave_worker as sw
 from shorewall_nft.verify.slave_worker import (
-    _probe_icmp,
-    _probe_tcp,
-    _probe_udp,
     spawn_worker,
     worker_main,
 )

@@ -16,9 +16,8 @@ individual tests just receive a ready-to-use ``NetnsTopology`` instance.
 
 from __future__ import annotations
 
-import os
 import subprocess
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 import pytest
 

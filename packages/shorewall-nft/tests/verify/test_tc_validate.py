@@ -11,17 +11,14 @@ ShorewalConfig/ConfigLine stubs in memory.
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass, field
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from shorewall_nft.compiler.tc import (
     TcClass,
     TcConfig,
     TcDevice,
-    TcFilter,
     emit_tc_commands,
     parse_tc_config,
 )
