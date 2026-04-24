@@ -80,6 +80,47 @@ dump from NS_FW after the ruleset is loaded.
 Write one pcap file per interface to
 .I DIR
 during the run.  Useful for debugging probes with Wireshark.
+.TP
+.BI \-\-family " {4,6,both}"
+Select which IP address families to probe.
+.RS
+.TP
+.B 4
+IPv4 probes only.  The
+.I ip6tables.txt
+dump (if present) is ignored.
+.TP
+.B 6
+IPv6 probes only.  Requires
+.I ip6tables.txt
+to be present in
+.BR \-\-data .
+Returns an error if the file is absent.
+.TP
+.B both
+Both IPv4 and IPv6 probes run in a single pass (default when both
+dump files are present).
+.RE
+.IP
+When
+.B \-\-family
+is omitted the effective family is auto-detected from the dump files
+in
+.BR \-\-data :
+both
+.I iptables.txt
+and
+.I ip6tables.txt
+present \[->]
+.BR both ;
+only
+.I iptables.txt
+\[->]
+.BR 4 ;
+only
+.I ip6tables.txt
+\[->]
+.BR 6 .
 
 .SH SUBCOMMANDS
 

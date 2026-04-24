@@ -396,11 +396,56 @@ archived `report.json` / `report.md` under `sysctl_warnings`
 so reviewers can attribute performance anomalies to
 configuration rather than code.
 
+## IP family selection (--family)
+
+Both CLIs accept a `--family {4,6,both}` flag (default `both`) that
+controls which IP families are exercised. When omitted the family is
+**auto-detected** from the dump files present in `--data`:
+
+| Files present | Effective family |
+|---|---|
+| `iptables.txt` only | `4` |
+| `ip6tables.txt` only | `6` |
+| Both | `both` |
+
+Passing an explicit `--family` that is unsatisfied by the available
+dumps is an error (e.g. `--family 6` with no `ip6tables.txt`).
+
+### Examples
+
+```bash
+# IPv4-only run — faster when no ip6tables.txt is available
+shorewall-nft-simlab --data /tmp/fw-snap --family 4 full
+
+# IPv6-only run — target v6 rule regressions specifically
+shorewall-nft-simlab --data /tmp/fw-snap --family 6 full --verbose
+
+# Dual-stack (default) — both v4 and v6 probes in a single pass
+shorewall-nft-simlab --data /tmp/fw-snap full
+
+# Via the shorewall-nft CLI
+shorewall-nft simulate --data /tmp/fw-snap --family 4
+shorewall-nft simulate --data /tmp/fw-snap --family 6
+shorewall-nft simulate --data /tmp/fw-snap               # auto-detects
+```
+
+### v6 probe parity
+
+IPv6 probes run at the same quality level as IPv4:
+
+- **Per-rule probes** (`_build_per_rule_probes`): derives test cases from
+  ip6tables.txt chain rules, replaces placeholder source IPs with
+  zone-local IPv6 addresses via `_build_zone_to_concrete_src(family=6)`,
+  and re-classifies each probe via the ip6tables oracle.
+- **Random probes** (`RandomProbeGenerator`): includes IPv6 subnets from
+  the FwState address dump in the candidate pool.  v6 probes use
+  `icmpv6` instead of `icmp` and 20-bit flow-label probe IDs.
+- **NDP warmup** (`_ndp_warmup`): fires throw-away ICMPv6 probes to every
+  unique v6 destination before the real batch so neighbor cache entries
+  are warm and the first real batch does not flood the NDP path.
+
 ## Known limitations
 
-- **IPv4 only for the moment.** IPv6 probes work via the
-  builders but the oracle + random generator stick to v4 until
-  the second simlab iteration.
 - **Single NS_FW.** HA pair simulation (two FW namespaces
   exchanging VRRP + conntrackd sync) is on the roadmap.
 - **Flowtable offload** is not exercised by packet tests yet —

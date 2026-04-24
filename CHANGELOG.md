@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase I — dual-stack v4/v6 production parity)
+
+- **`--family {4,6,both}`** global flag on `shorewall-nft-simlab`
+  and `--family` option on `shorewall-nft simulate`.  Controls which
+  IP address families are exercised; default is `both`.  When omitted,
+  the effective family is auto-detected from the available dump files
+  in `--data`: both `iptables.txt` + `ip6tables.txt` present → `both`;
+  only `iptables.txt` → `4`; only `ip6tables.txt` → `6`.  Requesting
+  an unsatisfied family (e.g. `--family 6` without `ip6tables.txt`) is
+  a hard error.
+- **`run_simulation_from_config(family=...)`** — the simlab Python API
+  now accepts the `family` parameter so programmatic callers can
+  restrict probe generation to a single address family.
+- **Parser-level auto-detect** in both CLIs: the family is derived from
+  the dump files present at startup, not hard-coded to IPv4.
+- **IPv6 probe parity** confirmed in `simulate.py`:
+  - `derive_tests_all_zones(family=6)` now properly gates v4/v6
+    generation through the `_run_v4`/`_run_v6` flags in
+    `run_simulation`.
+  - All probe dispatch paths (`run_tcp_test`, `run_udp_test`,
+    `run_icmp_test`) already honour `family=6` — audited and
+    confirmed; no silent v4-only shortcuts found.
+  - `RandomProbeGenerator.next()` already picks v6 subnets from the
+    FwState address pool and emits `icmpv6` instead of `icmp` —
+    confirmed correct.
+
+### Changed
+
+- `docs/testing/simlab.md`: removed the stale "IPv4 only for the
+  moment" note from "Known limitations".  Added the new `--family`
+  section with v4-only / v6-only / dual-stack examples and a
+  description of v6 probe parity.
+- `tools/man/shorewall-nft-simlab.8`: documented the `--family`
+  global option.
+- `tools/man/shorewall-nft.8`: documented `--family` in the
+  `simulate` subcommand section.
+
 ### Added (simlab live-state collector + `--data` integration)
 
 - **`tools/simlab-collect.sh`** — small bash helper that captures a

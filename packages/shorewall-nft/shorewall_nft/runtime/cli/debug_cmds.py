@@ -421,10 +421,18 @@ def migrate(directory, iptables, output, dry_run,
                    "When set, the in-tree veth-based simulator is bypassed "
                    "and probes run against a TUN/TAP topology synthesised "
                    "from the dump. Requires shorewall-nft-simlab installed.")
+@click.option("--family",
+              type=click.Choice(["4", "6", "both"]),
+              default=None,
+              help="IP families to probe: '4' (IPv4 only), '6' (IPv6 only), "
+                   "or 'both' (default). Auto-detected from available dump "
+                   "files when omitted: if only iptables.txt is present, "
+                   "effective family is '4'; if only ip6tables.txt, '6'; "
+                   "if both are present, 'both'.")
 @config_options
 def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
              src_iface, dst_iface, all_zones, max_tests, seed, verbose,
-             parallel, no_trace, data_dir,
+             parallel, no_trace, data_dir, family,
              config_dir, config_dir_v4, config_dir_v6, no_auto_v4, no_auto_v6):
     """Run packet-level simulation in 3 network namespaces.
 
@@ -433,6 +441,11 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
     ip6add / ip6routes + iptables.txt + optional ip6tables.txt), which
     is exactly what ``tools/simlab-collect.sh`` produces from a live
     firewall host.
+
+    The ``--family`` flag controls which IP families are exercised.
+    When omitted the family is auto-detected from the available dump files:
+    both ``iptables.txt`` and ``ip6tables.txt`` present → ``both``;
+    only ``iptables.txt`` → ``4``; only ``ip6tables.txt`` → ``6``.
     """
     from shorewall_nft.verify.simulate import (
         DST_IFACE_DEFAULT,
@@ -444,6 +457,30 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
         directory, config_dir, config_dir_v4, config_dir_v6,
         no_auto_v4, no_auto_v6)
     config_dir = primary
+
+    # ── Parser-level auto-detect for --family ──────────────────────
+    # Resolve the effective family from --family + available dumps.
+    # Works for both the --data path and the direct --iptables path.
+    def _resolve_family(
+        explicit: str | None,
+        has_v4: bool,
+        has_v6: bool,
+    ) -> str:
+        """Return the effective family string given explicit flag + dump presence."""
+        if explicit is not None:
+            if explicit == "6" and not has_v6:
+                raise click.UsageError(
+                    "--family 6 requested but no IPv6 dump is available")
+            if explicit == "4" and not has_v4:
+                raise click.UsageError(
+                    "--family 4 requested but no IPv4 dump is available")
+            return explicit
+        # Auto-detect
+        if has_v4 and has_v6:
+            return "both"
+        if has_v6:
+            return "6"
+        return "4"
 
     # ── Simlab delegation path ──────────────────────────────────────
     # When --data is given, skip the in-tree veth-based validator and
@@ -458,7 +495,12 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
                 "installed (pip install shorewall-nft-simlab).", err=True)
             raise SystemExit(2)
 
-        click.echo(f"Simulating {config_dir} via simlab against {data_dir}")
+        # Auto-detect family from available dump files in --data dir.
+        _data_has_v4 = (data_dir / "iptables.txt").exists()
+        _data_has_v6 = (data_dir / "ip6tables.txt").exists()
+        eff_family = _resolve_family(family, _data_has_v4, _data_has_v6)
+        click.echo(f"Simulating {config_dir} via simlab against {data_dir} "
+                   f"(family={eff_family})")
         click.echo()
         sim_results = run_simulation_from_config(
             config_dir=config_dir,
@@ -466,6 +508,7 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
             max_per_pair=max_tests,
             seed=seed,
             verbose=verbose,
+            family=eff_family,
         )
         passed = sum(1 for r in sim_results if r.passed)
         failed = sum(1 for r in sim_results if not r.passed)
@@ -491,6 +534,11 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
                    err=True)
         raise SystemExit(2)
 
+    # Auto-detect family from available dump files.
+    _has_v4 = iptables is not None
+    _has_v6 = ip6tables_dump is not None
+    eff_family = _resolve_family(family, _has_v4, _has_v6)
+
     def _parse_list(val: str | None) -> list[str] | None:
         if not val:
             return None
@@ -503,11 +551,11 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
         return [t.strip() for t in val.split(",") if t.strip()]
 
     target_list = _parse_list(targets)
-    target_list6 = _parse_list(targets_v6)
+    target_list6 = _parse_list(targets_v6) if eff_family in ("6", "both") else None
     sif = src_iface or SRC_IFACE_DEFAULT
     dif = dst_iface or DST_IFACE_DEFAULT
 
-    click.echo(f"Simulating {config_dir} against {iptables}")
+    click.echo(f"Simulating {config_dir} against {iptables} (family={eff_family})")
     click.echo(f"Topology: src-iface={sif}, dst-iface={dif}")
     if target_list or target_list6:
         n4 = len(target_list) if target_list else 0
@@ -529,7 +577,7 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
         iptables_dump=iptables,
         target_ip=target,
         targets=target_list,
-        ip6tables_dump=ip6tables_dump,
+        ip6tables_dump=ip6tables_dump if eff_family in ("6", "both") else None,
         targets6=target_list6,
         max_tests=max_tests,
         seed=seed,
@@ -539,6 +587,7 @@ def simulate(directory, iptables, target, targets, ip6tables_dump, targets_v6,
         all_zones_from_config=all_zones,
         src_iface=sif,
         dst_iface=dif,
+        family=eff_family,
     )
 
     passed = sum(1 for r in results if r.passed)

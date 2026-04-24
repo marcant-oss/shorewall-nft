@@ -386,6 +386,34 @@ Run N test threads in parallel.
 .TP
 .B \-\-no\-trace
 Disable nft trace logging during the simulation run.
+.TP
+.BI \-\-family " {4,6,both}"
+Select which IP address families to probe.
+.RS
+.TP
+.B 4
+IPv4 probes only.
+.TP
+.B 6
+IPv6 probes only.  Requires
+.B \-\-ip6tables
+(direct mode) or
+.I ip6tables.txt
+in the
+.B \-\-data
+directory (simlab mode).
+.TP
+.B both
+Both IPv4 and IPv6 probes (default when both dump files are available).
+.RE
+.IP
+When omitted, the effective family is auto-detected from the dump files
+that are available: both iptables.txt and ip6tables.txt present \[->]
+.BR both ;
+only iptables.txt \[->]
+.BR 4 ;
+only ip6tables.txt \[->]
+.BR 6 .
 .RE
 
 Also accepts the config directory flags.

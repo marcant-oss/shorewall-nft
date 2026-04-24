@@ -1256,6 +1256,7 @@ def run_simulation(
     dst_iface: str = DST_IFACE_DEFAULT,
     zones: dict[str, str] | None = None,
     all_zones_from_config: bool = False,
+    family: str = "both",
 ) -> list[TestResult]:
     """Run the full packet-level simulation.
 
@@ -1265,7 +1266,24 @@ def run_simulation(
     4. Derive and run test cases (parallel)
     5. Report results
     6. Cleanup
+
+    ``family`` controls which IP families are exercised:
+    - ``"both"`` (default) — v4 and v6 probes run together, same as
+      not passing the flag.  Auto-detect: if ``ip6tables_dump`` is None
+      only v4 probes are generated regardless of this setting.
+    - ``"4"`` — v4 probes only, v6 generation skipped even when
+      ``ip6tables_dump`` is present.
+    - ``"6"`` — v6 probes only; raises ``ValueError`` when
+      ``ip6tables_dump`` is None.
     """
+    if family not in ("4", "6", "both"):
+        raise ValueError(f"family must be '4', '6', or 'both'; got {family!r}")
+    if family == "6" and ip6tables_dump is None:
+        raise ValueError(
+            "--family 6 requires --ip6tables (no v6 dump available)")
+    # Suppress v6 generation if the caller explicitly asked for v4-only.
+    _run_v4 = family in ("4", "both")
+    _run_v6 = family in ("6", "both") and ip6tables_dump is not None
     import tempfile
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1308,24 +1326,26 @@ def run_simulation(
     if zones:
         # Multi-zone: walk the full iptables dump, picking every rule
         # whose chain resolves to a known zone pair. No target_ip gate.
-        tests_by_target["*"] = derive_tests_all_zones(
-            iptables_dump, zones=set(zones.keys()),
-            max_tests=max_tests, seed=seed, family=4)
-        if ip6tables_dump:
+        if _run_v4:
+            tests_by_target["*"] = derive_tests_all_zones(
+                iptables_dump, zones=set(zones.keys()),
+                max_tests=max_tests, seed=seed, family=4)
+        if _run_v6:
             tests_by_target["*6"] = derive_tests_all_zones(
-                ip6tables_dump, zones=set(zones.keys()),
+                ip6tables_dump, zones=set(zones.keys()),  # type: ignore[arg-type]
                 max_tests=max_tests, seed=seed, family=6)
     else:
         # v4 targets
-        target_list = list(targets) if targets else [target_ip]
-        for t_ip in target_list:
-            t_tests = derive_tests(iptables_dump, target_ip=t_ip,
-                                   max_tests=max_tests, seed=seed, family=4)
-            tests_by_target[t_ip] = t_tests
+        if _run_v4:
+            target_list = list(targets) if targets else [target_ip]
+            for t_ip in target_list:
+                t_tests = derive_tests(iptables_dump, target_ip=t_ip,
+                                       max_tests=max_tests, seed=seed, family=4)
+                tests_by_target[t_ip] = t_tests
         # v6 targets (optional)
-        if ip6tables_dump and targets6:
+        if _run_v6 and targets6:
             for t_ip in targets6:
-                t_tests = derive_tests(ip6tables_dump, target_ip=t_ip,
+                t_tests = derive_tests(ip6tables_dump, target_ip=t_ip,  # type: ignore[arg-type]
                                        max_tests=max_tests, seed=seed, family=6)
                 tests_by_target[t_ip] = t_tests
     # Flatten for topology setup / bulk execution.
