@@ -176,16 +176,30 @@ This eliminates the per-netns ulogd2 plumbing entirely.
 
 ### LOGFORMAT + LOGRULENUMBERS support (the "Option C" pure-compiler piece)
 
-Independent of the shorewalld dispatcher work — just a printf-style
-template parser and emitter:
+**Status (2026-04-24)**: `LOGFORMAT` and `MAXZONENAMELENGTH`
+**SHIPPED** on `master` in commit `445e6ca`. `LOGRULENUMBERS` is
+**parsed only** — the flag is stored on `LogSettings.rule_numbers`
+but per-rule sequence numbers are not yet injected into the prefix
+(would need a counter threaded through every `_add_rule` call site;
+filed as follow-up for a later increment).
 
-- `LOGFORMAT` setting (default `Shorewall:%s:%s:`) — `%s` slots for
-  chain name and disposition. Substitute at compile time per rule.
-- `LOGRULENUMBERS=Yes` — append rule sequence number to the prefix.
-- `MAXZONENAMELENGTH` — truncate zone names in the prefix per the
-  setting.
+Shipped:
 
-Files: `shorewall_nft/nft/emitter.py` log fragment builder.
+- `LOGFORMAT` setting (default `Shorewall:%s:%s:` — byte-identical to
+  the previously hardcoded template, so the shorewalld dispatcher's
+  prefix parser works unchanged for any config that does not
+  override it).
+- `MAXZONENAMELENGTH` — truncates the first `-`-separated component
+  of the chain substitution (default 5; `0` disables truncation).
+  Upstream semantics.
+- Safe fallback: a malformed `LOGFORMAT` (wrong `%s` count, bad
+  conversion specifier) silently falls back to the default template,
+  so an operator typo never compile-crashes.
+
+Files touched: `shorewall_nft/nft/emitter.py` (`LogSettings` extended
++ `format_prefix()` helper) and `shorewall_nft/compiler/ir/rules.py`
+(one hardcoded f-string migrated to the helper). Tests live in
+`tests/test_log_settings.py::TestLogFormat` (+9 cases).
 
 ### shorewalld log-dispatcher (the per-netns runtime piece)
 

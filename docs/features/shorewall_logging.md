@@ -373,6 +373,28 @@ instead of `nft log level X` rules. This allows per-group log sinks
 (e.g. a dedicated `nflog` group consumed by a shorewalld instance or
 `ulogd2`).
 
+### Option C — LOGFORMAT / MAXZONENAMELENGTH / LOGRULENUMBERS (compiler side, 2026-04-24)
+
+Three additional `shorewall.conf` knobs, honoured at compile time by
+`LogSettings.format_prefix()`:
+
+| setting             | default                | purpose                                                    |
+|---------------------|------------------------|------------------------------------------------------------|
+| `LOGFORMAT`         | `Shorewall:%s:%s:`     | printf template for log prefix: first `%s` = chain name, second `%s` = disposition (`DROP`, `REJECT`, …) |
+| `MAXZONENAMELENGTH` | `5`                    | truncate the zone-name part of the chain substitution to N characters; `0` disables truncation |
+| `LOGRULENUMBERS`    | `No`                   | parsed today; per-rule sequence-number injection is a follow-up (needs a counter threaded through every `_add_rule` site) |
+
+Backward compat: the default `LOGFORMAT` matches the previously
+hardcoded `"Shorewall:<chain>:<DISP>:"` output, so the shorewalld
+dispatcher's prefix parser works unchanged for any config that does
+**not** override `LOGFORMAT`. Operators who customise the template
+must update their dispatcher / SIEM parser config accordingly.
+
+A malformed `LOGFORMAT` (wrong number of `%s` slots, bad conversion
+specifier) silently falls back to the default template — avoids
+compile-crash on an operator typo. Unit tests live in
+`tests/test_log_settings.py::TestLogFormat`.
+
 ### shorewalld as NFLOG dispatcher (MVP shipped 2026-04-24)
 
 The Option C "shorewalld absorbs per-netns nflog dispatch" work

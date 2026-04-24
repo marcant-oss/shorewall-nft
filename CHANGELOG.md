@@ -31,6 +31,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NFULogSocket` (pyroute2 has no NFLOG class as of 0.9.6 — upstream
   PR viable as a follow-up).
 
+- **WP-E1 Option C (compiler side) — `LOGFORMAT` /
+  `MAXZONENAMELENGTH` / `LOGRULENUMBERS`** — `LogSettings` gains
+  `log_format` (default `"Shorewall:%s:%s:"`, matches previous
+  hardcoded template and the shorewalld dispatcher's prefix parser),
+  `max_zone_name_length` (default 5, truncates the zone-pair part of
+  the chain substitution — upstream MAXZONENAMELENGTH semantics),
+  and `rule_numbers` (parsed from `LOGRULENUMBERS` but not yet wired
+  into prefix generation — per-rule sequence numbers need a counter
+  threaded through every `_add_rule` site, filed as follow-up). New
+  method `LogSettings.format_prefix(chain, disposition)` renders the
+  template with %s substitution + zone-name truncation + safe
+  fallback on malformed templates. Call-site migration: the single
+  compile-time hardcoded `Shorewall:<chain>:<DISP>:` string at
+  `compiler/ir/rules.py:1015` now goes through the helper. Default
+  output is byte-identical to the previous behaviour, so the
+  shorewalld NFLOG dispatcher's prefix parser works unchanged for
+  any config that does not override `LOGFORMAT`. Tests: +9 cases in
+  `tests/test_log_settings.py::TestLogFormat`.
+
 ## [1.10.2] - 2026-04-24
 
 Phase 6 — upstream-Shorewall config-coverage parity, plus pyroute2-first
