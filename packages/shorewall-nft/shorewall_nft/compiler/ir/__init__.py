@@ -159,7 +159,8 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     # Process NAT (DNAT from rules, SNAT from masq, netmap)
     from shorewall_nft.compiler.nat import extract_nat_rules, process_nat, process_netmap
     dnat_rules, filter_rules = extract_nat_rules(config.rules)
-    process_nat(ir, config.masq, dnat_rules)
+    process_nat(ir, config.masq, dnat_rules,
+                snat_lines=getattr(config, "snat", None))
     if config.netmap:
         process_netmap(ir, config.netmap)
 

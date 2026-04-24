@@ -38,6 +38,11 @@ class ShorewalConfig:
     policy: list[ConfigLine] = field(default_factory=list)
     rules: list[ConfigLine] = field(default_factory=list)
     masq: list[ConfigLine] = field(default_factory=list)
+    # Modern Shorewall replaces the masq file with snat, with a
+    # different column layout (action moves to col 0):
+    #   ACTION SOURCE DEST PROTO PORT IPSEC MARK USER SWITCH ORIGDEST PROBABILITY
+    # ACTION carries SNAT(addr[,addr...]), MASQUERADE, or CONTINUE.
+    snat: list[ConfigLine] = field(default_factory=list)
     conntrack: list[ConfigLine] = field(default_factory=list)
     notrack: list[ConfigLine] = field(default_factory=list)
     blrules: list[ConfigLine] = field(default_factory=list)
@@ -138,7 +143,8 @@ class ConfigParser:
 
         # 3. Parse column-based config files
         for name in ("zones", "interfaces", "hosts", "policy", "rules",
-                     "masq", "conntrack", "notrack", "blrules", "routestopped",
+                     "masq", "snat",
+                     "conntrack", "notrack", "blrules", "routestopped",
                      "stoppedrules",
                      "tcrules", "tcdevices", "tcinterfaces", "tcclasses",
                      "tcfilters", "tcpri", "mangle",
@@ -741,6 +747,7 @@ def _merge_configs(config: ShorewalConfig, config6: ShorewalConfig) -> None:
 
     # Merge other config files
     config.masq.extend(config6.masq)
+    config.snat.extend(config6.snat)
     config.conntrack.extend(config6.conntrack)
     config.notrack.extend(config6.notrack)
     config.blrules.extend(config6.blrules)

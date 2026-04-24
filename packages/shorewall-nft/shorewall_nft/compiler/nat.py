@@ -30,24 +30,133 @@ from shorewall_nft.compiler.ir import (
     _has_set_token,
     expand_line_for_tokens,
 )
-from shorewall_nft.compiler.verdicts import DnatVerdict, RedirectVerdict, SnatVerdict
+from shorewall_nft.compiler.verdicts import (
+    DnatVerdict,
+    MasqueradeVerdict,
+    RedirectVerdict,
+    SnatVerdict,
+)
 from shorewall_nft.config.parser import ConfigLine
 
 
 def process_nat(ir: FirewallIR, masq_lines: list[ConfigLine],
-                dnat_rules: list[ConfigLine]) -> None:
-    """Process NAT rules into the IR."""
+                dnat_rules: list[ConfigLine],
+                snat_lines: list[ConfigLine] | None = None) -> None:
+    """Process NAT rules into the IR.
+
+    *snat_lines* is the modern Shorewall ``snat`` file, with the
+    action moved to col 0 (see ``_process_snat_line``). Optional
+    keyword to keep the call signature backward-compatible.
+    """
+    snat_lines = snat_lines or []
+
     # Create nat base chains if we have any NAT rules
-    if masq_lines or dnat_rules:
+    if masq_lines or dnat_rules or snat_lines:
         _ensure_nat_chains(ir)
 
-    # Process masq (SNAT) rules
+    # Process masq (SNAT) rules — legacy column layout
     for line in masq_lines:
         _process_masq_line(ir, line)
+
+    # Process snat rules — modern column layout
+    for line in snat_lines:
+        _process_snat_line(ir, line)
 
     # Process DNAT rules (extracted from rules file)
     for line in dnat_rules:
         _process_dnat_line(ir, line)
+
+
+def _process_snat_line(ir: FirewallIR, line: ConfigLine) -> None:
+    """Process one ``snat`` config line.
+
+    Modern Shorewall column layout::
+
+        ACTION   SOURCE   DEST   PROTO   PORT   IPSEC   MARK   USER   SWITCH   ORIGDEST   PROBABILITY
+
+    ACTION carries:
+      * ``SNAT(addr[,addr...])`` — explicit SNAT target(s)
+      * ``MASQUERADE``           — dynamic masquerade
+      * ``CONTINUE``             — skip (no NAT for this match)
+
+    SOURCE is an IP / zone / interface; DEST is the outbound
+    interface. PROTO/PORT/etc. mirror the masq layout.
+    """
+    cols = line.columns
+    if len(cols) < 3:
+        return
+
+    action_raw = cols[0]
+    source = cols[1]
+    dest_iface = cols[2]
+    proto = cols[3] if len(cols) > 3 and cols[3] != "-" else None
+    ports = cols[4] if len(cols) > 4 and cols[4] != "-" else None
+    orig_dest = cols[9] if len(cols) > 9 and cols[9] != "-" else None
+
+    action_upper = action_raw.upper()
+    if action_upper.startswith("CONTINUE"):
+        return
+
+    # Reject set tokens in the SOURCE column.
+    if _has_set_token(source):
+        raise ValueError(
+            f"snat {line.file}:{line.lineno}: SOURCE column does not accept "
+            f"nfset:/dns:/dnsr: tokens — got {source!r}"
+        )
+    found, expanded = expand_line_for_tokens(line, 1, None, ir)
+    if found:
+        for exp_line in expanded:
+            _process_snat_line(ir, exp_line)
+        return
+
+    # Pick the verdict based on the action keyword.
+    if action_upper.startswith("SNAT("):
+        target = action_raw[len("SNAT("):].rstrip(")")
+        verdict_args = SnatVerdict(target=target)
+    elif action_upper.startswith("MASQUERADE"):
+        verdict_args = MasqueradeVerdict()
+    else:
+        raise ValueError(
+            f"snat {line.file}:{line.lineno}: unknown ACTION {action_raw!r} "
+            f"(expected SNAT(addr), MASQUERADE, or CONTINUE)"
+        )
+
+    chain = ir.chains["postrouting"]
+    rule = Rule(
+        verdict=Verdict.ACCEPT,  # placeholder, emitter handles snat specially
+        verdict_args=verdict_args,
+        source_file=line.file,
+        source_line=line.lineno,
+        comment=line.comment_tag,
+    )
+
+    # Outbound interface match (DEST column).
+    if dest_iface and dest_iface != "-":
+        rule.matches.append(Match(field="oifname", value=dest_iface))
+
+    # Source — interface name OR ip/cidr. Heuristic: if it looks like
+    # an iface name (no dot, no colon, no slash) treat as iifname,
+    # otherwise as a saddr match.
+    if source and source != "-":
+        if _looks_like_iface(source):
+            rule.matches.append(Match(field="iifname", value=source))
+        else:
+            rule.matches.append(Match(field="ip saddr", value=source))
+
+    if orig_dest:
+        rule.matches.append(Match(field="ip daddr", value=orig_dest))
+
+    if proto:
+        rule.matches.append(Match(field="meta l4proto", value=proto))
+        if ports:
+            rule.matches.append(Match(field=f"{proto} dport", value=ports))
+
+    chain.rules.append(rule)
+
+
+def _looks_like_iface(s: str) -> bool:
+    """True if *s* looks like an interface name (no dot/colon/slash)."""
+    return not any(c in s for c in ".:/")
 
 
 def _ensure_nat_chains(ir: FirewallIR) -> None:
