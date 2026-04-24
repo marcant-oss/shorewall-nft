@@ -57,6 +57,9 @@ class _StubDispatcher:
     def snapshot_counters(self) -> dict[str, int]:
         return {"walk_ok": self._walks, "walk_error": self._errors}
 
+    def events_total(self) -> dict[str, int]:
+        return {}
+
 
 # ---------------------------------------------------------------------------
 # Test 1: _coerce_numeric

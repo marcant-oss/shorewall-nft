@@ -237,6 +237,21 @@ class KeepalivedCollector(CollectorBase):
             age_fam.add([], time.time() - snap.collected_at)
             yield age_fam
 
+        # --- Event counters (always emitted, single family with type label) ---
+        events_counters = self._dispatcher.events_total()
+        if events_counters:
+            events_fam = _MetricFamily(
+                "shorewalld_keepalived_events_total",
+                "Total keepalived events received by type "
+                "(trap_total, trap_decode_error, trap_<name>, "
+                "dbus_total, dbus_signal_<signal>).",
+                labels=["type"],
+                mtype="counter",
+            )
+            for event_type, count in events_counters.items():
+                events_fam.add([event_type], float(count))
+            yield events_fam
+
         if snap is None:
             return
 

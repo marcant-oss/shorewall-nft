@@ -5,7 +5,13 @@ publishes the result as a :class:`KeepalivedSnapshot`.  The snapshot
 is readable at any time from the scrape thread via :meth:`snapshot`.
 
 Commit 2 ships the walk loop + wide-table cardinality guard.
-Trap reception and D-Bus method wrappers arrive in Commit 3 (P4+P5).
+Commit 3 (P4+P5) adds:
+
+- :meth:`on_trap_event` — ingress from the Unix-DGRAM trap listener.
+- :meth:`on_dbus_event` — ingress from the async D-Bus client.
+- :meth:`on_trap_decode_error` — frame dropped by the trap listener.
+- :meth:`recent_events` — bounded ring of recent trap + D-Bus events.
+- Per-event-type counters in :attr:`events_total`.
 
 Threading model
 ---------------
@@ -15,20 +21,29 @@ to the last snapshot, which is an atomic Python object swap (GIL-safe).
 No mutex needed for reads; the dispatcher holds an ``asyncio.Lock``
 only around the swap itself to avoid partial writes from concurrent
 walkers (there is only one, but the lock makes the invariant explicit).
+
+Event ingress methods (:meth:`on_trap_event`, :meth:`on_dbus_event`,
+:meth:`on_trap_decode_error`) are synchronous and non-blocking — they
+perform only GIL-safe counter increments and a :meth:`deque.appendleft`
+(O(1)).  They may be called from the asyncio event-loop thread (trap
+listener recv loop, D-Bus signal handlers) without holding any lock.
 """
 
 from __future__ import annotations
 
 import asyncio
+import collections
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shorewalld.keepalived.snmp_client import KeepalivedSnapshot
 
 if TYPE_CHECKING:
+    from shorewalld.keepalived.dbus_client import KeepalivedDbusEvent
     from shorewalld.keepalived.snmp_client import KeepalivedSnmpClient
+    from shorewalld.keepalived.trap_listener import KeepalivedTrapEvent
 
-# Tables with ≥ 30 columns that default off when enable_wide_tables=False.
+# Tables with >= 30 columns that default off when enable_wide_tables=False.
 # vrrpInstanceTable is also large (36 cols) but is the core MVP table —
 # it is always included regardless of this guard.
 WIDE_TABLES: frozenset[str] = frozenset({
@@ -36,6 +51,9 @@ WIDE_TABLES: frozenset[str] = frozenset({
     "virtualServerTable",
     "vrrpRuleTable",
 })
+
+# Maximum number of events retained in the recent-events ring buffer.
+_RECENT_EVENTS_MAX = 256
 
 
 class KeepalivedDispatcher:
@@ -70,9 +88,19 @@ class KeepalivedDispatcher:
         self._snapshot: KeepalivedSnapshot | None = None
         self._snapshot_lock = asyncio.Lock()
 
-        # Counters — keys are fixed; callers read via snapshot_counters().
+        # Walk counters — keys are fixed; callers read via snapshot_counters().
         self._counters: dict[str, int] = {"walk_ok": 0, "walk_error": 0}
         self._last_walk_duration_s: float | None = None
+
+        # Per-event-type counters exposed as shorewalld_keepalived_events_total.
+        # Keys are added lazily on first event of that type.  GIL-safe +=1.
+        self._events_total: dict[str, int] = {}
+
+        # Bounded ring buffer of recent events for operator introspection.
+        # appendleft is O(1); maxlen enforces the cap automatically.
+        self._recent_events: collections.deque[Any] = collections.deque(
+            maxlen=_RECENT_EVENTS_MAX,
+        )
 
         self._walk_task: asyncio.Task[None] | None = None
 
@@ -126,8 +154,76 @@ class KeepalivedDispatcher:
         return self._last_walk_duration_s
 
     def snapshot_counters(self) -> dict[str, int]:
-        """Shallow copy of the counters dict — safe for the scrape thread."""
+        """Shallow copy of the walk counters dict — safe for the scrape thread."""
         return self._counters.copy()
+
+    def events_total(self) -> dict[str, int]:
+        """Shallow copy of the per-event-type counters.
+
+        Keys include ``"trap_total"``, ``"trap_decode_error"``,
+        ``"trap_<name>"`` for each decoded trap name, ``"dbus_total"``,
+        and ``"dbus_signal_<signal>"`` for each D-Bus signal.
+
+        Safe to call from the scrape thread (dict.copy() is a single C call
+        under the GIL).
+        """
+        return self._events_total.copy()
+
+    def recent_events(self) -> tuple[Any, ...]:
+        """Return a snapshot of the recent-events ring as a tuple.
+
+        Contains up to :data:`_RECENT_EVENTS_MAX` entries, most recent first.
+        Each entry is a :class:`~shorewalld.keepalived.trap_listener.KeepalivedTrapEvent`
+        or a :class:`~shorewalld.keepalived.dbus_client.KeepalivedDbusEvent`.
+
+        Safe to call from the scrape thread.
+        """
+        return tuple(self._recent_events)
+
+    # ------------------------------------------------------------------
+    # Event ingress (sync, non-blocking, O(1))
+    # ------------------------------------------------------------------
+
+    def on_trap_event(self, event: "KeepalivedTrapEvent") -> None:
+        """Ingest a decoded SNMPv2c trap from the trap listener.
+
+        Bumps counters and appends to the recent-events ring.
+        Synchronous, non-blocking, allocation-bounded — safe to call from
+        the asyncio event-loop thread.
+        """
+        self._bump_event("trap_total")
+        self._bump_event(f"trap_{event.name}")
+        self._recent_events.appendleft(event)
+
+    def on_trap_decode_error(self) -> None:
+        """Record one trap decode failure (malformed datagram).
+
+        Called by the trap listener when :meth:`_decode_trap` raises.
+        Bumps ``"trap_decode_error"`` in :meth:`events_total`.
+        """
+        self._bump_event("trap_decode_error")
+
+    def on_dbus_event(self, event: "KeepalivedDbusEvent") -> None:
+        """Ingest a keepalived D-Bus signal from the D-Bus client.
+
+        Bumps counters and appends to the recent-events ring.
+        Synchronous, non-blocking, allocation-bounded — safe to call from
+        the asyncio event-loop thread.
+        """
+        self._bump_event("dbus_total")
+        self._bump_event(f"dbus_signal_{event.signal}")
+        self._recent_events.appendleft(event)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _bump_event(self, key: str) -> None:
+        """Increment a counter in _events_total, initialising to 1 if new."""
+        if key in self._events_total:
+            self._events_total[key] += 1
+        else:
+            self._events_total[key] = 1
 
     # ------------------------------------------------------------------
     # Internal: walk loop
