@@ -265,6 +265,62 @@ rate(shorewalld_plainlist_refresh_duration_seconds_sum[5m])
 
 ---
 
+## NFLOG log dispatcher
+
+Enabled with `LOG_DISPATCH=shorewalld` + `LOG_NFLOG_GROUP=<N>` in
+`shorewalld.conf` (CLI equivalents: `--log-dispatch shorewalld`,
+`--log-nflog-group N`). Three metric families surface the dispatcher's
+counter + backpressure state; see
+[`docs/shorewalld/index.md` § NFLOG log dispatcher](index.md#nflog-log-dispatcher)
+for the full operator reference.
+
+### Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `shorewall_log_total` | counter | `chain`, `disposition`, `netns` | Monotonic, one row per observed triple. Driven by the LOGFORMAT prefix on the triggering rule. |
+| `shorewall_log_events_total` | counter | — | Label-free grand total; matches `sum(shorewall_log_total)`. Useful before the operator has indexed the triple space. |
+| `shorewall_log_dropped_total` | counter | `reason` | Events dropped because a sink's bounded queue was full. |
+
+`reason` label values: `sink_file`, `sink_socket`, `sink_journald`,
+`sink_syslog` — one per configured sink. Non-zero means the named
+sink cannot keep up with the event rate; take action (faster
+consumer, larger kernel buffer, or drop the sink).
+
+### Cardinality
+
+| Label | Typical cardinality | Notes |
+|-------|---------------------|-------|
+| `chain` | # logged chains | ≈ the number of distinct LOGFORMAT prefixes in use (usually < 10 per netns) |
+| `disposition` | 2–5 | Standard values: `DROP`, `ACCEPT`, `REJECT`, `LOG`, `A_DROP` |
+| `netns` | # managed netns | Same as other shorewalld collectors (≈ 1–10) |
+| `reason` | Up to 4 | Fixed enum of configured sinks |
+
+### Backpressure contract
+
+Every stage of the pipeline drops on full, never blocks the firewall
+event path:
+
+- **Worker → parent**: `transport.send_nowait` (`MSG_DONTWAIT`) — if
+  the parent event loop is busy and the SEQPACKET receive buffer
+  fills up, the worker drops the event and logs rate-limited.
+  Worker-side drops are *not* reflected in
+  `shorewall_log_dropped_total` (the parent never saw them) but a
+  persistent worker-side warning
+  ``nflog: parent SEQPACKET full`` surfaces in the log stream.
+- **Dispatcher → sink queues**: `asyncio.Queue.put_nowait` with a
+  1024-entry cap per sink; `QueueFull` → drop + increment the
+  corresponding `sink_X` reason counter.
+- **Socket sink → connected clients**: each client gets its own
+  256-entry bounded queue. Slow clients are *disconnected*, not
+  throttled — the broadcaster loop never stalls on a single slow
+  subscriber.
+
+Monotonic `shorewall_log_dropped_total` increments are the
+operator-visible signal that a sink is underpowered.
+
+---
+
 ## VRRP (keepalived D-Bus + SNMP augmentation)
 
 Enabled with `--enable-vrrp-collector`.  Requires `jeepney>=0.8`

@@ -384,118 +384,304 @@ def _handle_read(kind: int, path: str) -> tuple[int, bytes]:
         return READ_STATUS_ERROR, str(e).encode("utf-8")
 
 
+def _serve_transport_datagram(
+    view: "memoryview",
+    transport: WorkerTransport,
+    nft: "NftInterface",
+    set_name_lookup,
+    reply_buf: bytearray,
+) -> int | None:
+    """Handle one datagram on the SEQPACKET transport.
+
+    Returns ``None`` to continue the loop, or an integer exit code
+    (0/1) to terminate the worker. Extracted from the main loop so
+    the selector-multiplex variant (when NFLOG is active) can share
+    the exact same request-handling path.
+    """
+    try:
+        magic = peek_magic(view)
+    except ReadWireError as e:
+        log.warning("worker wire error: %s", e)
+        return None
+
+    if magic == MAGIC_READ_REQ:
+        try:
+            req = decode_read_request(view)
+        except ReadWireError as e:
+            log.warning("worker read-rpc decode error: %s", e)
+            return None
+        status, data = _handle_read(req.kind, req.path)
+        try:
+            transport.send(encode_read_response_into(
+                reply_buf, status=status,
+                req_id=req.req_id, data=data))
+        except OSError:
+            return 1
+        return None
+
+    if magic != MAGIC_REQUEST:
+        log.warning("worker: unknown magic 0x%08x — dropping", magic)
+        return None
+
+    try:
+        header = decode_header(view)
+    except WireError as e:
+        log.warning("worker wire error: %s", e)
+        transport.send(encode_reply_into(
+            reply_buf, status=REPLY_ERROR,
+            batch_id=0, applied=0, error=str(e)))
+        return None
+    # Control datagrams live in batch_id's high word.
+    control, inner_id = decode_control(header.batch_id)
+    if control == CTRL_SHUTDOWN:
+        # Parent is tearing down; best-effort ack but never let a
+        # closed peer escalate into an unhandled thread exception.
+        try:
+            transport.send(encode_reply_into(
+                reply_buf, status=REPLY_SHUTDOWN,
+                batch_id=inner_id, applied=0))
+        except OSError:
+            pass
+        log.info("worker shutdown requested")
+        return 0
+    if control == CTRL_SNAPSHOT:
+        # Phase 7/9 hook — snapshot of current nft set state.
+        # The worker is not a source-of-truth for state; the
+        # parent DnsSetTracker is. So we just ack with applied=0.
+        try:
+            transport.send(encode_reply_into(
+                reply_buf, status=REPLY_OK,
+                batch_id=inner_id, applied=0))
+        except OSError:
+            return 1
+        return None
+
+    ops = list(iter_ops(view, header))
+    try:
+        script = build_nft_script(ops, set_name_lookup)
+        if script:
+            nft.cmd(script)
+        elif ops:
+            log.warning(
+                "nft-worker: batch %d: all %d op(s) had unknown set_ids"
+                " — tracker snapshot may be stale (worker needs respawn?)",
+                header.batch_id, len(ops),
+            )
+        transport.send(encode_reply_into(
+            reply_buf, status=REPLY_OK,
+            batch_id=header.batch_id, applied=len(ops)))
+    except Exception as e:  # noqa: BLE001
+        err = str(e)[:_REPLY_BUF_SIZE - 128]
+        log.warning("worker apply failed: %s", err)
+        try:
+            transport.send(encode_reply_into(
+                reply_buf, status=REPLY_ERROR,
+                batch_id=header.batch_id, applied=0, error=err))
+        except OSError:
+            return 1
+    return None
+
+
 def worker_main_loop(
     transport: WorkerTransport,
     nft: "NftInterface",
     set_name_lookup,
+    *,
+    nflog_group: int | None = None,
 ) -> int:
-    """Serve batches and read-RPCs until shutdown or transport error.
+    """Serve batches, read-RPCs, and optionally NFLOG events.
 
-    Dispatches on the first four bytes of each incoming datagram:
+    Dispatches on the first four bytes of each incoming transport
+    datagram:
 
     * :data:`MAGIC_REQUEST` (``"SWNF"``) — batch op, applied via
       libnftables.
-    * :data:`MAGIC_READ_REQ` (``"SWRR"``) — file read / line count
-      request, served from the worker's current netns. See
-      :mod:`shorewalld.read_codec`.
+    * :data:`MAGIC_READ_REQ` (``"SWRR"``) — file read / line count /
+      ctnetlink stats request, served from the worker's current netns.
+      See :mod:`shorewalld.read_codec`.
+
+    When ``nflog_group`` is set, also opens an
+    :class:`~shorewalld.nflog_netlink.NFULogSocket` in the current netns
+    and multiplexes the SEQPACKET transport + NFLOG netlink fd via
+    :mod:`selectors`. Each received NFLOG frame is decoded, the log
+    prefix parsed, and the resulting
+    :class:`~shorewalld.log_prefix.LogEvent` encoded by
+    :func:`shorewalld.log_codec.encode_log_event_into` and pushed back
+    to the parent over the same SEQPACKET pair with
+    :data:`~shorewalld.log_codec.MAGIC_NFLOG` as the leading magic.
 
     Returns the process exit code: 0 on clean shutdown, non-zero on
     transport error. Designed to be called as the entire child-process
     body after the fork + setns + nft initialisation.
     """
     reply_buf = bytearray(_REPLY_BUF_SIZE)
-    log.info("nft-worker ready: pid=%d", os.getpid())
-    while True:
-        try:
-            view = transport.recv_into()
-        except OSError as e:
-            log.warning("worker recv failed: %s", e)
-            return 1
-        if not view:
-            log.info("worker eof; exiting")
-            return 0
 
-        try:
-            magic = peek_magic(view)
-        except ReadWireError as e:
-            log.warning("worker wire error: %s", e)
-            continue
-
-        if magic == MAGIC_READ_REQ:
+    if nflog_group is None:
+        # Fast path: one blocking recv per iteration, no selector
+        # overhead. Behaviourally identical to the pre-NFLOG loop.
+        log.info("nft-worker ready: pid=%d nflog=off", os.getpid())
+        while True:
             try:
-                req = decode_read_request(view)
-            except ReadWireError as e:
-                log.warning("worker read-rpc decode error: %s", e)
-                continue
-            status, data = _handle_read(req.kind, req.path)
-            try:
-                transport.send(encode_read_response_into(
-                    reply_buf, status=status,
-                    req_id=req.req_id, data=data))
-            except OSError:
+                view = transport.recv_into()
+            except OSError as e:
+                log.warning("worker recv failed: %s", e)
                 return 1
-            continue
+            if not view:
+                log.info("worker eof; exiting")
+                return 0
+            rc = _serve_transport_datagram(
+                view, transport, nft, set_name_lookup, reply_buf)
+            if rc is not None:
+                return rc
 
-        if magic != MAGIC_REQUEST:
-            log.warning("worker: unknown magic 0x%08x — dropping", magic)
-            continue
+    return _worker_main_loop_with_nflog(
+        transport, nft, set_name_lookup, reply_buf, nflog_group)
 
-        try:
-            header = decode_header(view)
-        except WireError as e:
-            log.warning("worker wire error: %s", e)
-            transport.send(encode_reply_into(
-                reply_buf, status=REPLY_ERROR,
-                batch_id=0, applied=0, error=str(e)))
-            continue
-        # Control datagrams live in batch_id's high word.
-        control, inner_id = decode_control(header.batch_id)
-        if control == CTRL_SHUTDOWN:
-            # Parent is tearing down; best-effort ack but never let a
-            # closed peer escalate into an unhandled thread exception.
+
+def _worker_main_loop_with_nflog(
+    transport: WorkerTransport,
+    nft: "NftInterface",
+    set_name_lookup,
+    reply_buf: bytearray,
+    nflog_group: int,
+) -> int:
+    """Multiplex SEQPACKET + NFLOG netlink via :mod:`selectors`.
+
+    Never called directly — :func:`worker_main_loop` delegates here
+    when ``nflog_group`` is set. Kept as a separate function so the
+    import cost of :mod:`shorewalld.nflog_netlink` + :mod:`selectors`
+    is only paid when NFLOG is actually enabled.
+    """
+    import selectors
+
+    from .log_codec import LOG_ENCODE_BUF_SIZE, LogWireError, encode_log_event_into
+    from .log_prefix import parse_log_prefix
+    from .nflog_netlink import NflogWireError, NFULogSocket, parse_frame
+
+    nflog_sock: NFULogSocket | None = NFULogSocket(group=nflog_group)
+    try:
+        nflog_sock.bind()
+    except OSError as e:
+        log.warning(
+            "nflog bind(group=%d) failed: %s — disabling NFLOG in this worker",
+            nflog_group, e)
+        nflog_sock.close()
+        nflog_sock = None
+
+    if nflog_sock is None:
+        # Bind failed (e.g. CAP_NET_ADMIN missing). Degrade to the
+        # no-nflog loop — the worker still serves batch + read RPCs,
+        # operators see the warning above, and the daemon keeps
+        # running rather than crashing.
+        log.info("nft-worker ready: pid=%d nflog=off (bind failed)",
+                 os.getpid())
+        while True:
             try:
-                transport.send(encode_reply_into(
-                    reply_buf, status=REPLY_SHUTDOWN,
-                    batch_id=inner_id, applied=0))
-            except OSError:
-                pass
-            log.info("worker shutdown requested")
-            return 0
-        if control == CTRL_SNAPSHOT:
-            # Phase 7/9 hook — snapshot of current nft set state.
-            # The worker is not a source-of-truth for state; the
-            # parent DnsSetTracker is. So we just ack with applied=0.
-            try:
-                transport.send(encode_reply_into(
-                    reply_buf, status=REPLY_OK,
-                    batch_id=inner_id, applied=0))
-            except OSError:
+                view = transport.recv_into()
+            except OSError as e:
+                log.warning("worker recv failed: %s", e)
                 return 1
-            continue
+            if not view:
+                return 0
+            rc = _serve_transport_datagram(
+                view, transport, nft, set_name_lookup, reply_buf)
+            if rc is not None:
+                return rc
 
-        ops = list(iter_ops(view, header))
+    # Recv buffers — preallocated, reused every iteration. Sized for
+    # the largest datagram each socket can deliver.
+    nflog_buf = bytearray(65536)   # kernel nfnetlink default cap
+    log_enc_buf = bytearray(LOG_ENCODE_BUF_SIZE)
+    # Local drop counter — if the parent event loop is slow to drain
+    # our SEQPACKET, send_nowait returns False and we count here. Logged
+    # at warn/rate-limited so operators notice; parent-side metrics
+    # don't see these drops because the parent never received them.
+    drop_local: int = 0
+    drop_log_every = 1024
+
+    sel = selectors.DefaultSelector()
+    sel.register(transport.fileno, selectors.EVENT_READ, "transport")
+    sel.register(nflog_sock.fileno(), selectors.EVENT_READ, "nflog")
+    log.info("nft-worker ready: pid=%d nflog=group %d",
+             os.getpid(), nflog_group)
+
+    try:
+        while True:
+            for key, _mask in sel.select():
+                if key.data == "transport":
+                    try:
+                        view = transport.recv_into()
+                    except OSError as e:
+                        log.warning("worker recv failed: %s", e)
+                        return 1
+                    if not view:
+                        log.info("worker eof; exiting")
+                        return 0
+                    rc = _serve_transport_datagram(
+                        view, transport, nft, set_name_lookup, reply_buf)
+                    if rc is not None:
+                        return rc
+                elif key.data == "nflog":
+                    try:
+                        mv = nflog_sock.recv_into(nflog_buf)
+                    except OSError as e:
+                        # Kernel ring overflow / netns teardown / EINTR.
+                        # Log and skip — the socket is still good for
+                        # further reads. A hard error surfaces as recv
+                        # returning empty, handled below.
+                        log.debug("nflog recv error: %s", e)
+                        continue
+                    if not mv:
+                        log.warning("nflog socket closed; disabling NFLOG")
+                        sel.unregister(nflog_sock.fileno())
+                        nflog_sock.close()
+                        nflog_sock = None
+                        continue
+                    try:
+                        frame = parse_frame(mv)
+                    except NflogWireError as e:
+                        log.debug("nflog frame decode failed: %s", e)
+                        continue
+                    # Zero-copy path: parse_log_prefix operates on the
+                    # recv buffer slice; the only allocation is the
+                    # final LogEvent + its two decoded strings.
+                    ev = parse_log_prefix(
+                        frame.prefix_mv,
+                        timestamp_ns=frame.timestamp_ns,
+                    )
+                    if ev is None:
+                        # Non-Shorewall prefix — another tool is
+                        # sharing this NFLOG group, or a user rule
+                        # picked a custom prefix. Silently drop.
+                        continue
+                    try:
+                        encoded = encode_log_event_into(log_enc_buf, ev)
+                    except LogWireError as e:
+                        log.debug("log-event encode failed: %s", e)
+                        continue
+                    # Non-blocking push: if the parent event loop is
+                    # slow and our SEQPACKET buffer is full, DROP the
+                    # event rather than stalling the worker (which
+                    # would also starve batch + read RPCs).
+                    try:
+                        sent = transport.send_nowait(encoded)
+                    except OSError as e:
+                        log.warning(
+                            "nflog push-to-parent transport error: %s", e)
+                        return 1
+                    if not sent:
+                        drop_local += 1
+                        if drop_local % drop_log_every == 0:
+                            log.warning(
+                                "nflog: parent SEQPACKET full — %d events "
+                                "dropped since worker start", drop_local)
+    finally:
         try:
-            script = build_nft_script(ops, set_name_lookup)
-            if script:
-                nft.cmd(script)
-            elif ops:
-                log.warning(
-                    "nft-worker: batch %d: all %d op(s) had unknown set_ids"
-                    " — tracker snapshot may be stale (worker needs respawn?)",
-                    header.batch_id, len(ops),
-                )
-            transport.send(encode_reply_into(
-                reply_buf, status=REPLY_OK,
-                batch_id=header.batch_id, applied=len(ops)))
-        except Exception as e:  # noqa: BLE001
-            err = str(e)[:_REPLY_BUF_SIZE - 128]
-            log.warning("worker apply failed: %s", err)
-            try:
-                transport.send(encode_reply_into(
-                    reply_buf, status=REPLY_ERROR,
-                    batch_id=header.batch_id, applied=0, error=err))
-            except OSError:
-                return 1
+            sel.close()
+        except Exception:  # noqa: BLE001
+            pass
+        if nflog_sock is not None:
+            nflog_sock.close()
 
 
 def nft_worker_entrypoint(
@@ -503,6 +689,7 @@ def nft_worker_entrypoint(
     transport_fd: int,
     *,
     lookup=None,
+    nflog_group: int | None = None,
 ) -> int:
     """Post-fork child body.
 
@@ -518,6 +705,13 @@ def nft_worker_entrypoint(
     caller can pass a closure over the tracker directly — no IPC
     round-trip needed.  When omitted, ops are silently skipped
     (standalone debugging mode, see ``__main__`` below).
+
+    ``nflog_group`` (optional) — when set, the worker also subscribes
+    to the given ``nfnetlink_log`` group in its current netns and
+    pushes decoded events back to the parent via ``MAGIC_NFLOG``.
+    Requires ``CAP_NET_ADMIN`` on the worker; a bind failure degrades
+    gracefully to the non-NFLOG path with a warning rather than
+    aborting the worker.
 
     Exit codes:
         0 — clean shutdown
@@ -552,7 +746,8 @@ def nft_worker_entrypoint(
             return None
 
     try:
-        return worker_main_loop(transport, nft, lookup)
+        return worker_main_loop(
+            transport, nft, lookup, nflog_group=nflog_group)
     finally:
         transport.close()
 

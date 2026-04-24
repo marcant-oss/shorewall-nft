@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 
 from .batch_codec import (
     CTRL_SHUTDOWN,
+    MAGIC_NFLOG,
     MAGIC_REPLY,
     REPLY_OK,
     REPLY_SHUTDOWN,
@@ -54,6 +55,8 @@ from .batch_codec import (
 )
 from .dns_set_tracker import DnsSetTracker
 from .exporter import Histogram
+from .log_codec import LogWireError, decode_log_event
+from .log_dispatcher import LogDispatcher
 from .logsetup import get_logger
 from .nft_worker import (
     NFT_FAMILY,
@@ -168,10 +171,19 @@ class ParentWorker:
         netns: str,
         tracker: DnsSetTracker | None,
         loop: asyncio.AbstractEventLoop,
+        log_dispatcher: LogDispatcher | None = None,
+        nflog_group: int | None = None,
     ) -> None:
         self.netns = netns
         self._tracker = tracker
         self._loop = loop
+        # NFLOG: optional worker-side subscription that pushes decoded
+        # events back to the parent; ``log_dispatcher`` is the parent-
+        # side sink that receives them via ``_drain_replies``. Either
+        # may be ``None`` independently (group set but no dispatcher
+        # attached yet = events get dropped at the router until attach).
+        self._log_dispatcher = log_dispatcher
+        self._nflog_group = nflog_group
         self._transport: WorkerTransport | None = None
         self._child_pid: int | None = None
         self._pending: dict[int, _PendingBatch] = {}
@@ -188,6 +200,17 @@ class ParentWorker:
         # spawn lives long enough to look healthy.
         self._respawn_task: asyncio.Task[None] | None = None
         self._respawn_backoff: float = 0.0
+
+    def attach_log_dispatcher(self, dispatcher: LogDispatcher | None) -> None:
+        """Late-attach the parent-side log dispatcher.
+
+        Called by :meth:`WorkerRouter.attach_log_dispatcher` so workers
+        forked before the DNS-set / log-dispatcher pipeline is ready
+        can start routing events once the dispatcher exists. The
+        dispatcher reference is only used in ``_drain_replies`` on the
+        parent side; no worker-side IPC is triggered.
+        """
+        self._log_dispatcher = dispatcher
 
     # ── Spawn / respawn ───────────────────────────────────────────────
 
@@ -263,7 +286,10 @@ class ParentWorker:
                 return qname_to_set_name(qname, fam_str)
 
             rc = nft_worker_entrypoint(
-                self.netns, worker_t.fileno, lookup=_lookup)
+                self.netns, worker_t.fileno,
+                lookup=_lookup,
+                nflog_group=self._nflog_group,
+            )
             os._exit(rc)
         worker_t.close()
         self._transport = parent_t
@@ -385,6 +411,33 @@ class ParentWorker:
                 return
             if not fut.done():
                 fut.set_result(resp)
+            return
+
+        if magic == MAGIC_NFLOG:
+            # Unsolicited push from worker — one decoded NFLOG event.
+            # Cheap, synchronous fan-out to the dispatcher: we're
+            # already on the event-loop thread via add_reader, so
+            # ``on_event`` does a plain dict bump with no thread hop.
+            # Null-dispatcher = drop silently (operator disabled the
+            # dispatcher mid-stream or hasn't attached yet).
+            if self._log_dispatcher is None:
+                return
+            try:
+                ev = decode_log_event(view, netns=self.netns)
+            except LogWireError as e:
+                self.metrics.ipc_errors_total += 1
+                log.warning(
+                    "worker log-event decode failed: %s", e,
+                    extra={"netns": self.netns or "(own)"})
+                return
+            try:
+                self._log_dispatcher.on_event(ev, self.netns)
+            except Exception:  # noqa: BLE001
+                # Dispatcher invariants should not escalate into the
+                # IPC reply pump — log and carry on.
+                log.exception(
+                    "log dispatcher on_event raised",
+                    extra={"netns": self.netns or "(own)"})
             return
 
         if magic != MAGIC_REPLY:
@@ -871,6 +924,11 @@ class WorkerRouter:
 
     loop: asyncio.AbstractEventLoop
     tracker: DnsSetTracker | None = None
+    log_dispatcher: LogDispatcher | None = None
+    # NFLOG group all workers subscribe to. Single-group-per-daemon in
+    # MVP; per-netns overrides are a follow-up (see roadmap doc).
+    # ``None`` = NFLOG subscription disabled in workers entirely.
+    nflog_group: int | None = None
     _workers: dict[str, ParentWorker] = field(default_factory=dict)
 
     def attach_tracker(self, tracker: DnsSetTracker) -> None:
@@ -888,12 +946,43 @@ class WorkerRouter:
         """
         self.tracker = tracker
 
+    def attach_log_dispatcher(
+        self,
+        dispatcher: LogDispatcher | None,
+        *,
+        nflog_group: int | None = None,
+    ) -> None:
+        """Point the router at the parent-side log dispatcher.
+
+        *dispatcher* ``None`` disables event routing (events still
+        decoded on the worker side if ``nflog_group`` is set, but
+        dropped at the router — cheapest possible kill-switch). Setting
+        both to ``None`` fully disables the NFLOG pipeline.
+
+        *nflog_group* updates the router's stored group used when new
+        workers are spawned; if you attach after workers already
+        forked, the old workers continue on their original subscription.
+        Call :meth:`respawn_netns` on each to pick up the new group.
+
+        Existing forked workers have their ``_log_dispatcher`` pointer
+        updated in place so events already in flight are routed
+        without waiting for a respawn.
+        """
+        self.log_dispatcher = dispatcher
+        if nflog_group is not None:
+            self.nflog_group = nflog_group
+        for worker in self._workers.values():
+            worker.attach_log_dispatcher(dispatcher)
+
     async def add_netns(self, netns: str) -> ParentWorker:
         """Spawn a worker for ``netns`` (idempotent)."""
         if netns in self._workers:
             return self._workers[netns]
         worker = ParentWorker(
-            netns=netns, tracker=self.tracker, loop=self.loop)
+            netns=netns, tracker=self.tracker, loop=self.loop,
+            log_dispatcher=self.log_dispatcher,
+            nflog_group=self.nflog_group,
+        )
         try:
             await worker.start()
         except Exception:
@@ -924,7 +1013,10 @@ class WorkerRouter:
                 "worker respawn: shutdown error for netns %r: %s", netns, e)
         worker.metrics.restarts_total += 1
         new_worker = ParentWorker(
-            netns=netns, tracker=self.tracker, loop=self.loop)
+            netns=netns, tracker=self.tracker, loop=self.loop,
+            log_dispatcher=self.log_dispatcher,
+            nflog_group=self.nflog_group,
+        )
         new_worker.metrics.spawned_total = worker.metrics.spawned_total
         new_worker.metrics.restarts_total = worker.metrics.restarts_total
         try:

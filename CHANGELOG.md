@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **shorewalld NFLOG log dispatcher (MVP)** — shorewalld can now
+  subscribe to `nfnetlink_log` inside every managed netns and
+  surface matches as a Prometheus counter plus up to four
+  drop-on-full sinks: plain file, unix-socket JSON fan-out,
+  systemd-journald, and `/dev/log` (RFC 3164). Replaces the per-netns
+  `ulogd2` plumbing for operators who already run shorewalld per
+  netns. Activate with `LOG_DISPATCH=shorewalld` +
+  `LOG_NFLOG_GROUP=<N>` in `shorewalld.conf` (must match the
+  `N` in `nft log group N`); sinks are additive. Three new
+  Prometheus families: `shorewall_log_total{chain,disposition,netns}`
+  (monotonic per triple), `shorewall_log_events_total` (label-free
+  grand total), `shorewall_log_dropped_total{reason}` (per-sink
+  backpressure visibility). Backpressure contract holds on every
+  stage: a slow SIEM / journald / file consumer never stalls the
+  hot path — a full sink queue drops the event and bumps its
+  drop counter. See `docs/shorewalld/index.md` § NFLOG log
+  dispatcher for operator reference. Tests: +84 cases (wire codec,
+  prefix parser, dispatcher semantics, every sink end-to-end,
+  drop-on-full regression, IPC integration). Ships the hand-rolled
+  `NFULogSocket` (pyroute2 has no NFLOG class as of 0.9.6 — upstream
+  PR viable as a follow-up).
+
 ## [1.10.2] - 2026-04-24
 
 Phase 6 — upstream-Shorewall config-coverage parity, plus pyroute2-first

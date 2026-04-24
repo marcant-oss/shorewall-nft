@@ -83,6 +83,14 @@ LOG_LEVEL=info
 LOG_TARGET=syslog
 LOG_FORMAT=structured
 LOG_LEVEL_peer=debug   # per-subsystem override
+
+# NFLOG log dispatcher — see "NFLOG log dispatcher" section below.
+LOG_DISPATCH=shorewalld            # shorewalld | ulogd2 | none
+LOG_NFLOG_GROUP=1                  # matches ``nft log group N``
+LOG_DISPATCH_FILE=/var/log/shorewall-nft.log
+LOG_DISPATCH_SOCKET=/run/shorewalld/log.sock
+LOG_DISPATCH_JOURNALD=yes
+LOG_DISPATCH_SYSLOG=/dev/log
 ```
 
 Unknown keys are silently ignored so adding future knobs doesn't
@@ -90,6 +98,97 @@ break older deployments. Malformed lines or unparseable values
 (e.g. `STATE_ENABLED=maybe`) raise an error at startup — the
 daemon refuses to run with a broken config rather than silently
 falling back.
+
+## NFLOG log dispatcher
+
+When a ruleset emits matches via `nft log group N` (or Shorewall's
+`LOG_BACKEND=netlink`), something has to read the `nfnetlink_log`
+netlink family and turn it into operator-visible output. Historical
+choice: one `ulogd2` systemd unit per netns with its own
+`ulogd.conf` — fine but a lot of plumbing at scale.
+
+shorewalld can absorb this role: the daemon is already running
+per-netns as the fork-and-setns host for stats, conntrack, and
+DNS-set work, so each worker just opens a second `nfnetlink_log`
+subscription inside its netns. Decoded events flow back to the
+parent via the existing worker SEQPACKET pair, become a Prometheus
+counter (always on), and optionally fan out to up to four sinks.
+
+### Config
+
+```
+# Enable (default is ``none``). ``ulogd2`` means operator runs
+# their own per-netns ulogd2; shorewalld does NOT subscribe.
+LOG_DISPATCH=shorewalld
+
+# nfnetlink_log group to subscribe to in every managed netns.
+# Must match the ``N`` in ``nft log group N`` / the
+# shorewall-nft ``LOG_BACKEND=netlink,<N>`` directive.
+LOG_NFLOG_GROUP=1
+
+# Optional plain-text sink (one line per event).
+# Format: ``<ts> netns=<X> chain=<Y> disposition=<Z> [rule=<N>]``
+LOG_DISPATCH_FILE=/var/log/shorewall-nft.log
+
+# Optional unix-socket sink — any client connected over
+# AF_UNIX/SOCK_STREAM receives newline-JSON events. Multi-subscriber;
+# slow clients are disconnected, not throttled.
+LOG_DISPATCH_SOCKET=/run/shorewalld/log.sock
+
+# Optional systemd-journald sink (structured fields
+# SHOREWALL_CHAIN, SHOREWALL_DISPOSITION, SHOREWALL_NETNS,
+# SHOREWALL_RULE_NUM, SHOREWALL_NFLOG_TS, plus PRIORITY mapped
+# from disposition: DROP/REJECT=4, ACCEPT=6, other=5).
+LOG_DISPATCH_JOURNALD=yes
+
+# Optional /dev/log sink (RFC 3164 datagrams). LOCAL0 facility;
+# PRI byte maps severity from disposition.
+LOG_DISPATCH_SYSLOG=/dev/log
+```
+
+Sinks are additive — enable any combination from none (counter-only)
+to all four at once. Each has its own bounded queue; enabling more
+sinks does not slow the Prometheus counter path.
+
+### Metrics
+
+* `shorewall_log_total{chain,disposition,netns}` — monotonic per
+  observed triple.
+* `shorewall_log_events_total` — label-free grand total.
+* `shorewall_log_dropped_total{reason}` — backpressure drops,
+  keyed on `reason="sink_file"|"sink_socket"|"sink_journald"|"sink_syslog"`.
+  Non-zero means a downstream consumer is slow and events were
+  dropped to keep the hot path running.
+
+### Backpressure contract
+
+Every sink is **drop-on-full, never block**. The ingest path is
+hot-path-critical and runs on the asyncio event loop; a slow file or
+SIEM consumer must never stall firewall event logging or (worse)
+back-pressure into the per-netns worker. The guarantees:
+
+* Worker-side NFLOG push uses `MSG_DONTWAIT` sendmsg — if the parent
+  event loop is busy and the SEQPACKET rcvbuf fills, events drop at
+  the worker (rate-limited warning log) rather than stalling batch +
+  read RPCs.
+* Parent-side `on_event` is synchronous on the event-loop thread;
+  counter bumps and per-sink `put_nowait` are O(1) and never await.
+* Each sink has its own bounded queue (1024 events default); on
+  `QueueFull` the event is dropped and the per-sink counter bumps.
+* Unix-socket sink has an additional per-client queue (256); slow
+  clients are disconnected rather than dragging the broadcaster.
+
+Check `shorewall_log_dropped_total` in Prometheus to detect slow
+sinks. Sustained drops mean operator action: bigger
+`LOG_NETLINK_RCVBUF` (follow-up), faster downstream consumer, or
+dropping a sink that's not keeping up.
+
+### Capability requirements
+
+NFLOG subscription requires `CAP_NET_ADMIN` on the worker process —
+already granted to the shipping `shorewalld.service` /
+`shorewalld@.service` unit via `AmbientCapabilities`. No additional
+sysconfig needed.
 
 ## Install
 

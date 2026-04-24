@@ -26,7 +26,8 @@ ReadWritePaths=/run/shorewalld /var/lib/shorewalld /var/log
 PrivateTmp=yes
 
 # Capabilities:
-#   CAP_NET_ADMIN  — nft writes inside netns
+#   CAP_NET_ADMIN  — nft writes inside netns; also required to bind
+#                    the nfnetlink_log socket when LOG_DISPATCH=shorewalld
 #   CAP_SYS_ADMIN  — setns(2) into named network namespaces
 #   CAP_NET_RAW    — conservative, not strictly required
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN

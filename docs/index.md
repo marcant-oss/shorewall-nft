@@ -67,12 +67,16 @@ Shorewall — existing configs load unchanged.
 
 ## shorewalld
 
-Long-running companion daemon with two jobs:
+Long-running companion daemon with three jobs:
 
 1. **Prometheus exporter** — per-rule packet/byte counters from every
    `inet shorewall` table across all network namespaces
 2. **DNS-set API** — feeds nft sets named `dns_<qname>_v4/v6` from
    `pdns_recursor` so rules can match on hostname
+3. **NFLOG log dispatcher** — subscribes to `nfnetlink_log` per netns,
+   surfaces matches as a labelled Prometheus counter plus optional
+   plain-file / unix-socket / journald / syslog sinks (opt-in via
+   `LOG_DISPATCH=shorewalld`; eliminates the per-netns `ulogd2` unit)
 
 → [shorewalld reference](shorewalld/index.md) · [Prometheus metrics reference](shorewalld/metrics.md)
 
