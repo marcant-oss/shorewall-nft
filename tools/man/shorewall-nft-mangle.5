@@ -33,7 +33,7 @@ are comments.
 l l l.
 Column	Required	Description
 _
-ACTION	yes	Mark or divert action: MARK(N), CONNMARK(N), RESTORE, SAVE, DSCP(...), CLASSIFY(...), TPROXY(PORT[,ADDR]), or a bare integer mark value (decimal or 0x-hex). Anything else is logged at WARNING level and the rule is skipped.
+ACTION	yes	Mark or divert action: MARK(N), CONNMARK(N), RESTORE, SAVE, DSCP(...), CLASSIFY(...), TPROXY(PORT[,ADDR]), DUP(ADDR[,DEV]), or a bare integer mark value (decimal or 0x-hex). Anything else is logged at WARNING level and the rule is skipped.
 SOURCE	yes	Source zone:address or CIDR
 DEST	yes	Destination zone:address or CIDR
 PROTO	no	Protocol filter
@@ -95,6 +95,29 @@ capability; see
 .BR shorewall\-nft (8)
 .B capabilities
 for the probed kernel feature set.
+.PP
+Tap-copy a packet to a remote analyser without disturbing the
+production flow:
+.RS
+.nf
+#ACTION                    SOURCE  DEST  PROTO  DPORT
+DUP(198.51.100.7)          all     all   tcp    25
+DUP(198.51.100.7,eth0)     all     all   udp    53
+.fi
+.RE
+The
+.B DUP
+action duplicates the packet to the listed address; the original
+packet continues unchanged through the remainder of the chain, so
+DUP is non-terminal.  The optional second parameter forces the
+copy out via a specific outgoing device, bypassing the routing
+table.  Gated by the
+.B has_dup
+capability.  The companion zero-copy
+.B fwd
+statement is netdev-ingress only and is not yet exposed via the
+mangle ACTION column \(em it requires a dedicated netdev table
+the mangle file does not currently produce.
 
 .SH NFSET / DNS TOKENS
 The SOURCE and DEST columns accept

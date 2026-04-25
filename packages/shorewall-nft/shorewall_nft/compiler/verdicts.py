@@ -232,6 +232,29 @@ class TproxyVerdict:
     addr: str | None = None
 
 
+@dataclass(frozen=True)
+class DupVerdict:
+    """Tap-copy a packet to another destination (mangle file).
+
+    Surfaces ``DUP(ADDR)`` and ``DUP(ADDR,DEV)`` in the ACTION column
+    of the mangle file. Emitted as one of:
+
+    * ``dup to ADDR``                     — copy out via routing
+    * ``dup to ADDR device "DEV"``        — copy out via DEV
+
+    Gated by ``has_dup``. The kernel duplicates the packet without
+    consuming a verdict — the original packet continues through the
+    chain after the dup statement, so this is not a terminal action.
+
+    Useful for tap / sniffer pipelines and for redirecting a copy to
+    a remote analyser without disturbing the production flow. The
+    ``fwd`` (zero-copy forward) counterpart is netdev-ingress only
+    and is tracked separately.
+    """
+    target: str
+    device: str | None = None
+
+
 # ── Union alias ───────────────────────────────────────────────────────────
 
 SpecialVerdict = Union[
@@ -241,5 +264,5 @@ SpecialVerdict = Union[
     DscpVerdict, ClassifyVerdict, EcnClearVerdict,
     CounterVerdict, NamedCounterVerdict, NflogVerdict,
     AuditVerdict,
-    SynproxyVerdict, QuotaVerdict, TproxyVerdict,
+    SynproxyVerdict, QuotaVerdict, TproxyVerdict, DupVerdict,
 ]

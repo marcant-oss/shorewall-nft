@@ -28,6 +28,7 @@ from shorewall_nft.compiler.verdicts import (
     CtHelperVerdict,
     DnatVerdict,
     DscpVerdict,
+    DupVerdict,
     EcnClearVerdict,
     MarkVerdict,
     MasqueradeVerdict,
@@ -181,16 +182,16 @@ class TestSpecialVerdictUnion:
             DscpVerdict, ClassifyVerdict, EcnClearVerdict,
             CounterVerdict, NamedCounterVerdict, NflogVerdict,
             AuditVerdict,
-            SynproxyVerdict, QuotaVerdict, TproxyVerdict,
+            SynproxyVerdict, QuotaVerdict, TproxyVerdict, DupVerdict,
         }
         assert set(args) == expected, (
             f"Union mismatch. Extra: {set(args) - expected}. "
             f"Missing: {expected - set(args)}"
         )
 
-    def test_count_is_21(self):
+    def test_count_is_22(self):
         import typing
-        assert len(typing.get_args(SpecialVerdict)) == 21
+        assert len(typing.get_args(SpecialVerdict)) == 22
 
 
 # ---------------------------------------------------------------------------

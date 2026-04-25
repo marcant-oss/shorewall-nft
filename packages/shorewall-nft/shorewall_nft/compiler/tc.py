@@ -47,6 +47,7 @@ from shorewall_nft.compiler.verdicts import (
     ClassifyVerdict,
     ConnmarkVerdict,
     DscpVerdict,
+    DupVerdict,
     MarkVerdict,
     RestoreMarkVerdict,
     SaveMarkVerdict,
@@ -853,6 +854,31 @@ def _parse_tproxy_params(params: str) -> TproxyVerdict | None:
     return TproxyVerdict(port=port, addr=addr_part or None)
 
 
+def _parse_dup_params(params: str) -> DupVerdict | None:
+    """Parse the body of a ``DUP(...)`` mangle action.
+
+    Accepted forms:
+
+    * ``DUP(ADDR)``           — copy destination only (kernel routes)
+    * ``DUP(ADDR,DEV)``       — copy destination + outgoing device
+
+    Returns a :class:`DupVerdict` on success, ``None`` on a malformed
+    body (empty or address-less). The address itself is not validated
+    here — ``nft -f`` rejects any syntactically invalid address at
+    load time.
+    """
+    raw = params.strip()
+    if not raw:
+        return None
+    if "," in raw:
+        addr_part, dev_part = (s.strip() for s in raw.split(",", 1))
+    else:
+        addr_part, dev_part = raw, ""
+    if not addr_part:
+        return None
+    return DupVerdict(target=addr_part, device=dev_part or None)
+
+
 def process_mangle(ir: FirewallIR, tcrules: list[ConfigLine],
                    mangle: list[ConfigLine], zones: ZoneModel) -> None:
     """Process mangle/tcrules into nft mark rules."""
@@ -946,6 +972,22 @@ def _process_mark_rule(ir: FirewallIR, line: ConfigLine,
         rule.verdict_args = tproxy_verdict
         ir.require_capability(
             "has_tproxy_stmt", "TPROXY action",
+            source=f"{line.file}:{line.lineno}",
+        )
+    elif action.startswith("DUP("):
+        dup_inner = action[len("DUP("):].rstrip(")")
+        dup_verdict = _parse_dup_params(dup_inner)
+        if dup_verdict is None:
+            logger.warning(
+                "%s:%d: DUP action %r has a malformed body — expected "
+                "DUP(ADDR) or DUP(ADDR,DEV). Rule skipped.",
+                line.file, line.lineno, action,
+            )
+            return
+        rule.verdict = Verdict.ACCEPT
+        rule.verdict_args = dup_verdict
+        ir.require_capability(
+            "has_dup", "DUP action",
             source=f"{line.file}:{line.lineno}",
         )
     else:

@@ -28,6 +28,7 @@ from shorewall_nft.compiler.verdicts import (
     CtHelperVerdict,
     DnatVerdict,
     DscpVerdict,
+    DupVerdict,
     EcnClearVerdict,
     MarkVerdict,
     MasqueradeVerdict,
@@ -1235,6 +1236,7 @@ _TYPED_VERDICT_EMITTERS: dict[type, Callable] = {
     SynproxyVerdict: lambda v: _emit_synproxy_verdict(v),
     QuotaVerdict: lambda v: f"quota over {v.bytes_count} {v.unit} drop",
     TproxyVerdict: lambda v: _emit_tproxy_verdict(v),
+    DupVerdict: lambda v: _emit_dup_verdict(v),
 }
 
 
@@ -1253,6 +1255,18 @@ def _emit_tproxy_verdict(v: "TproxyVerdict") -> str:
     if ":" in v.addr:
         return f"tproxy ip6 to [{v.addr}]:{v.port}"
     return f"tproxy ip to {v.addr}:{v.port}"
+
+
+def _emit_dup_verdict(v: "DupVerdict") -> str:
+    """Emit ``dup to <addr> [device "<dev>"]``.
+
+    The kernel duplicates the packet without consuming a verdict —
+    the chain walk continues after the dup statement, so callers
+    must follow with a terminal verdict if they want one.
+    """
+    if v.device:
+        return f'dup to {v.target} device "{v.device}"'
+    return f"dup to {v.target}"
 
 
 def _emit_synproxy_verdict(v: "SynproxyVerdict") -> str:
