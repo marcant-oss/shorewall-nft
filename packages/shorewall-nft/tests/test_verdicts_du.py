@@ -40,6 +40,7 @@ from shorewall_nft.compiler.verdicts import (
     RedirectVerdict,
     RestoreMarkVerdict,
     SaveMarkVerdict,
+    SecmarkVerdict,
     SnatVerdict,
     SpecialVerdict,
     SynproxyVerdict,
@@ -183,15 +184,16 @@ class TestSpecialVerdictUnion:
             CounterVerdict, NamedCounterVerdict, NflogVerdict,
             AuditVerdict,
             SynproxyVerdict, QuotaVerdict, TproxyVerdict, DupVerdict,
+            SecmarkVerdict,
         }
         assert set(args) == expected, (
             f"Union mismatch. Extra: {set(args) - expected}. "
             f"Missing: {expected - set(args)}"
         )
 
-    def test_count_is_22(self):
+    def test_count_is_23(self):
         import typing
-        assert len(typing.get_args(SpecialVerdict)) == 22
+        assert len(typing.get_args(SpecialVerdict)) == 23
 
 
 # ---------------------------------------------------------------------------

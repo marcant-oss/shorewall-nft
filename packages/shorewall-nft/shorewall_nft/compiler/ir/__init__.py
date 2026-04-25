@@ -95,6 +95,7 @@ from shorewall_nft.compiler.ir._build import (
     _process_rawnat,
     _process_routestopped,
     _process_scfilter,
+    _process_secmarks,
     _process_stoppedrules,
     _process_synparams,
     _set_self_zone_policies,
@@ -263,6 +264,13 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     # Process nfacct (named counter objects in the inet table)
     if getattr(config, "nfacct", None):
         _process_nfacct(ir, config.nfacct)
+
+    # Process secmarks (SELinux MAC labelling — WP-F2). The named
+    # secmark objects emit at the top of the inet shorewall table;
+    # rules attach to mangle-prerouting / -input / -output / -forward
+    # / -postrouting based on the row's CHAIN code.
+    if getattr(config, "secmarks", None):
+        _process_secmarks(ir, config.secmarks, zones)
 
     # Process scfilter (source CIDR sanity filter)
     if getattr(config, "scfilter", None):

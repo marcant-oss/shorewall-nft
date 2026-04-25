@@ -1304,6 +1304,154 @@ def _process_nfacct(ir: FirewallIR, nfacct_lines: list[ConfigLine]) -> None:
         ir.nfacct_counters[name] = (packets, byte_count)
 
 
+def _process_secmarks(ir: FirewallIR, secmark_lines: list[ConfigLine],
+                      zones: ZoneModel) -> None:
+    """Process the ``secmarks`` config file (WP-F2; SELinux MAC).
+
+    Each row declares one SELinux security context and a 5-tuple
+    that triggers ``meta secmark set "<name>"`` in a mangle chain.
+    Unique labels are deduped to ``_sm_0`` / ``_sm_1`` / … in the
+    order they first appear; rules sharing a label reuse the same
+    object so the kernel only allocates one secmark per context.
+
+    Format::
+
+        SECMARK   CHAIN  SOURCE  DEST  PROTO  DPORT  SPORT  STATE
+
+    CHAIN codes (single letter, classic Shorewall semantics):
+
+    * ``P`` — PREROUTING (most common; tag inbound packets)
+    * ``I`` — INPUT
+    * ``O`` — OUTPUT
+    * ``F`` — FORWARD
+    * ``T`` — POSTROUTING
+
+    Rows whose SECMARK column is ``SAVE`` or ``RESTORE`` (classic
+    CONNSECMARK semantics — save/restore the secmark to/from the
+    conntrack entry) are not yet supported. They are skipped with
+    a warning so the rest of the file still compiles; supporting
+    them is a follow-up commit when an operator surfaces the need.
+    """
+    from shorewall_nft.compiler.ir._data import SecmarkObject
+    from shorewall_nft.compiler.verdicts import SecmarkVerdict
+
+    # Map CHAIN code → (chain_name, hook, priority).
+    chain_specs = {
+        "P": ("mangle-prerouting", Hook.PREROUTING, -150),
+        "I": ("mangle-input", Hook.INPUT, -150),
+        "O": ("mangle-output", Hook.OUTPUT, -150),
+        "F": ("mangle-forward", Hook.FORWARD, -150),
+        "T": ("mangle-postrouting", Hook.POSTROUTING, -150),
+    }
+
+    log = logging.getLogger(__name__)
+    label_to_name: dict[str, str] = {}
+    for line in secmark_lines:
+        cols = line.columns
+        if len(cols) < 2:
+            continue
+        secmark_col = cols[0]
+        chain_code = cols[1].upper() if len(cols) > 1 else "P"
+
+        # Defer SAVE/RESTORE — operators rarely need them, classic
+        # Shorewall surface for now is the literal-label set form.
+        if secmark_col in ("SAVE", "RESTORE"):
+            log.warning(
+                "secmarks: SAVE/RESTORE not yet supported; "
+                "skipped row at %s:%d", line.file, line.lineno)
+            continue
+
+        if chain_code not in chain_specs:
+            log.warning(
+                "secmarks: unknown CHAIN code %r at %s:%d (expected "
+                "one of P/I/O/F/T) — row skipped",
+                chain_code, line.file, line.lineno)
+            continue
+
+        # Strip surrounding quotes (operators may write the label as
+        # "system_u:object_r:web_t:s0" or unquoted; both reach the
+        # IR as the bare context string and re-quote at emit time).
+        label = secmark_col.strip().strip('"').strip("'")
+        if not label:
+            log.warning(
+                "secmarks: empty SECMARK label at %s:%d — row skipped",
+                line.file, line.lineno)
+            continue
+
+        if label not in label_to_name:
+            name = f"_sm_{len(label_to_name)}"
+            label_to_name[label] = name
+            ir.secmark_objects.append(SecmarkObject(name=name, label=label))
+        else:
+            name = label_to_name[label]
+
+        # Ensure the target chain exists.
+        chain_name, hook, priority = chain_specs[chain_code]
+        if chain_name not in ir.chains:
+            ir.add_chain(Chain(
+                name=chain_name,
+                chain_type=ChainType.FILTER,
+                hook=hook,
+                priority=priority,
+            ))
+
+        # Build the rule's match list from the remaining columns.
+        # The classic SOURCE/DEST/PROTO/DPORT/SPORT/STATE columns
+        # mirror the rules-file shape; we lean on existing helpers
+        # so secmark rules carry the same address/zone/proto match
+        # semantics as filter rules.
+        source_spec = cols[2] if len(cols) > 2 else "-"
+        dest_spec   = cols[3] if len(cols) > 3 else "-"
+        proto       = cols[4] if len(cols) > 4 else None
+        dport       = cols[5] if len(cols) > 5 else None
+        sport       = cols[6] if len(cols) > 6 else None
+        state       = cols[7] if len(cols) > 7 else None
+        if proto == "-": proto = None
+        if dport == "-": dport = None
+        if sport == "-": sport = None
+        if state == "-": state = None
+
+        rule = Rule(
+            verdict=Verdict.ACCEPT,  # secmark is a side-effect; chain falls through
+            verdict_args=SecmarkVerdict(secmark_name=name),
+            source_file=line.file,
+            source_line=line.lineno,
+            source_raw=line.raw,
+        )
+
+        # Address matches from SOURCE/DEST zones (both optional).
+        if source_spec and source_spec != "-":
+            _src_zone, src_addr = _parse_zone_spec(source_spec, zones)
+            src_addr = _sentinel_to_addr(_src_zone, src_addr)
+            if src_addr and src_addr != "0.0.0.0/0":
+                rule.matches.append(Match(field="ip saddr", value=src_addr))
+        if dest_spec and dest_spec != "-":
+            _dst_zone, dst_addr = _parse_zone_spec(dest_spec, zones)
+            dst_addr = _sentinel_to_addr(_dst_zone, dst_addr)
+            if dst_addr and dst_addr != "0.0.0.0/0":
+                rule.matches.append(Match(field="ip daddr", value=dst_addr))
+
+        if proto:
+            rule.matches.append(Match(field="meta l4proto", value=proto.lower()))
+        if dport:
+            rule.matches.append(
+                Match(field=f"{proto.lower()} dport" if proto else "th dport",
+                      value=dport))
+        if sport:
+            rule.matches.append(
+                Match(field=f"{proto.lower()} sport" if proto else "th sport",
+                      value=sport))
+        if state:
+            rule.matches.append(Match(field="ct state", value=state.lower()))
+
+        ir.chains[chain_name].rules.append(rule)
+
+        ir.require_capability(
+            "has_secmark_obj", "SECMARK action",
+            source=f"{line.file}:{line.lineno}",
+        )
+
+
 def _process_arprules(ir: FirewallIR, arprules: list[ConfigLine]) -> None:
     """Process the ``arprules`` config file into the arp filter table.
 

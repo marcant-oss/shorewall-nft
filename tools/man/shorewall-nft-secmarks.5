@@ -1,22 +1,33 @@
-.TH SHOREWALL-NFT-SECMARKS 5 "2026-04-24" "shorewall-nft 1.10.2" "File Formats"
+.TH SHOREWALL-NFT-SECMARKS 5 "2026-04-25" "shorewall-nft 1.10.2" "File Formats"
 .SH NAME
-shorewall\-nft\-secmarks \- SELinux security mark labelling (configuration accepted, not emitted)
+shorewall\-nft\-secmarks \- SELinux security mark labelling
 .SH DESCRIPTION
 The
 .I secmarks
-file is accepted by the shorewall-nft parser for configuration compatibility
-with classic Shorewall.
-.B No nft output is emitted for this file in the current release.
-
-In classic Shorewall,
-.I secmarks
-labels connections with SELinux security marks
-.RB ( secmark )
-for use with SELinux Mandatory Access Control policies.  shorewall-nft does
-not currently implement secmark emit paths.
-
-If you rely on secmark functionality, continue to use classic Shorewall for
-that aspect of your policy, or open an issue in the project tracker.
+file declares packet labelling rules for SELinux Mandatory Access
+Control policies.  Each row associates a 5-tuple match with a
+SELinux security context; matching packets are tagged with
+.B meta secmark set "<name>"
+and the chain falls through to subsequent rules.
+.PP
+shorewall-nft compiles each unique SELinux label into one
+.B secmark <name> { "<label>" }
+named-object declaration at the top of the inet shorewall table.
+Names are assigned deterministically as
+.BR _sm_0 ,
+.BR _sm_1 ,
+… in the order each label first appears in the file, so two rows
+sharing a label reuse a single named object — one allocation per
+context.
+.PP
+The compiled emit is gated by the
+.B has_secmark_obj
+capability; on kernels that lack the named-object form
+.B \-\-strict\-features
+errors at compile time.  At nft-load time the kernel further
+resolves each label against the loaded SELinux policy — without
+SELinux loaded the rules pass nft syntactically but the kernel
+silently no-ops the secmark assignment.
 
 .SH FILE FORMAT
 Location:
@@ -24,25 +35,104 @@ Location:
 (or inside a merged
 .IR /etc/shorewall46/ ).
 
-The file is parsed but ignored.  Columns for reference:
+Whitespace-separated columns; lines beginning with
+.B #
+are comments.
 
 .TS
 l l l.
-Column	Description
+Column	Required	Description
 _
-SECMARK	SELinux security context string
-CHAIN	Chain to label in
-SOURCE	Source zone:address or CIDR
-DEST	Destination zone:address or CIDR
-PROTO	Protocol filter
-DPORT	Destination port filter
-SPORT	Source port filter
-STATE	Connection state filter
+SECMARK	yes	SELinux security context string (quoted or bare)
+CHAIN	yes	One of P / I / O / F / T (see CHAIN codes)
+SOURCE	no	Source zone:address or CIDR
+DEST	no	Destination zone:address or CIDR
+PROTO	no	Protocol filter (tcp, udp, …)
+DPORT	no	Destination port filter
+SPORT	no	Source port filter
+STATE	no	Connection-state filter (new, established, …)
 .TE
+
+.SS CHAIN codes
+.TP
+.B P
+PREROUTING — tag inbound packets before routing decision (most common).
+.TP
+.B I
+INPUT — tag packets destined for the firewall itself.
+.TP
+.B O
+OUTPUT — tag packets originating on the firewall.
+.TP
+.B F
+FORWARD — tag packets passing through the firewall between zones.
+.TP
+.B T
+POSTROUTING — tag packets after routing, just before egress.
+
+Each code maps to a mangle-table chain at priority -150.  Unknown
+CHAIN codes cause the row to be skipped with a compile-time warning;
+the rest of the file still compiles.
+
+.SH EXAMPLES
+.PP
+Tag inbound HTTP / HTTPS as
+.B web_t
+and inbound SSH as
+.B ssh_t
+(two rows share the web_t label and collapse to one named object):
+.RS
+.nf
+#SECMARK                            CHAIN  SOURCE  DEST  PROTO  DPORT
+"system_u:object_r:web_t:s0"        P      net     fw    tcp    80
+"system_u:object_r:web_t:s0"        P      net     fw    tcp    443
+"system_u:object_r:ssh_t:s0"        P      net     fw    tcp    22
+.fi
+.RE
+
+Compiled emit (excerpt):
+.RS
+.nf
+\fB\fItable inet shorewall {\fR
+    secmark _sm_0 { "system_u:object_r:web_t:s0" }
+    secmark _sm_1 { "system_u:object_r:ssh_t:s0" }
+    chain mangle-prerouting {
+        type filter hook prerouting priority -150;
+        ip saddr <net> ip daddr <fw> tcp dport 80   meta secmark set "_sm_0"
+        ip saddr <net> ip daddr <fw> tcp dport 443  meta secmark set "_sm_0"
+        ip saddr <net> ip daddr <fw> tcp dport 22   meta secmark set "_sm_1"
+    }
+}
+.fi
+.RE
+
+.SH LIMITATIONS
+.PP
+The following classic-Shorewall semantics are NOT yet supported.
+A row that uses any of them is skipped at compile time with a
+warning; the rest of the file still compiles.
+
+.TP
+.B SAVE / RESTORE column values
+Classic Shorewall's CONNSECMARK semantics — save the packet
+secmark to the conntrack entry on the first packet, restore it
+to subsequent packets — are not yet wired.  The nft equivalents
+(\fBct secmark set meta secmark\fR / \fBmeta secmark set ct secmark\fR)
+will be added in a follow-up commit when an operator surfaces the
+need.  For now, fresh per-flow labelling on every packet via
+SECMARK works correctly; what's missing is propagating the label
+across packets of the same flow.
+
+.TP
+.B ct secmark matching in regular rules
+Filter-chain rules cannot match against the conntrack secmark
+(\fBct secmark == "<label>"\fR) yet.  Same reason as SAVE/RESTORE
+— deferred pending CONNSECMARK companion work.
 
 .SH SEE ALSO
 .BR shorewall\-nft (8),
-.BR shorewall\-nft\-rules (5)
+.BR shorewall\-nft\-rules (5),
+.BR shorewall\-nft\-mangle (5)
 
 .SH AUTHOR
 André Valentin <avalentin@marcant.net>

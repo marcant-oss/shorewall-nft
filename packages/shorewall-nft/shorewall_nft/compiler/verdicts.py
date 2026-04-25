@@ -255,6 +255,30 @@ class DupVerdict:
     device: str | None = None
 
 
+@dataclass(frozen=True)
+class SecmarkVerdict:
+    """``meta secmark set "<name>"`` — references a named secmark object.
+
+    The IR carries the resolved object NAME (e.g. ``_sm_0``), not
+    the SELinux label, so the emitter does not need to dedupe at
+    emit time. The matching ``secmark <name> { "<label>" }``
+    table-level declaration is recorded on
+    :attr:`FirewallIR.secmark_objects` by ``_process_secmarks()``
+    in ``compiler/ir/_build.py``.
+
+    Gated by ``has_secmark_obj``; ``--strict-features`` errors at
+    compile time on kernels that lack the named-object form.
+    SELinux must also be available at *load* time on the running
+    host — secmark labels must resolve against the loaded SELinux
+    policy or ``nft -f`` rejects the table.
+
+    SAVE / RESTORE column values from classic Shorewall
+    (CONNSECMARK semantics via ``ct secmark``) are deferred to a
+    follow-up commit; see :manpage:`shorewall-nft-secmarks(5)`.
+    """
+    secmark_name: str
+
+
 # ── Union alias ───────────────────────────────────────────────────────────
 
 SpecialVerdict = Union[
@@ -265,4 +289,5 @@ SpecialVerdict = Union[
     CounterVerdict, NamedCounterVerdict, NflogVerdict,
     AuditVerdict,
     SynproxyVerdict, QuotaVerdict, TproxyVerdict, DupVerdict,
+    SecmarkVerdict,
 ]

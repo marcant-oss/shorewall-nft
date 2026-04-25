@@ -379,6 +379,20 @@ class TcPri:
     helper: str = "-"
 
 
+@dataclass(frozen=True)
+class SecmarkObject:
+    """Table-level ``secmark <name> { "<label>" }`` declaration.
+
+    Populated from the ``secmarks`` config file by
+    ``_process_secmarks()``. Rules carrying a ``SecmarkVerdict``
+    reference the ``name`` field; the ``label`` field holds the
+    SELinux security context string that the kernel uses at
+    secmark-resolution time.
+    """
+    name: str
+    label: str
+
+
 @dataclass
 class FirewallIR:
     """Complete intermediate representation of the firewall."""
@@ -398,6 +412,13 @@ class FirewallIR:
     # `counter <name> { packets N bytes M }` declarations at the
     # top of the inet shorewall table.
     nfacct_counters: dict[str, tuple[int, int]] = field(default_factory=dict)
+    # Named secmark objects from the secmarks file. Each entry is a
+    # ``SecmarkObject(name, label)`` declared at the top of the inet
+    # shorewall table as ``secmark <name> { "<label>" }``. Rules
+    # generated from the same secmarks rows reference the name via
+    # ``meta secmark set "<name>"``. Populated by
+    # ``_process_secmarks()`` in ``compiler/ir/_build.py``.
+    secmark_objects: list["SecmarkObject"] = field(default_factory=list)
     # DNS-backed nft set registry — populated from rules that use
     # ``dns:hostname`` tokens and from the optional ``dnsnames`` file.
     # The emitter reads this to declare one ``dns_<name>_v4`` /

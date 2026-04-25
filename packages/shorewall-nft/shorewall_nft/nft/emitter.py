@@ -40,6 +40,7 @@ from shorewall_nft.compiler.verdicts import (
     RedirectVerdict,
     RestoreMarkVerdict,
     SaveMarkVerdict,
+    SecmarkVerdict,
     SnatVerdict,
     SynproxyVerdict,
     TproxyVerdict,
@@ -298,6 +299,18 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
                     f'\tcounter {name} {{ packets {pkt} bytes {byt} }}')
             else:
                 lines.append(f"\tcounter {name} {{ }}")
+
+    # secmark named-object declarations — SELinux MAC labelling from
+    # the secmarks config file (WP-F2). Must come before any chain
+    # that references them via `meta secmark set "<name>"`. The
+    # kernel resolves the label string against the loaded SELinux
+    # policy at nft -f time; rules silently no-op on systems without
+    # SELinux loaded.
+    if getattr(ir, "secmark_objects", None):
+        lines.append("")
+        lines.append("\t# Named secmark objects (from secmarks file)")
+        for sm in ir.secmark_objects:
+            lines.append(f'\tsecmark {sm.name} {{ "{sm.label}" }}')
 
     # Emit CT helper objects (must be before chains that reference them)
     _emit_ct_helper_objects(lines, ir)
@@ -1256,6 +1269,7 @@ _TYPED_VERDICT_EMITTERS: dict[type, Callable] = {
     QuotaVerdict: lambda v: f"quota over {v.bytes_count} {v.unit} drop",
     TproxyVerdict: lambda v: _emit_tproxy_verdict(v),
     DupVerdict: lambda v: _emit_dup_verdict(v),
+    SecmarkVerdict: lambda v: f'meta secmark set "{v.secmark_name}"',
 }
 
 
