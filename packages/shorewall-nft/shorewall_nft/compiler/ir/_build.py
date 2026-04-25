@@ -147,6 +147,18 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
     invalid_resolved = _disposition_to_verdict(invalid_disp)
     untracked_resolved = _disposition_to_verdict(untracked_disp)
 
+    # Static-blacklist jump on zone→fw chains. Upstream emits
+    # ``counter jump blacklst`` as the very first rule (BEFORE the ct
+    # prefix) on every chain whose destination is the firewall zone,
+    # so blacklisted sources are dropped before any conntrack lookup.
+    # Skip when the blacklist chain is absent or empty (no
+    # ``etc/shorewall/blacklist`` content).
+    blacklist_active = (
+        "blacklist" in ir.chains
+        and ir.chains["blacklist"].rules
+    )
+    fw_zone = ir.zones.firewall_zone
+
     all_zones = set(ir.zones.all_zone_names())
     for name, chain in ir.chains.items():
         if chain.is_base_chain:
@@ -241,7 +253,18 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
                 verdict=Verdict.JUMP,
                 verdict_args="sw_dynamic-blacklist",
             ))
-        chain.rules = ct_rules + list(chain.rules)
+        # Static-blacklist jump on zone→fw paths, prepended BEFORE the
+        # ct prefix block (upstream's ``-A <chain> counter jump blacklst``
+        # is the chain's very first rule). Only emit when the blacklist
+        # chain is populated AND the destination zone is the firewall.
+        prefix_rules = list(ct_rules)
+        if blacklist_active and dst == fw_zone:
+            prefix_rules = [Rule(
+                matches=[],
+                verdict=Verdict.JUMP,
+                verdict_args="blacklist",
+            )] + prefix_rules
+        chain.rules = prefix_rules + list(chain.rules)
 
 
 def _process_policies(ir: FirewallIR, policy_lines: list[ConfigLine],
