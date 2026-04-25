@@ -256,6 +256,72 @@ Named per-source hashlimit (nft
 .I name
 is the meter table name; useful for sharing a limit across multiple rules.
 
+.SS ?DYNSET directive
+.PP
+.B ?DYNSET set=\fIname\fB [timeout=\fIduration\fB]
+.PP
+A single-shot directive that attaches a dynamic-set membership
+statement to the very next rule produced by the parser. Use it
+to record source addresses of matched packets (typical case:
+auto-blacklist on first probe). The directive resets after one
+rule — a second rule that follows without a fresh
+.B ?DYNSET
+will
+.I not
+inherit the membership clause.
+.PP
+The
+.I name
+must reference a set declared via
+.IR shorewall\-nft\-nfsets (5)
+or a load-sets directive — the parser does
+.I not
+declare the set itself, only attaches the
+.B add @\fIname\fR
+statement.
+.I duration
+is an nft duration string
+.RB ( 5s ,
+.BR 2m ,
+.BR 1h ,
+.BR 1d ).
+Omit the
+.B timeout=
+key to inherit the parent set's default.  The matched packet's
+source address is added to the set on every traversal of the
+attached rule, so attaching the directive to a frequently-matched
+rule will populate the set quickly.
+.PP
+Reset a pending directive without attaching it to a rule by
+issuing a bare
+.B ?DYNSET
+or
+.BR "?DYNSET reset" .
+Useful inside an
+.B ?IF
+block whose
+.B ?DYNSET
+should not leak past the block boundary.
+.PP
+The clause is gated by the
+.B has_dynset
+capability; a rule that uses
+.B ?DYNSET
+will fail compile under
+.B \-\-strict\-features
+on a kernel that lacks the dynamic-set add statement.  Example:
+.RS
+.nf
+?DYNSET set=blacklist timeout=1h
+DROP    net   $FW   tcp   22
+.fi
+.RE
+The above pair drops SSH probes and adds the source address to
+the
+.B blacklist
+set with a one-hour timeout, after which the entry expires unless
+re-added by a subsequent probe.
+
 .SS HEADERS column
 A comma-separated list of IPv6 extension header keywords; the rule
 matches packets that carry (or, when negated, lack) any of the listed

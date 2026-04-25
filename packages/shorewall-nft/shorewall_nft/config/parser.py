@@ -14,6 +14,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+@dataclass(frozen=True)
+class DynsetClause:
+    """A pending ``?DYNSET`` directive to attach to the next rule.
+
+    Surfaces as ``?DYNSET set=NAME [timeout=DURATION]`` immediately
+    above a rule line. The directive is single-shot — it applies to
+    the very next rule produced by the parser and resets afterwards
+    so a subsequent rule does not accidentally inherit the set
+    membership statement.
+
+    ``set_name`` is the nft-set name (must be declared via the
+    nfsets file or load-sets directive — the parser does not declare
+    sets, only attaches the ``add @<set>`` statement). ``timeout``
+    is an nft duration string (``5s``, ``2m``, ``1h``, …) or ``None``
+    when the parent set's default timeout should apply.
+    """
+    set_name: str
+    timeout: str | None = None
+
+
 @dataclass
 class ConfigLine:
     """A parsed line from a config file."""
@@ -24,6 +44,9 @@ class ConfigLine:
     section: str | None = None
     raw: str = ""
     format_version: int = 1  # ?FORMAT version active when line was parsed
+    # ``?DYNSET`` directive pending for this line — single-shot; the
+    # parser resets the state after attaching the clause to one rule.
+    dynset: "DynsetClause | None" = None
 
 
 @dataclass
@@ -135,6 +158,9 @@ class ConfigParser:
         # "ipv4"/"ipv6" forces subsequent lines' origin. Used by merge-config
         # to mark v6-origin rules within a unified merged file.
         self._family_scope: str | None = None
+        # Single-shot ?DYNSET directive — set by ``_handle_directive``
+        # and consumed by the next rule line emitted into ``result``.
+        self._dynset_pending: DynsetClause | None = None
 
     def parse(self) -> ShorewalConfig:
         """Parse all config files and return a ShorewalConfig."""
@@ -362,7 +388,7 @@ class ConfigParser:
                 effective_file = fname
                 if self._family_scope == "ipv6" and "shorewall6" not in fname:
                     effective_file = fname + "#shorewall6-scope"
-                result.append(ConfigLine(
+                cl = ConfigLine(
                     columns=columns,
                     file=effective_file,
                     lineno=lineno,
@@ -370,7 +396,14 @@ class ConfigParser:
                     section=section,
                     raw=raw,
                     format_version=self._format_version,
-                ))
+                    dynset=self._dynset_pending,
+                )
+                # ``?DYNSET`` is single-shot — clear after attaching to
+                # the rule line so a sibling rule does not inherit the
+                # set-membership statement.
+                if self._dynset_pending is not None:
+                    self._dynset_pending = None
+                result.append(cl)
 
         return result
 
@@ -392,6 +425,34 @@ class ConfigParser:
         if m:
             tag = m.group(1).strip()
             self._comment_tag = tag if tag else None
+            return None
+
+        # ?DYNSET set=NAME [timeout=DUR] — shorewall-nft extension
+        # Single-shot directive: attaches an ``add @NAME { ip saddr
+        # [timeout DUR] }`` statement to the very next rule produced
+        # by the parser. A bare ``?DYNSET`` (or ``?DYNSET reset``)
+        # clears any pending state — useful inside an ``?IF`` block
+        # whose ``?DYNSET`` should not leak past the block boundary.
+        m = re.match(r'^\?DYNSET\b\s*(.*)', line, re.IGNORECASE)
+        if m:
+            body = m.group(1).strip()
+            if not body or body.lower() == "reset":
+                self._dynset_pending = None
+                return None
+            kvs: dict[str, str] = {}
+            for tok in body.split():
+                if "=" in tok:
+                    k, v = tok.split("=", 1)
+                    kvs[k.strip().lower()] = v.strip()
+            set_name = kvs.get("set", "")
+            timeout = kvs.get("timeout") or None
+            if not set_name:
+                # Malformed body — skip silently rather than mid-parse
+                # raise; the missing name is the only failure mode.
+                self._dynset_pending = None
+                return None
+            self._dynset_pending = DynsetClause(
+                set_name=set_name, timeout=timeout)
             return None
 
         # ?FAMILY ipv4 | ipv6 | any — shorewall-nft extension

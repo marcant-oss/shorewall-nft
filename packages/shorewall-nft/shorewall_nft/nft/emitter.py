@@ -1161,6 +1161,23 @@ def _emit_zone_jump(lines: list[str], chain_name: str,
 # `<field> <value>` shape.  Keyed by the field string; each handler takes
 # the whole Match (so it can honour ``negate``) and returns the nft
 # fragment to append.
+def _emit_dynset_add(m: Match) -> str:
+    """Emit ``add @<set> { ip saddr [timeout <dur>] }``.
+
+    The encoded value is ``"<set_name>|<timeout_or_empty>"`` —
+    pipe-delimited so the rare nft fragment in either field cannot
+    collide. ``ip saddr`` is the only key currently supported; the
+    surface is intentionally narrow until a concrete need for
+    ``ip daddr`` / ``ether saddr`` lookups appears.
+    """
+    parts = m.value.split("|", 1)
+    set_name = parts[0]
+    timeout = parts[1].strip() if len(parts) > 1 else ""
+    if timeout:
+        return f"add @{set_name} {{ ip saddr timeout {timeout} }}"
+    return f"add @{set_name} {{ ip saddr }}"
+
+
 _INLINE_MATCH_EMITTERS: dict[str, Callable[[Match], str]] = {
     "inline": lambda m: m.value,
     "exthdr": lambda m: f"exthdr {m.value} {'missing' if m.negate else 'exists'}",
@@ -1170,6 +1187,7 @@ _INLINE_MATCH_EMITTERS: dict[str, Callable[[Match], str]] = {
     "probability": lambda m: f"numgen random mod 100 < {m.value}",
     "connbytes": lambda m: f"ct bytes > {m.value}",
     "recent": lambda m: f"# recent: {m.value}",  # nft has no direct equivalent
+    "dynset_add": _emit_dynset_add,
 }
 
 

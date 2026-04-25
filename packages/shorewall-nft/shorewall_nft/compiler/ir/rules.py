@@ -1217,6 +1217,20 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                     source=f"{line.file}:{line.lineno}",
                 )
 
+            # ?DYNSET directive — attach an ``add @<set> { ip saddr
+            # timeout <to> }`` statement to this rule. Encoded as a
+            # Match(field="dynset_add", value="<name>|<timeout>") so
+            # the inline-emitter can render the nft fragment.
+            if line.dynset is not None:
+                clause = line.dynset
+                encoded = f"{clause.set_name}|{clause.timeout or ''}"
+                rule.matches.append(Match(
+                    field="dynset_add", value=encoded))
+                ir.require_capability(
+                    "has_dynset", "?DYNSET directive",
+                    source=f"{line.file}:{line.lineno}",
+                )
+
             # SWITCH (col 14): conditional rule via conntrack mark
             if switch:
                 rule.matches.append(Match(field="ct mark", value=switch))

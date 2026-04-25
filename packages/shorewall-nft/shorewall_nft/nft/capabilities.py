@@ -94,6 +94,7 @@ class NftCapabilities:
     has_dup: bool = False
     has_fwd: bool = False
     has_exthdr: bool = False
+    has_dynset: bool = False
 
     # Set features
     has_interval_sets: bool = False
@@ -182,6 +183,14 @@ class NftCapabilities:
         # supported and a safe canary for the family. Probes both the
         # ``exists`` and ``missing`` variants in one rule.
         caps.has_exthdr  = _probe_rule("exthdr frag exists")
+        # ``add @<set> { ... }`` dynamic-set statement — needs a real
+        # set with timeout flag declared in the probe table. Build one
+        # ad-hoc, probe an add-statement against it, then drop the set.
+        _cmd(f"add set inet {_PROBE_TABLE} __dynset "
+             f"{{ type ipv4_addr; flags timeout; }}")
+        caps.has_dynset = _probe_rule(
+            "add @__dynset { ip saddr timeout 1h } accept")
+        _cmd(f"delete set inet {_PROBE_TABLE} __dynset")
         # ``synproxy`` statement — valid in input/forward only; ``__test``
         # is hooked at input so this works.
         caps.has_synproxy_stmt = _probe_rule(
