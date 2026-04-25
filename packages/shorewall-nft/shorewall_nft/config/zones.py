@@ -43,7 +43,11 @@ class IpsecOptions:
     mss: int | None = None
     strict: bool = False
     next: bool = False            # ``next`` keyword: use next SA
-    reqid: int | None = None
+    # ``reqid=N`` accepts a single value or a comma-list (``reqid=1,2,3``)
+    # so a tunnel that spans multiple SAs is expressible as
+    # ``ipsec <dir> reqid { N1, N2, ... }``. Single values stay
+    # one-element lists; emit collapses to ``reqid N`` in that case.
+    reqid: list[int] = field(default_factory=list)
     spi: int | None = None
     proto: str | None = None      # ``esp`` | ``ah`` | ``comp``
     mode: str | None = None       # ``tunnel`` | ``transport``
@@ -249,9 +253,13 @@ def _parse_ipsec_options(options: list[str]) -> IpsecOptions:
       ``next``             — advance to next SA
       ``mss=N``            — TCP MSS clamp value (N >= 500)
       ``reqid=N``          — IPsec SA request-id
+      ``reqid=N1,N2,...``  — multi-SA tunnel: emits ``ipsec <dir>
+                              reqid { N1, N2, ... }`` (nft set match)
       ``spi=N``            — Security Parameter Index
-      ``proto=esp|ah|comp``— IPsec protocol
-      ``mode=tunnel|transport`` — IPsec encapsulation mode
+      ``proto=esp|ah|comp``— IPsec protocol (no nft expression — silently
+                              dropped from emit; warned at compile time)
+      ``mode=tunnel|transport`` — IPsec encapsulation mode (no nft
+                              expression — silently dropped + warned)
       ``mark=N``           — packet mark (hex or decimal)
     """
     opts = IpsecOptions()
@@ -266,10 +274,15 @@ def _parse_ipsec_options(options: list[str]) -> IpsecOptions:
             except ValueError:
                 pass
         elif tok.startswith("reqid="):
-            try:
-                opts.reqid = int(tok.split("=", 1)[1])
-            except ValueError:
-                pass
+            raw = tok.split("=", 1)[1]
+            for part in raw.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    opts.reqid.append(int(part))
+                except ValueError:
+                    pass
         elif tok.startswith("spi="):
             try:
                 raw = tok.split("=", 1)[1]

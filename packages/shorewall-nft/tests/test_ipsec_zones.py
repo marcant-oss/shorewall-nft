@@ -82,7 +82,7 @@ def test_parse_ipsec_options_empty():
     assert opts.mss is None
     assert opts.strict is False
     assert opts.next is False
-    assert opts.reqid is None
+    assert opts.reqid == []
     assert opts.spi is None
     assert opts.proto is None
     assert opts.mode is None
@@ -106,7 +106,20 @@ def test_parse_ipsec_options_mss():
 
 def test_parse_ipsec_options_reqid():
     opts = _parse_ipsec_options(["reqid=42"])
-    assert opts.reqid == 42
+    assert opts.reqid == [42]
+
+
+def test_parse_ipsec_options_reqid_comma_list():
+    """``reqid=N1,N2,N3`` parses to a list of ints — multi-SA tunnel
+    spans render as ``ipsec <dir> reqid { N1, N2, N3 }`` in nft."""
+    opts = _parse_ipsec_options(["reqid=10,20,30"])
+    assert opts.reqid == [10, 20, 30]
+
+
+def test_parse_ipsec_options_reqid_comma_list_with_spaces():
+    """Tolerate whitespace between comma-separated reqid values."""
+    opts = _parse_ipsec_options(["reqid=10, 20 ,30"])
+    assert opts.reqid == [10, 20, 30]
 
 
 def test_parse_ipsec_options_spi_decimal():
@@ -153,7 +166,7 @@ def test_parse_ipsec_options_combined():
     opts = _parse_ipsec_options(
         ["strict", "reqid=10", "proto=esp", "mode=tunnel", "mark=0x1"])
     assert opts.strict is True
-    assert opts.reqid == 10
+    assert opts.reqid == [10]
     assert opts.proto == "esp"
     assert opts.mode == "tunnel"
     assert opts.mark == 1
@@ -170,7 +183,7 @@ def test_ipsec_zone_stores_options_in_model():
     assert tunnel.ipsec_options is not None
     assert tunnel.ipsec_options.proto == "esp"
     assert tunnel.ipsec_options.mode == "tunnel"
-    assert tunnel.ipsec_options.reqid == 5
+    assert tunnel.ipsec_options.reqid == [5]
 
 
 def test_non_ipsec_zone_has_no_ipsec_options():
@@ -247,6 +260,20 @@ def test_policy_clause_with_spi():
     zones = _zones_with_ipsec(["spi=0x1000"])
     clause = _build_ipsec_policy_clause("vpn", zones, "in")
     assert clause == "ipsec in spi 0x1000"
+
+
+def test_policy_clause_with_reqid_comma_list():
+    """``reqid=N1,N2,N3`` produces ``ipsec <dir> reqid { N1, N2, N3 }``."""
+    zones = _zones_with_ipsec(["reqid=11,22,33"])
+    clause = _build_ipsec_policy_clause("vpn", zones, "out")
+    assert clause == "ipsec out reqid { 11, 22, 33 }"
+
+
+def test_policy_clause_with_reqid_comma_list_ingress():
+    """Multi-reqid set match also works on the ingress direction."""
+    zones = _zones_with_ipsec(["reqid=11,22"])
+    clause = _build_ipsec_policy_clause("vpn", zones, "in")
+    assert clause == "ipsec in reqid { 11, 22 }"
 
 
 def test_policy_clause_proto_plus_reqid_drops_proto():

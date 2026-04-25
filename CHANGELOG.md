@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-24 — ipsec zone reqid= accepts comma-list)
+
+- ``IpsecOptions.reqid`` is now ``list[int]``; the parser accepts
+  ``reqid=N1,N2,...`` for tunnels that span multiple SAs (e.g. one
+  IPsec zone covering both phase-2 SAs of an IKEv1 site-to-site).
+  Single-value ``reqid=N`` still emits ``ipsec <dir> reqid N``;
+  multi-value emits ``ipsec <dir> reqid { N1, N2, ... }``. Verified
+  on nft 1.1.1 / kernel 6.11.
+
 ### Fixed (2026-04-24 — ipsec egress fallback without reqid/spi)
 
 - **IPsec egress without reqid/spi emitted no match** — the compiler

@@ -1140,11 +1140,23 @@ def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
         return None
 
     opts = z.ipsec_options
-    if opts is not None and (opts.reqid is not None or opts.spi is not None):
+    has_reqid = bool(opts and opts.reqid)
+    has_spi = bool(opts and opts.spi is not None)
+    if opts is not None and (has_reqid or has_spi):
         parts = [f"ipsec {direction}"]
-        if opts.reqid is not None:
-            parts.append(f"reqid {opts.reqid}")
-        if opts.spi is not None:
+        if has_reqid:
+            if len(opts.reqid) == 1:
+                parts.append(f"reqid {opts.reqid[0]}")
+            else:
+                # nft 1.1.x ``ipsec <dir> reqid { N1, N2 }`` — multi-SA
+                # tunnels (e.g. one zone covering both phase-2 SAs of an
+                # IKEv1 site-to-site, or per-protocol reqids when proto=
+                # is also set on the SA). Verified on kernel 6.11 / nft
+                # 1.1.1; ranges (``{ 1-3 }``) are also accepted but the
+                # parser only collects discrete ints.
+                csv = ", ".join(str(r) for r in opts.reqid)
+                parts.append(f"reqid {{ {csv} }}")
+        if has_spi:
             parts.append(f"spi {opts.spi:#x}")
         return " ".join(parts)
 
