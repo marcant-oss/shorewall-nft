@@ -653,6 +653,16 @@ def _expand_macro(ir: FirewallIR, zones: ZoneModel,
             _add_rule(ir, zones, verdict, log_prefix,
                       f"{src_zone}:{rfc_range}",
                       dest_spec, proto, dport, sport, line)
+        # Also emit ct-original-daddr matches against the same ranges.
+        # iptables-restore-translate produces these alongside saddr to
+        # catch DNATed flows whose original packet target was a
+        # private address (i.e. reaching the firewall via DNAT abuse).
+        # Adds a list of conntrack-original-daddr matches with the same
+        # verdict / log prefix as the saddr counterpart.
+        for rfc_range in _RFC1918_RANGES.split(","):
+            _add_rule(ir, zones, verdict, log_prefix,
+                      source_spec, dest_spec, proto, dport, sport, line,
+                      origdest=rfc_range)
         return
 
     # Check custom macros (populated from both bundled Shorewall macro
