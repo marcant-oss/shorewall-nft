@@ -23,8 +23,6 @@ from __future__ import annotations
 import logging
 import re
 
-_log = logging.getLogger("shorewall_nft.compiler.nat")
-
 from shorewall_nft.compiler.ir import (
     Chain,
     ChainType,
@@ -45,6 +43,8 @@ from shorewall_nft.compiler.verdicts import (
 )
 from shorewall_nft.config.parser import ConfigLine
 from shorewall_nft.runtime.pyroute2_helpers import settings_bool
+
+_log = logging.getLogger("shorewall_nft.compiler.nat")
 
 # ACTION column patterns
 _SNAT_ADDR_RE = re.compile(r'^SNAT\+?\((.+)\)$', re.IGNORECASE)
