@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-24 — SYNPROXY and QUOTA actions)
+
+* **``SYNPROXY``** — TCP SYN-cookie engine. Surface:
+  ``SYNPROXY`` (defaults mss=1460, wscale=7, timestamp, sack-perm)
+  or ``SYNPROXY(mss=N,wscale=N,timestamp,sack-perm)`` with explicit
+  options. Emits ``synproxy mss N wscale N timestamp sack-perm``;
+  ``no-timestamp`` / ``no-sack-perm`` toggle flags off.
+  ``ir.require_capability("has_synproxy_stmt", ...)`` so
+  ``--strict-features`` catches kernels that lack it.
+* **``QUOTA(BYTES[,UNIT])``** — bandwidth budget cap. Accepted
+  forms: ``QUOTA(1024)`` (bytes), ``QUOTA(100,mbytes)``, suffix
+  shorthand ``QUOTA(500m)`` / ``QUOTA(1g)``. Emits ``quota over
+  N <unit> drop``. Gated by ``has_quota``.
+
+Both actions live in the rules-file ACTION column and dispatch
+before the macro regex so ``QUOTA(1024)`` isn't mis-parsed as a
+macro invocation. Verified on all four live-dump fixtures.
+
 ### Added (2026-04-24 — capability probe gaps closed)
 
 A libnftnl audit identified 14 ``has_*`` capability fields declared

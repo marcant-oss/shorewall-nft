@@ -35,10 +35,12 @@ from shorewall_nft.compiler.verdicts import (
     NflogVerdict,
     NonatVerdict,
     NotrackVerdict,
+    QuotaVerdict,
     RedirectVerdict,
     RestoreMarkVerdict,
     SaveMarkVerdict,
     SnatVerdict,
+    SynproxyVerdict,
 )
 from shorewall_nft.nft.flowtable import emit_flow_offload_rule
 
@@ -1229,7 +1231,26 @@ _TYPED_VERDICT_EMITTERS: dict[type, Callable] = {
     NamedCounterVerdict: lambda v: f'counter name "{v.name}" accept',
     NflogVerdict: lambda v: f"log group {v.group}",
     AuditVerdict: lambda v: f'log prefix "AUDIT:{v.base_action}: " accept',
+    SynproxyVerdict: lambda v: _emit_synproxy_verdict(v),
+    QuotaVerdict: lambda v: f"quota over {v.bytes_count} {v.unit} drop",
 }
+
+
+def _emit_synproxy_verdict(v: "SynproxyVerdict") -> str:
+    """Emit the ``synproxy mss N wscale N [timestamp] [sack-perm]`` form.
+
+    Boolean flags are emitted as bare keywords; absent flags are
+    omitted entirely (the kernel defaults them off). The action does
+    not include a trailing verdict — nft falls through to the next
+    rule, which the parser-side wires as ``accept`` per Shorewall
+    convention.
+    """
+    parts = [f"synproxy mss {v.mss} wscale {v.wscale}"]
+    if v.timestamp:
+        parts.append("timestamp")
+    if v.sack_perm:
+        parts.append("sack-perm")
+    return " ".join(parts)
 
 def _emit_rule_lines(rule: Rule, debug_ctx: "_DebugContext | None" = None,
                      chain_name: str = "", rule_idx: int = 0,

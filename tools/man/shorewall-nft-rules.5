@@ -84,6 +84,77 @@ Built-in macro (e.g.
 .BR HTTP ,
 .BR HTTPS )
 or action file.
+.TP
+.B SYNPROXY
+.RS
+.B SYNPROXY[\fI(mss=N,wscale=N[,timestamp][,sack-perm])\fR]
+.RE
+TCP SYN-cookie engine — protect a listener against SYN-flood
+without burdening the kernel SYN queue. Bare
+.B SYNPROXY
+emits the kernel defaults
+.RB ( mss=1460 ,
+.BR wscale=7 ,
+.BR timestamp ,
+.BR sack-perm ).
+Inside the parentheses, comma-separated tokens override:
+.B mss=N
+and
+.B wscale=N
+take an integer; bare flags
+.B timestamp
+/
+.B no-timestamp
+and
+.B sack-perm
+/
+.B no-sack-perm
+toggle the corresponding flag.  Example:
+.RS
+.nf
+SYNPROXY(mss=1380,wscale=5)  net  $FW  tcp  443
+.fi
+.RE
+Requires nft
+.B has_synproxy_stmt
+(kernel ≥ 4.13);
+.B \-\-strict\-features
+errors at compile time on kernels that lack it.
+.TP
+.B QUOTA[\fI(BYTES[,UNIT])\fR]
+Bandwidth budget cap. Drops further packets once
+.I BYTES
+have crossed the matched flow.  Accepted forms:
+.RS
+.IP \(bu 2
+.B QUOTA(N)
+— raw bytes
+.IP \(bu 2
+.B QUOTA(N,UNIT)
+—
+.I UNIT
+is one of
+.BR bytes ,
+.BR kbytes ,
+.BR mbytes ,
+.BR gbytes
+.IP \(bu 2
+.B QUOTA(\fIN\fR{b|k|m|g})
+— shorthand suffix:
+.B QUOTA(500m)
+,
+.B QUOTA(1g)
+.RE
+Emits
+.B quota over <N> <unit> drop .
+Gated by
+.B has_quota .
+Example:
+.RS
+.nf
+QUOTA(500m)  net  $FW  tcp  80,443
+.fi
+.RE
 
 .SS SOURCE / DEST syntax
 .TP

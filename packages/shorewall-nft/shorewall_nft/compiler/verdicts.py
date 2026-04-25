@@ -164,6 +164,50 @@ class AuditVerdict:
     base_action: Literal["ACCEPT", "DROP", "REJECT"]
 
 
+# ── nft-native protection / accounting ─────────────────────────────────────
+
+@dataclass(frozen=True)
+class SynproxyVerdict:
+    """Inline SYNPROXY — TCP SYN-cookie engine in the kernel.
+
+    Surfaces ``SYNPROXY(mss=N,wscale=N,timestamp,sack-perm)`` in the
+    ACTION column of rules. Emitted as
+    ``synproxy mss N wscale N [timestamp] [sack-perm]`` (nft 1.1.x
+    statement form).
+
+    Fields are kept as bare types instead of an option dict so the
+    dispatch table can render the statement deterministically. The
+    nft kernel rejects the statement outside ``input`` / ``forward``
+    hooks; the emitter honours that by only attaching the verdict to
+    those chains.
+
+    ``has_synproxy_stmt`` is the gating capability; the named-object
+    form (``has_synproxy_obj``) is a separate concern not yet exposed
+    via the action surface.
+    """
+    mss: int = 1460
+    wscale: int = 7
+    timestamp: bool = True
+    sack_perm: bool = True
+
+
+@dataclass(frozen=True)
+class QuotaVerdict:
+    """Bandwidth-quota cap on a flow.
+
+    Surfaces ``QUOTA(BYTES[,UNIT])`` in the ACTION column. ``unit`` is
+    one of nft's accepted quota units (``bytes``, ``kbytes``,
+    ``mbytes``, ``gbytes``); default ``bytes``. Emitted as
+    ``quota over <bytes> <unit> drop`` (nft 1.1.x).
+
+    Gated by ``has_quota``. Named quota objects (``has_quota_obj``)
+    are tracked as a separate follow-up — they need a config-file
+    surface for declaration.
+    """
+    bytes_count: int
+    unit: Literal["bytes", "kbytes", "mbytes", "gbytes"] = "bytes"
+
+
 # ── Union alias ───────────────────────────────────────────────────────────
 
 SpecialVerdict = Union[
@@ -173,4 +217,5 @@ SpecialVerdict = Union[
     DscpVerdict, ClassifyVerdict, EcnClearVerdict,
     CounterVerdict, NamedCounterVerdict, NflogVerdict,
     AuditVerdict,
+    SynproxyVerdict, QuotaVerdict,
 ]

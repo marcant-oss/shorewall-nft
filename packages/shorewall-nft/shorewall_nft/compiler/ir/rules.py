@@ -41,7 +41,9 @@ from shorewall_nft.compiler.ir.spec_rewrite import (
 )
 from shorewall_nft.compiler.verdicts import (
     AuditVerdict,
+    QuotaVerdict,
     SpecialVerdict,
+    SynproxyVerdict,
 )
 from shorewall_nft.config.parser import ConfigLine
 from shorewall_nft.config.zones import ZoneModel
@@ -255,6 +257,98 @@ def _parse_verdict(action: str) -> Verdict | None:
         "RETURN": Verdict.RETURN,
     }
     return mapping.get(action.upper())
+
+
+def _parse_synproxy_params(params: str) -> SynproxyVerdict:
+    """Parse the inside-parens body of a ``SYNPROXY(...)`` action.
+
+    Empty body → defaults (mss=1460, wscale=7, timestamp,
+    sack-perm). Recognised tokens:
+
+    * ``mss=N`` / ``wscale=N`` — integer fields
+    * ``timestamp`` / ``no-timestamp`` — toggle the timestamp flag
+    * ``sack-perm`` / ``no-sack-perm`` — toggle the SACK flag
+
+    Unknown tokens are silently dropped (kept lenient because nft
+    will reject any wrong syntax at load time anyway, and a strict
+    parser here just blocks legitimate forward-compat).
+    """
+    mss = 1460
+    wscale = 7
+    timestamp = True
+    sack_perm = True
+    for tok in (t.strip() for t in params.split(",") if t.strip()):
+        if tok.startswith("mss="):
+            try:
+                mss = int(tok.split("=", 1)[1])
+            except ValueError:
+                pass
+        elif tok.startswith("wscale="):
+            try:
+                wscale = int(tok.split("=", 1)[1])
+            except ValueError:
+                pass
+        elif tok == "timestamp":
+            timestamp = True
+        elif tok == "no-timestamp":
+            timestamp = False
+        elif tok in ("sack-perm", "sack"):
+            sack_perm = True
+        elif tok in ("no-sack-perm", "no-sack"):
+            sack_perm = False
+    return SynproxyVerdict(
+        mss=mss, wscale=wscale,
+        timestamp=timestamp, sack_perm=sack_perm,
+    )
+
+
+_QUOTA_UNIT_LITERAL = {"bytes", "kbytes", "mbytes", "gbytes"}
+_QUOTA_SUFFIX_TO_UNIT = {"b": "bytes", "k": "kbytes",
+                         "m": "mbytes", "g": "gbytes"}
+
+
+def _parse_quota_params(params: str):
+    """Parse the body of a ``QUOTA(...)`` action.
+
+    Returns a :class:`QuotaVerdict` on success, ``None`` on a
+    malformed body so the caller can fall through to the generic
+    "unknown action" error path.
+
+    Accepted forms:
+
+    * ``QUOTA(N)``                — bytes (raw number)
+    * ``QUOTA(N,UNIT)``           — UNIT ∈ {bytes,kbytes,mbytes,gbytes}
+    * ``QUOTA(N{b|k|m|g})``       — shorthand suffix (e.g. ``500m``,
+      ``1g``)
+    """
+    raw = params.strip()
+    if not raw:
+        return None
+    # Comma form: ``N,UNIT``
+    if "," in raw:
+        n_part, unit_part = (s.strip() for s in raw.split(",", 1))
+        try:
+            count = int(n_part)
+        except ValueError:
+            return None
+        unit = unit_part.lower()
+        if unit not in _QUOTA_UNIT_LITERAL:
+            return None
+        return QuotaVerdict(bytes_count=count, unit=unit)  # type: ignore[arg-type]
+    # Suffix form: ``500m`` / ``1g``
+    if raw[-1].lower() in _QUOTA_SUFFIX_TO_UNIT:
+        try:
+            count = int(raw[:-1])
+        except ValueError:
+            return None
+        unit = _QUOTA_SUFFIX_TO_UNIT[raw[-1].lower()]
+        return QuotaVerdict(bytes_count=count, unit=unit)  # type: ignore[arg-type]
+    # Bare integer form: ``QUOTA(N)`` → bytes
+    try:
+        count = int(raw)
+    except ValueError:
+        return None
+    return QuotaVerdict(bytes_count=count, unit="bytes")
 
 
 def _expand_zone_list(spec: str, zones: ZoneModel) -> list[str]:
@@ -563,6 +657,37 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
         # nft rejects uppercase protocol identifiers.
         if proto:
             proto = proto.lower()
+
+        # SYNPROXY / QUOTA actions resemble the macro syntax
+        # (``NAME(args)``) but aren't macros — handle them first so the
+        # macro regex doesn't swallow ``QUOTA(1024)`` as
+        # ``macro=QUOTA verdict=1024``.
+        if action_str == "SYNPROXY" or action_str.startswith("SYNPROXY("):
+            params = (action_str[len("SYNPROXY("):].rstrip(")")
+                      if action_str.startswith("SYNPROXY(") else "")
+            synproxy_verdict = _parse_synproxy_params(params)
+            ir.require_capability(
+                "has_synproxy_stmt", "SYNPROXY action",
+                source=f"{line.file}:{line.lineno}",
+            )
+            _add_rule(ir, zones, Verdict.ACCEPT, None,
+                      source_spec, dest_spec, proto, dport, sport, line,
+                      verdict_args=synproxy_verdict)
+            continue
+
+        if action_str.startswith("QUOTA("):
+            params = action_str[len("QUOTA("):].rstrip(")")
+            quota_verdict = _parse_quota_params(params)
+            if quota_verdict is not None:
+                ir.require_capability(
+                    "has_quota", "QUOTA action",
+                    source=f"{line.file}:{line.lineno}",
+                )
+                _add_rule(ir, zones, Verdict.DROP, None,
+                          source_spec, dest_spec, proto, dport, sport,
+                          line, verdict_args=quota_verdict)
+                continue
+            # Malformed QUOTA — fall through (will fail with unknown action)
 
         # Parse action — may be macro like SSH(ACCEPT), Ping/ACCEPT, or plain ACCEPT
         macro_match = _MACRO_RE.match(action_str) or _SLASH_MACRO_RE.match(action_str)
