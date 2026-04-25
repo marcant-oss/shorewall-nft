@@ -78,19 +78,56 @@ Match the next IPsec SA in a bundle (nested tunnels).
 .BI reqid= N
 Match the SA request ID
 .IR N .
+A comma-separated list (\fBreqid=\fIN1\fB,\fIN2\fB,\fI...\fR) is also
+accepted; the compiler emits
+.B "ipsec <dir> reqid { N1, N2, ... }"
+so a single zone can cover a multi-SA tunnel (e.g. one ESP and one
+AH SA for the same site-to-site, or per-endpoint reqids in a mesh).
+A single value emits the bare
+.B "ipsec <dir> reqid N"
+form.
 .TP
 .BI spi= N
 Match the SA SPI value
 .IR N .
 .TP
 .BI proto= PROTO
-Match the IPsec encapsulation protocol (esp, ah, or comp).
+\fBNot supported by nft 1.1.x.\fR Accepted by the parser for
+configuration round-trip but
+.B silently dropped from emit
+\(em a
+.B UserWarning
+is raised at compile time so the user knows the filter won't survive
+into the nft ruleset. The nft
+.B ipsec
+keyword has no protocol sub-field; only
+.IR reqid / spi / "ip[6] saddr" / daddr
+are matched. To enforce ESP-only or AH-only traffic, see
+.B iptables-nft-restore
+of an
+.B "-m policy --proto esp"
+rule as an emergency fallback.
 .TP
 .BI mode= MODE
-Match the SA mode (tunnel or transport).
+\fBNot supported by nft 1.1.x.\fR Same caveat as
+.IR proto= :
+parsed and stored, but dropped from emit with a
+.B UserWarning .
+The nft
+.B ipsec
+keyword has no encapsulation-mode sub-field. Use
+.IR reqid=
+to narrow the match per SA \(em that effectively pins the rule to a
+specific tunnel mode by tying it to a specific SA.
 .TP
 .BI mark= MARK [/ MASK ]
-Match the packet mark (optionally masked).
+\fBNot supported on the IPsec keyword.\fR Parsed and stored, but
+dropped from emit with a
+.B UserWarning .
+nft has no IPsec-SA mark sub-field; if a packet-mark match is needed,
+add a
+.B meta mark
+clause in the rule itself instead of attaching it to the zone.
 
 .SH EXAMPLES
 .PP

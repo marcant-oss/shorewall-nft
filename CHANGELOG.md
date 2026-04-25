@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (2026-04-24 — silent drops now warn at compile time)
+
+The compiler used to swallow several user-supplied tokens that have no
+nft equivalent without telling the user. A token-frugal Haiku audit
+classified four such sites as P1 (security-impacting / loss of
+intent); the parser/compiler now emits a warning at compile time so
+the user can find and fix them.
+
+- ``shorewall_nft.config.zones._parse_ipsec_options`` raises a
+  ``UserWarning`` when ``proto=``, ``mode=`` or ``mark=`` are set on
+  an IPsec zone — none of these have an nft expression on the
+  ``ipsec`` keyword (verified rejected by nft 1.1.1). The warning
+  text names the offending zone so it is locatable in multi-zone
+  configs.
+- ``shorewall_nft.compiler.tc._process_mark_rule`` logs a
+  ``WARNING`` when the ACTION column on a ``tcrules``/``mangle``
+  line is neither MARK / CONNMARK / RESTORE / SAVE / DSCP / CLASSIFY
+  nor a bare integer mark value. Previously the rule was silently
+  dropped — users had no way to discover the failure short of
+  diffing the emitted nft against expectations.
+- Man-page updates to ``shorewall-nft-zones.5``, ``shorewall-nft-
+  mangle.5`` and ``shorewall-nft-tcrules.5`` document each warning
+  + the surviving feature surface (``reqid=`` / ``spi=`` for ipsec,
+  the recognised ACTION token list for mangle/tcrules).
+
 ### Added (2026-04-24 — ipsec zone reqid= accepts comma-list)
 
 - ``IpsecOptions.reqid`` is now ``list[int]``; the parser accepts

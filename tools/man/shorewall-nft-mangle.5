@@ -33,7 +33,7 @@ are comments.
 l l l.
 Column	Required	Description
 _
-ACTION	yes	Mark action: MARK, CONNMARK, SAVE, RESTORE, or mark value
+ACTION	yes	Mark action: MARK(N), CONNMARK(N), RESTORE, SAVE, DSCP(...), CLASSIFY(...), or a bare integer mark value (decimal or 0x-hex). Anything else is logged at WARNING level and the rule is skipped.
 SOURCE	yes	Source zone:address or CIDR
 DEST	yes	Destination zone:address or CIDR
 PROTO	no	Protocol filter

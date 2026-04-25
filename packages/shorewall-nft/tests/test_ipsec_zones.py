@@ -8,6 +8,10 @@ Covers the parsing and rule-emit behaviour for ipsec/ipsec4/ipsec6 zones:
 """
 from __future__ import annotations
 
+import warnings
+
+import pytest
+
 
 from shorewall_nft.compiler.ir import build_ir
 from shorewall_nft.compiler.ir.rules import (
@@ -480,3 +484,49 @@ def test_ipsec6_zone_has_options_parsed():
     zones = build_zone_model(config)
     assert zones.zones["vpn6"].ipsec_options is not None
     assert zones.zones["vpn6"].ipsec_options.mode == "transport"
+
+
+# ── Silent-drop warnings (S1-S3 from silent-drops audit) ──────────────────
+
+@pytest.mark.parametrize("token,fragment", [
+    ("proto=esp", "proto='esp'"),
+    ("mode=tunnel", "mode='tunnel'"),
+    ("mark=0x10", "mark='0x10'"),
+])
+def test_ipsec_options_emits_warning_for_unsupported_token(token, fragment):
+    """``proto=`` / ``mode=`` / ``mark=`` have no nft expression and were
+    silently dropped from emit before. The parser now raises a
+    ``UserWarning`` so users learn at compile time that the token won't
+    survive into the nft ruleset.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _parse_ipsec_options([token], zone_name="zoneX")
+    matches = [
+        w for w in caught
+        if issubclass(w.category, UserWarning)
+        and "shorewall-nft" in str(w.message)
+        and "zoneX" in str(w.message)
+        and fragment in str(w.message)
+        and "dropped" in str(w.message)
+    ]
+    assert len(matches) == 1, (
+        f"expected exactly one zone-locating UserWarning for {token!r}, "
+        f"got {[str(w.message) for w in caught]}"
+    )
+
+
+def test_ipsec_options_no_warning_for_supported_tokens():
+    """``reqid=`` / ``spi=`` / ``mss=`` / ``strict`` / ``next`` are all
+    expressible in nft — no warning should fire."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _parse_ipsec_options(
+            ["strict", "next", "mss=1400", "reqid=42", "spi=0x1000"],
+            zone_name="vpn",
+        )
+    user_warns = [w for w in caught if issubclass(w.category, UserWarning)]
+    assert user_warns == [], (
+        f"unexpected warnings for supported tokens: "
+        f"{[str(w.message) for w in user_warns]}"
+    )

@@ -901,6 +901,13 @@ def _process_mark_rule(ir: FirewallIR, line: ConfigLine,
         try:
             int(action, 0)
         except ValueError:
+            logger.warning(
+                "%s:%d: tc/mangle action %r is not MARK/CONNMARK/RESTORE/"
+                "SAVE/DSCP/CLASSIFY and not a bare mark integer — rule "
+                "skipped (no nft emit). Fix the action token or remove "
+                "the line.",
+                line.file, line.lineno, action,
+            )
             return
         rule.verdict = Verdict.ACCEPT
         rule.verdict_args = _parse_mark_verdict(action)

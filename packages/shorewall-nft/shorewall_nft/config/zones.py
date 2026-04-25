@@ -5,6 +5,7 @@ Parses zones, interfaces, and hosts config files into a structured model.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 from shorewall_nft.config.parser import ShorewalConfig
@@ -134,7 +135,7 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
         # Parse IPsec OPTIONS for ipsec zones
         ipsec_opts: IpsecOptions | None = None
         if zone_type in ("ipsec", "ipsec4", "ipsec6"):
-            ipsec_opts = _parse_ipsec_options(options)
+            ipsec_opts = _parse_ipsec_options(options, zone_name=name)
 
         zone = Zone(
             name=name,
@@ -242,7 +243,8 @@ def _parse_option_values(text: str) -> dict[str, str]:
     return result
 
 
-def _parse_ipsec_options(options: list[str]) -> IpsecOptions:
+def _parse_ipsec_options(options: list[str],
+                         zone_name: str = "<unknown>") -> IpsecOptions:
     """Parse IPsec zone OPTIONS tokens into an :class:`IpsecOptions` struct.
 
     Upstream reference: ``Zones.pm::parse_zone_option_list`` — all tokens
@@ -256,11 +258,17 @@ def _parse_ipsec_options(options: list[str]) -> IpsecOptions:
       ``reqid=N1,N2,...``  — multi-SA tunnel: emits ``ipsec <dir>
                               reqid { N1, N2, ... }`` (nft set match)
       ``spi=N``            — Security Parameter Index
-      ``proto=esp|ah|comp``— IPsec protocol (no nft expression — silently
-                              dropped from emit; warned at compile time)
+      ``proto=esp|ah|comp``— IPsec protocol (no nft expression — dropped
+                              from emit; ``UserWarning`` raised so the
+                              user knows the filter won't survive compile)
       ``mode=tunnel|transport`` — IPsec encapsulation mode (no nft
-                              expression — silently dropped + warned)
-      ``mark=N``           — packet mark (hex or decimal)
+                              expression — dropped + warned, same as proto)
+      ``mark=N``           — packet mark (hex or decimal); the nft
+                              ``ipsec`` keyword has no mark sub-field, so
+                              this is also dropped + warned.
+
+    ``zone_name`` is included in the warning text so users can locate
+    the offending zone when one config file declares many.
     """
     opts = IpsecOptions()
     for tok in options:
@@ -290,13 +298,34 @@ def _parse_ipsec_options(options: list[str]) -> IpsecOptions:
             except ValueError:
                 pass
         elif tok.startswith("proto="):
-            opts.proto = tok.split("=", 1)[1].lower()
+            value = tok.split("=", 1)[1].lower()
+            opts.proto = value
+            warnings.warn(
+                f"shorewall-nft: ipsec zone {zone_name!r}: "
+                f"proto={value!r} has no nft expression — dropped. "
+                f"nft 1.1.x ``ipsec <dir>`` only matches reqid/spi/saddr/daddr.",
+                UserWarning, stacklevel=2,
+            )
         elif tok.startswith("mode="):
-            opts.mode = tok.split("=", 1)[1].lower()
+            value = tok.split("=", 1)[1].lower()
+            opts.mode = value
+            warnings.warn(
+                f"shorewall-nft: ipsec zone {zone_name!r}: "
+                f"mode={value!r} has no nft expression — dropped. "
+                f"Use ``reqid=`` to narrow the match per SA.",
+                UserWarning, stacklevel=2,
+            )
         elif tok.startswith("mark="):
             try:
                 raw = tok.split("=", 1)[1]
                 opts.mark = int(raw, 0)
+                warnings.warn(
+                    f"shorewall-nft: ipsec zone {zone_name!r}: "
+                    f"mark={raw!r} has no nft expression — dropped. "
+                    f"nft has no IPsec-SA mark sub-field; use ``meta mark`` "
+                    f"in rules instead if a packet-mark match is needed.",
+                    UserWarning, stacklevel=2,
+                )
             except ValueError:
                 pass
     return opts

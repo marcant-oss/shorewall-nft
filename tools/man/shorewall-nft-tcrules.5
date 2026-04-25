@@ -32,7 +32,7 @@ are comments.
 l l l.
 Column	Required	Description
 _
-MARK	yes	Mark value to set (or SAVE/RESTORE/CONTINUE)
+MARK	yes	Mark action: MARK(N), CONNMARK(N), RESTORE, SAVE, DSCP(...), CLASSIFY(...), or a bare integer mark value. Unrecognised tokens are logged at WARNING level and the rule is skipped.
 SOURCE	yes	Source address, zone:address, or CIDR
 DEST	yes	Destination address, zone:address, or CIDR
 PROTO	no	Protocol filter

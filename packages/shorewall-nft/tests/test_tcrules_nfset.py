@@ -113,3 +113,35 @@ class TestTcrulesNfset:
 
         chain = ir.chains["mangle-prerouting"]
         assert len(chain.rules) == 1
+
+
+class TestTcrulesUnparseableActionWarns:
+    """S5 from silent-drops audit: tc/mangle action that doesn't parse to
+    MARK / CONNMARK / RESTORE / SAVE / DSCP / CLASSIFY / bare integer used
+    to skip the rule silently. The compiler now logs a ``WARNING`` so
+    users can find the offending line in the config.
+    """
+
+    def test_unparseable_action_logs_warning(self, caplog):
+        import logging
+        ir = _ir()
+        line = _line("FOOBAR", "all", "all")
+        with caplog.at_level(logging.WARNING, logger="shorewall_nft.compiler.tc"):
+            _process_mark_rule(ir, line, _zones())
+        assert any(
+            "FOOBAR" in r.getMessage() and "skipped" in r.getMessage()
+            for r in caplog.records
+        ), f"expected warning mentioning 'FOOBAR' + 'skipped', got: {caplog.text}"
+        # And the rule is indeed dropped — chain stays empty.
+        chain = ir.chains["mangle-prerouting"]
+        assert len(chain.rules) == 0
+
+    def test_known_action_does_not_warn(self, caplog):
+        import logging
+        ir = _ir()
+        line = _line("MARK(0x10)", "all", "all")
+        with caplog.at_level(logging.WARNING, logger="shorewall_nft.compiler.tc"):
+            _process_mark_rule(ir, line, _zones())
+        assert "skipped" not in caplog.text, (
+            f"unexpected warning for MARK action: {caplog.text}"
+        )
