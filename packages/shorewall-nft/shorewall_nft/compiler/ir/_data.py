@@ -453,6 +453,14 @@ class FirewallIR:
     # module-level _DNS_DEPRECATION_WARNED for the same isolation reason.
     _dns_deprecation_warned: set[str] = field(default_factory=set)
 
+    # Strict-features capability requirements collected by emit paths.
+    # ``require_capability`` appends one entry per call site; the
+    # ``check_strict_features`` post-pass (in ``shorewall_nft.nft.strict``)
+    # validates them against probed capabilities and errors out on misses
+    # when ``--strict-features`` is set. Always-empty for configs that
+    # don't touch capability-gated features.
+    required_features: list = field(default_factory=list)
+
     def add_chain(self, chain: Chain) -> None:
         """Register ``chain`` in this IR under ``chain.name``.
 
@@ -472,6 +480,33 @@ class FirewallIR:
         if name not in self.chains:
             self.chains[name] = Chain(name=name)
         return self.chains[name]
+
+    def require_capability(self, capability: str, description: str,
+                           source: str | None = None) -> None:
+        """Register a kernel-capability requirement for ``--strict-features``.
+
+        Emit paths that depend on a probed capability (e.g.
+        ``has_synproxy_stmt``, ``has_tproxy_stmt``) call this with the
+        capability attribute name, a human-readable description, and
+        optionally a ``file:line`` source hint. The
+        :func:`shorewall_nft.nft.strict.check_strict_features` post-pass
+        walks the collected list and raises
+        :class:`~shorewall_nft.nft.strict.UnsupportedFeatureError` for
+        any miss against the probed
+        :class:`~shorewall_nft.nft.capabilities.NftCapabilities`.
+
+        No-op outside strict mode (the list is collected anyway, but
+        nothing reads it). Cheap — bounded by the number of capability-
+        gated emit sites times rules that hit them.
+        """
+        from shorewall_nft.nft.strict import FeatureRequirement
+        self.required_features.append(
+            FeatureRequirement(
+                capability=capability,
+                description=description,
+                source=source,
+            )
+        )
 
 
 def _parse_rate_limit(rate_str: str) -> RateLimitSpec | None:

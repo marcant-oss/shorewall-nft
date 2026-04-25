@@ -704,13 +704,30 @@ def check(directory, skip_caps, config_dir, config_dir_v4, config_dir_v6,
 @click.command("compile")
 @click.argument("directory", type=click.Path(exists=True, file_okay=False, path_type=Path), required=False)
 @click.option("-o", "--output", type=click.Path(path_type=Path), help="Output file.")
+@click.option("--strict-features", is_flag=True, default=False,
+              help="Probe kernel capabilities and refuse compile if the "
+                   "IR uses features the running nft / libnftnl can't "
+                   "express. Off by default for back-compat — opt in for "
+                   "fail-fast behaviour in CI / packaging scripts.")
+@click.option("--strict-netns", type=str, default=None,
+              help="Netns name in which to probe capabilities for "
+                   "--strict-features (defaults to the caller's current "
+                   "netns).")
 @config_options
-def compile_cmd(directory, output, config_dir, config_dir_v4, config_dir_v6,
+def compile_cmd(directory, output, strict_features, strict_netns,
+                config_dir, config_dir_v4, config_dir_v6,
                 no_auto_v4, no_auto_v6):
     """Compile config to nft script (like shorewall compile)."""
-    (_, script, _), _ = _compile_from_cli(
-        directory, config_dir, config_dir_v4, config_dir_v6,
-        no_auto_v4, no_auto_v6)
+    from shorewall_nft.nft.strict import UnsupportedFeatureError
+    try:
+        (_, script, _), _ = _compile_from_cli(
+            directory, config_dir, config_dir_v4, config_dir_v6,
+            no_auto_v4, no_auto_v6,
+            strict_features=strict_features,
+            strict_netns=strict_netns)
+    except UnsupportedFeatureError as e:
+        click.echo(str(e), err=True)
+        sys.exit(2)
     if output:
         output.write_text(script)
         click.echo(f"Compiled to {output}")

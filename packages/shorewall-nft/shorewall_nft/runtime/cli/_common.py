@@ -360,7 +360,9 @@ def _check_loaded_hash(config_dir: Path, netns: str | None) -> tuple[str, str | 
 def _compile(config_dir: Path, config6_dir: Path | None = None,
              debug: bool = False,
              skip_sibling_merge: bool = False,
-             override: dict | None = None):
+             override: dict | None = None,
+             strict_features: bool = False,
+             strict_netns: str | None = None):
     """Compile helper — returns (ir, script, sets).
 
     ``override`` is a structured JSON blob (see
@@ -368,6 +370,13 @@ def _compile(config_dir: Path, config6_dir: Path | None = None,
     config via :func:`shorewall_nft.config.importer.apply_overlay`.
     Load order is *defaults → on-disk → override*, so the overlay
     always wins on collisions.
+
+    ``strict_features``: when True, probe the running kernel's nft
+    capabilities and raise
+    :class:`shorewall_nft.nft.strict.UnsupportedFeatureError` if the
+    IR registered any requirement the kernel can't satisfy. The
+    probe runs in ``strict_netns`` (defaults to the caller's current
+    netns).
     """
     from shorewall_nft.compiler.ir import build_ir
     from shorewall_nft.config.hash import compute_config_hash
@@ -380,6 +389,13 @@ def _compile(config_dir: Path, config6_dir: Path | None = None,
         from shorewall_nft.config.importer import apply_overlay
         apply_overlay(config, override)
     ir = build_ir(config)
+
+    if strict_features:
+        from shorewall_nft.nft.capabilities import NftCapabilities
+        from shorewall_nft.nft.strict import check_strict_features
+        caps = NftCapabilities.probe(netns=strict_netns)
+        check_strict_features(ir, caps)
+
     static_nft = _load_static_nft(config_dir)
     nft_sets = _load_sets(config_dir)
     config_hash = compute_config_hash(config_dir)
@@ -390,7 +406,9 @@ def _compile(config_dir: Path, config6_dir: Path | None = None,
 
 def _compile_from_cli(directory, config_dir, config_dir_v4, config_dir_v6,
                       no_auto_v4, no_auto_v6, debug=False,
-                      override=None):
+                      override=None,
+                      strict_features: bool = False,
+                      strict_netns: str | None = None):
     """Helper for commands using @config_options + positional directory.
 
     Resolves the CLI flags to (primary, secondary, skip) and calls _compile.
@@ -410,7 +428,9 @@ def _compile_from_cli(directory, config_dir, config_dir_v4, config_dir_v6,
             override = None
     return _compile(primary, config6_dir=secondary,
                     skip_sibling_merge=skip, debug=debug,
-                    override=override), (primary, secondary, skip)
+                    override=override,
+                    strict_features=strict_features,
+                    strict_netns=strict_netns), (primary, secondary, skip)
 
 
 def _load_override_arg(arg: str) -> dict:
