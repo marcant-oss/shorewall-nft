@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-25 — SECMARK / WP-F2)
+
+* **``secmarks`` file is now compiled** (was: parsed and silently
+  ignored). Each row declares one SELinux security context and a
+  5-tuple match; matching packets are tagged via
+  ``meta secmark set "<name>"``. Unique labels collapse to one
+  ``secmark <name> { "<label>" }`` named-object declaration at the
+  top of the inet shorewall table — names are assigned
+  deterministically as ``_sm_0`` / ``_sm_1`` / … in first-appearance
+  order, so two rows sharing a label reuse one allocation.
+* CHAIN codes ``P`` / ``I`` / ``O`` / ``F`` / ``T`` map to
+  mangle-prerouting / -input / -output / -forward / -postrouting
+  chains at priority ``-150``. Unknown CHAIN codes are skipped with
+  a compile-time warning so a bad row never crashes the compile.
+* ``ir.require_capability("has_secmark_obj", ...)`` gates the
+  emit; ``--strict-features`` errors at compile time on kernels
+  that lack the named-object form.
+* SAVE / RESTORE column values (classic-Shorewall CONNSECMARK
+  semantics) are deferred — rows using them are skipped with a
+  warning. See ``shorewall-nft-secmarks(5)`` LIMITATIONS for the
+  deferred shape and rationale.
+
+### Added (2026-04-25 — CONNLIMIT action form + capability gate)
+
+* **``CONNLIMIT(N[:mask])``** — concurrent-connection cap action.
+  Drops further connections once ``N`` existing flows match the
+  rule's 5-tuple from the same source (or per ``mask`` IPv4 prefix).
+  Mirrors the existing CONNLIMIT *column* semantics; both forms
+  emit ``ct count over N`` (with optional ``ip saddr and <netmask>``
+  prefix-match).
+* New ``has_connlimit`` capability probe (``ct count over 5 drop``);
+  both the column and action forms call
+  ``ir.require_capability("has_connlimit", ...)`` so
+  ``--strict-features`` is consistent across both shapes.
+
+### Added (2026-04-25 — simlab feature-coverage skip-list documented)
+
+* ``shorewall-nft-simlab(8)`` grew a "Feature coverage" subsection
+  enumerating which behavioural features simlab covers
+  (probe classes A–H + class I via the new NftOracle for SYNPROXY)
+  and which are deferred to unit tests + ``nft -c -f`` validation
+  (QUOTA, OSF, EXTHDR cumulative, DUP, FWD, LOG/NFLOG, TPROXY,
+  REDIRECT). The skip-list rationale lives in the audit at
+  ``tmp/simlab-audit/AUDIT.md``.
+* ``shorewall-nft-rules(5)`` grew SYNPROXY ("simlab covers this")
+  and QUOTA ("simlab does not exercise this") coverage notes so
+  operators reading the rules-file man page see the validation
+  story at the action's point of declaration.
+
 ### Added (2026-04-24 — SYNPROXY and QUOTA actions)
 
 * **``SYNPROXY``** — TCP SYN-cookie engine. Surface:
