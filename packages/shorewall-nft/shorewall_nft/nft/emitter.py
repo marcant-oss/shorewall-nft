@@ -1159,16 +1159,17 @@ def _emit_zone_jump(lines: list[str], chain_name: str,
 
 # Inline-match passthrough: Match.field values that don't use the default
 # `<field> <value>` shape.  Keyed by the field string; each handler takes
-# the raw value and returns the nft fragment to append.
-_INLINE_MATCH_EMITTERS: dict[str, Callable[[str], str]] = {
-    "inline": lambda v: v,
-    "exthdr": lambda v: f"exthdr {v} exists",
-    "ct helper": lambda v: f"ct helper {v}",
-    "ct mark": lambda v: f"ct mark {v}",
-    "ether saddr": lambda v: f"ether saddr {v}",
-    "probability": lambda v: f"numgen random mod 100 < {v}",
-    "connbytes": lambda v: f"ct bytes > {v}",
-    "recent": lambda v: f"# recent: {v}",  # nft has no direct equivalent
+# the whole Match (so it can honour ``negate``) and returns the nft
+# fragment to append.
+_INLINE_MATCH_EMITTERS: dict[str, Callable[[Match], str]] = {
+    "inline": lambda m: m.value,
+    "exthdr": lambda m: f"exthdr {m.value} {'missing' if m.negate else 'exists'}",
+    "ct helper": lambda m: f"ct helper {m.value}",
+    "ct mark": lambda m: f"ct mark {m.value}",
+    "ether saddr": lambda m: f"ether saddr {m.value}",
+    "probability": lambda m: f"numgen random mod 100 < {m.value}",
+    "connbytes": lambda m: f"ct bytes > {m.value}",
+    "recent": lambda m: f"# recent: {m.value}",  # nft has no direct equivalent
 }
 
 
@@ -1446,7 +1447,7 @@ def _emit_rule(rule: Rule, debug_ctx: "_DebugContext | None" = None,
     for match in rule.matches:
         inline_emit = _INLINE_MATCH_EMITTERS.get(match.field)
         if inline_emit is not None:
-            parts.append(inline_emit(match.value))
+            parts.append(inline_emit(match))
 
     # Special verdicts dispatch by type via _TYPED_VERDICT_EMITTERS.
     # JUMP/GOTO chain names stay as plain str and are handled in the

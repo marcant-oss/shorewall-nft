@@ -52,7 +52,7 @@ USER	no	User/group match
 MARK	no	Connection mark
 CONNLIMIT	no	Max concurrent connections from source: \fIcount\fR[:\fImask\fR]
 TIME	no	Time range match
-HEADERS	no	IPv6 header match
+HEADERS	no	IPv6 extension header match (see HEADERS column)
 SWITCH	no	Runtime switch name
 HELPER	no	conntrack helper name
 .TE
@@ -255,6 +255,67 @@ Named per-source hashlimit (nft
 .BR meter ).
 .I name
 is the meter table name; useful for sharing a limit across multiple rules.
+
+.SS HEADERS column
+A comma-separated list of IPv6 extension header keywords; the rule
+matches packets that carry (or, when negated, lack) any of the listed
+headers.  Each keyword emits one
+.B exthdr
+match — ``exists`` by default, ``missing`` when the column starts
+with
+.BR ! .
+.TP
+.B Accepted keywords
+.RS
+.IP \(bu 2
+.B hop
+— hop-by-hop options (nft renders this as
+.BR hbh )
+.IP \(bu 2
+.B dst
+— destination options
+.IP \(bu 2
+.B route
+— routing header (nft renders this as
+.BR rt )
+.IP \(bu 2
+.B frag
+— fragment header
+.IP \(bu 2
+.B auth
+— authentication header (nft renders this as
+.BR ah )
+.IP \(bu 2
+.B esp
+— encapsulating security payload
+.IP \(bu 2
+.B none
+— no next header
+.IP \(bu 2
+.B protocol
+— upper-layer protocol header (nft renders this as
+.BR proto )
+.RE
+.PP
+Optional prefixes
+.B any:
+and
+.B exactly:
+control match semantics in classic Shorewall and are accepted but
+currently mapped to ``any`` semantics — both produce one exists/
+missing match per listed header.  The match is gated by the
+.B has_exthdr
+capability; a rule that uses HEADERS will fail compile under
+.B \-\-strict\-features
+on a kernel that lacks the IPv6 ext-header match family.  Example:
+.RS
+.nf
+ACCEPT   net   fw   -    -    -    -    -    -    -    -    !frag
+.fi
+.RE
+The above rule accepts packets that do
+.I not
+carry an IPv6 fragment header (i.e. unfragmented traffic).
 
 .SS CONNLIMIT column
 .TP

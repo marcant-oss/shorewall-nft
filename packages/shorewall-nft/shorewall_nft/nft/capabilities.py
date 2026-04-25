@@ -93,6 +93,7 @@ class NftCapabilities:
     has_queue: bool = False
     has_dup: bool = False
     has_fwd: bool = False
+    has_exthdr: bool = False
 
     # Set features
     has_interval_sets: bool = False
@@ -177,6 +178,10 @@ class NftCapabilities:
         caps.has_notrack = _probe_rule("notrack")
         caps.has_dup     = _probe_rule("dup to 10.0.0.1")
         caps.has_queue   = _probe_rule("queue num 0")
+        # ``exthdr`` matches IPv6 extension headers; ``frag`` is widely
+        # supported and a safe canary for the family. Probes both the
+        # ``exists`` and ``missing`` variants in one rule.
+        caps.has_exthdr  = _probe_rule("exthdr frag exists")
         # ``synproxy`` statement — valid in input/forward only; ``__test``
         # is hooked at input so this works.
         caps.has_synproxy_stmt = _probe_rule(

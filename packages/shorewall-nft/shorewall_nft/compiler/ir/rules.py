@@ -1212,6 +1212,10 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                     rule.matches.append(Match(
                         field="exthdr", value=nft_hdr,
                         negate=headers.startswith("!")))
+                ir.require_capability(
+                    "has_exthdr", "HEADERS column",
+                    source=f"{line.file}:{line.lineno}",
+                )
 
             # SWITCH (col 14): conditional rule via conntrack mark
             if switch:
