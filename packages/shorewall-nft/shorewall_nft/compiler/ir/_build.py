@@ -269,7 +269,15 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
 
 def _process_policies(ir: FirewallIR, policy_lines: list[ConfigLine],
                       zones: ZoneModel) -> None:
-    """Process policy definitions into default chain rules."""
+    """Process policy definitions into default chain rules.
+
+    Detects per-family origin via ``ConfigLine.file`` containing
+    ``shorewall6`` — set either when the compiler's load path read the
+    v6 policy file directly (split-compile mode), or when ``merge-
+    config`` wrapped the IPv6-only block with ``?FAMILY ipv6`` (the
+    parser's family-scope handler appends ``#shorewall6-scope`` to the
+    file path of every line covered by that directive).
+    """
     for line in policy_lines:
         cols = line.columns
         if len(cols) < 3:
@@ -306,6 +314,19 @@ def _process_policies(ir: FirewallIR, policy_lines: list[ConfigLine],
                 chain = ir.get_or_create_chain(chain_name)
                 if chain.policy is None:
                     chain.policy = verdict
+                # Track per-family policy. ``line.file`` mentions
+                # ``shorewall6`` either via direct v6 file path or via
+                # the parser's ``#shorewall6-scope`` suffix appended
+                # while inside a ``?FAMILY ipv6`` block. First-write-
+                # wins per family — matches the family-agnostic
+                # ``chain.policy`` semantics, just split.
+                is_v6 = bool(line.file and "shorewall6" in line.file)
+                if is_v6:
+                    if chain.policy_v6 is None:
+                        chain.policy_v6 = verdict
+                else:
+                    if chain.policy_v4 is None:
+                        chain.policy_v4 = verdict
                 # Stash the LOG column from the policy line so the
                 # chain-tail emit pass can render the rate-limited log
                 # rule before the terminal jump. Empty / "-" / "$LOG"
@@ -1758,6 +1779,19 @@ def _apply_default_actions(ir: FirewallIR, settings: dict[str, str]) -> None:
         if chain.is_base_chain or chain.name.startswith("sw_"):
             continue
 
+        # When v4 and v6 policies disagree, prepend a family-tagged
+        # guard for the minority family right before the terminal
+        # action — chains end up with two family-aware terminals so
+        # v4 packets and v6 packets each take the verdict their own
+        # policy file dictates. Surfaced when shorewall (v4) policy
+        # ACCEPT-allows a pair while shorewall6 (v6) REJECTs it via an
+        # all-expansion (or vice versa). Runs regardless of the
+        # legacy chain.policy value — disagreement matters for
+        # ACCEPT-policy chains too.
+        _maybe_emit_family_split_guard(
+            chain, settings, drop_default, reject_default,
+        )
+
         if chain.policy == Verdict.DROP and drop_default in ACTION_CHAIN_MAP:
             # Replace simple drop policy with jump to action chain
             chain.policy = Verdict.JUMP
@@ -1773,6 +1807,64 @@ def _apply_default_actions(ir: FirewallIR, settings: dict[str, str]) -> None:
                 verdict=Verdict.JUMP,
                 verdict_args=ACTION_CHAIN_MAP[reject_default],
             ))
+
+
+def _maybe_emit_family_split_guard(
+    chain: Chain, settings: dict[str, str],
+    drop_default: str, reject_default: str,
+) -> None:
+    """Emit a family-tagged terminal when v4 / v6 policies differ.
+
+    Looks at ``chain.policy_v4`` / ``chain.policy_v6``: when both are
+    set and they disagree, the family whose policy is NOT the chain's
+    legacy ``policy`` field gets an early-terminal guard rule. Same
+    drop/reject action-chain mapping as the family-agnostic terminal.
+
+    Position: appended right BEFORE the chain-tail meter+log + terminal
+    jump that ``_apply_default_actions`` is about to emit. The guard
+    fires first for its family; the legacy terminal handles the other.
+    """
+    from shorewall_nft.compiler.actions import ACTION_CHAIN_MAP
+
+    v4 = chain.policy_v4
+    v6 = chain.policy_v6
+    if v4 is None or v6 is None or v4 == v6:
+        return
+    if chain.policy is None:
+        return
+    # Pick the minority family — the one whose policy is NOT the
+    # legacy chain.policy. Its packets need an early guard.
+    if v4 != chain.policy:
+        family = "ipv4"
+        minority = v4
+    elif v6 != chain.policy:
+        family = "ipv6"
+        minority = v6
+    else:
+        return  # both equal to chain.policy → no split (defensive)
+
+    if minority == Verdict.ACCEPT:
+        chain.rules.append(Rule(
+            matches=[Match(field="meta nfproto", value=family)],
+            verdict=Verdict.ACCEPT,
+        ))
+    elif minority == Verdict.DROP and drop_default in ACTION_CHAIN_MAP:
+        chain.rules.append(Rule(
+            matches=[Match(field="meta nfproto", value=family)],
+            verdict=Verdict.JUMP,
+            verdict_args=ACTION_CHAIN_MAP[drop_default],
+        ))
+    elif minority == Verdict.REJECT and reject_default in ACTION_CHAIN_MAP:
+        chain.rules.append(Rule(
+            matches=[Match(field="meta nfproto", value=family)],
+            verdict=Verdict.JUMP,
+            verdict_args=ACTION_CHAIN_MAP[reject_default],
+        ))
+    else:
+        chain.rules.append(Rule(
+            matches=[Match(field="meta nfproto", value=family)],
+            verdict=minority,
+        ))
 
 
 def _maybe_emit_chain_tail_log(chain: Chain, settings: dict[str, str]) -> None:

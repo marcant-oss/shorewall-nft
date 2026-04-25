@@ -1,5 +1,6 @@
 """Tests for the IR compiler."""
 
+import textwrap
 from pathlib import Path
 
 from shorewall_nft.compiler.ir import Verdict, build_ir
@@ -77,3 +78,71 @@ class TestBuildIR:
         http_rules = [r for r in chain.rules if
                       any("80" in m.value for m in r.matches)]
         assert len(http_rules) >= 1
+
+
+class TestPerFamilyPolicySplit:
+    """Per-family policy disagreement → family-tagged guard rule.
+
+    Surfaces when shorewall (v4) and shorewall6 (v6) disagree on a
+    zone-pair's terminal action — e.g. v4 says ``zoneA zoneB ACCEPT``
+    but v6 only has ``zoneA all REJECT`` which expands to (zoneA,
+    zoneB) at REJECT. The compiler must emit a ``meta nfproto ipv6
+    jump sw_Reject`` guard before the ``accept`` terminal so v6
+    packets actually take the v6-policy verdict.
+    """
+
+    def _make_config(self, tmp_path: Path) -> Path:
+        """Build a minimal config that exercises the per-family split.
+
+        Mirrors the ``merge-config`` output layout: v4 policy block,
+        then ``# IPv6-only policies`` + ``?FAMILY ipv6`` block + ``?FAMILY any``.
+        """
+        cfg = tmp_path / "cfg"
+        cfg.mkdir()
+        (cfg / "shorewall.conf").write_text(
+            "STARTUP_ENABLED=Yes\nDROP_DEFAULT=Drop\nREJECT_DEFAULT=Reject\n"
+        )
+        (cfg / "zones").write_text(textwrap.dedent("""\
+            fw  firewall
+            net ip
+            loc ip
+            voi ip
+        """))
+        (cfg / "interfaces").write_text(textwrap.dedent("""\
+            net eth0 -
+            loc eth1 -
+            voi eth2 -
+        """))
+        (cfg / "policy").write_text(textwrap.dedent("""\
+            loc voi ACCEPT
+            loc all REJECT
+            ?FAMILY ipv6
+            loc voi REJECT
+            loc all REJECT
+            ?FAMILY any
+        """))
+        (cfg / "rules").write_text("")
+        return cfg
+
+    def test_v6_minority_emits_family_guard_before_accept(self, tmp_path):
+        cfg = self._make_config(tmp_path)
+        ir = build_ir(load_config(cfg))
+        chain = ir.chains["loc-voi"]
+        # The chain.policy_v4 + policy_v6 disagree → one family-guard
+        # rule was prepended before the terminal jump/accept.
+        assert chain.policy_v4 == Verdict.ACCEPT
+        assert chain.policy_v6 == Verdict.REJECT
+
+        guards = [r for r in chain.rules
+                  if any(m.field == "meta nfproto" and m.value == "ipv6"
+                         and m.negate is False
+                         for m in r.matches)
+                  and r.verdict == Verdict.JUMP
+                  and r.verdict_args is not None
+                  and "Reject" in str(r.verdict_args)]
+        assert len(guards) == 1, (
+            f"expected exactly one ipv6 reject guard, got "
+            f"{[(r.verdict, r.verdict_args, r.matches) for r in chain.rules[-3:]]}"
+        )
+        # And the family-agnostic terminal is still ACCEPT (v4 path).
+        assert chain.policy == Verdict.ACCEPT

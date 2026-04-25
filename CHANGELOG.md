@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-04-24 — per-family policy split)
+
+- **Zone-pair chain dropped per-family policy disagreement** — when v4
+  and v6 policies disagreed on a pair (e.g. v4 ``zoneA zoneB ACCEPT``
+  vs v6 ``zoneA all REJECT`` catch-all), the merged inet-table chain
+  emitted a single family-agnostic terminal that silently let one
+  family slip through. ``merge-config`` now wraps the IPv6-only block
+  with ``?FAMILY ipv6`` … ``?FAMILY any``; the parser tags lines with
+  ``#shorewall6-scope``; ``Chain`` gained ``policy_v4`` / ``policy_v6``
+  slots; the chain-tail emit pass prepends a ``meta nfproto <minority>
+  jump sw_<verdict>`` (or ``accept``) guard before the legacy terminal
+  whenever the families disagree. Regression test in
+  ``test_compiler.py::TestPerFamilyPolicySplit``.
+
 ### Fixed (2026-04-25 — zone-pair chain emit aligned to iptables-restore-translate reference)
 
 Cross-checked our compile against ``iptables-restore-translate -f``

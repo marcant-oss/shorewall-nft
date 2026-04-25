@@ -142,6 +142,15 @@ class Chain:
     # 5/second burst 10 packets } log level <lvl> prefix "<chain>:..."``
     # rule before the terminal jump.
     policy_log_level: str | None = None
+    # Per-family policy slots. When the merged shorewall + shorewall6
+    # configs disagree on a zone-pair's policy (e.g. ``dmz net ACCEPT``
+    # in v4 + ``dmz all REJECT`` in v6 falling back via the all-
+    # expansion), the chain-tail emit pass inserts a family-tagged
+    # guard rule for the "minority" family before the terminal jump.
+    # When v4 == v6 these are equal and the chain emits a single
+    # family-agnostic terminal — current behaviour preserved.
+    policy_v4: Verdict | None = None
+    policy_v6: Verdict | None = None
 
     @property
     def is_base_chain(self) -> bool:

@@ -610,14 +610,29 @@ def _merge_policies(v4_path: Path, v6_path: Path, out_path: Path,
                     lines = [result if (l.strip().split()[0:2] == [src, dst]
                              and not l.strip().startswith("#"))
                              else l for l in lines]
-            # Auto or identical: keep v4
-        else:
-            v6_unique.append(v6_line)
+        # Always retain the v6 line in the IPv6-only block — even
+        # when it is identical to the v4 line for the same pair.
+        # The compiler tracks the per-family policy via the ``# IPv6-
+        # only policies`` marker; both v4 and v6 entries need to be
+        # visible so a chain-level disagreement (or a v6-only
+        # ``zone all`` catch-all that expands into a pair where the
+        # v4 policy is ACCEPT) is preserved through compile.
+        # Without this, identical-but-family-specific lines were
+        # silently merged into one and the per-family policy split
+        # was lost.
+        v6_unique.append(v6_line)
 
     if v6_unique:
         lines.append("")
         lines.append("# IPv6-only policies (from shorewall6)")
+        # Wrap with ?FAMILY ipv6 so the compiler tags every line in the
+        # block as v6-origin via the parser's ``#shorewall6-scope``
+        # filename suffix. Without the directive a v6-only ``zone all
+        # REJECT`` catch-all silently became a v4 line during the merge
+        # and the per-family terminal-action split was lost.
+        lines.append("?FAMILY ipv6")
         lines.extend(v6_unique)
+        lines.append("?FAMILY any")
 
     out_path.write_text("\n".join(lines) + "\n")
 

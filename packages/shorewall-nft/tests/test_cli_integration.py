@@ -612,24 +612,54 @@ class TestMerge:
                 if len(parts) >= 2 and parts[1] in ("ipv4", "ipv6"):
                     assert False, f"Commented-out zone found: {line}"
 
-    def test_merge_policies_no_duplicates(self, tmp_merged):
-        """Identical v6 policies (same src/dest) are dropped entirely."""
+    def test_merge_policies_v6_block_preserved(self, tmp_merged):
+        """v6 policy lines are retained in the ``# IPv6-only policies``
+        block — even when identical to a v4 line for the same pair.
+
+        Rationale: the compiler tracks per-family policy via the marker
+        comment. Dropping identical v6 lines silently lost the per-
+        family terminal-action split for chains where v4 and v6
+        disagreed on a pair (the family-guard emit pass needs both
+        sides visible).
+        """
         prod = _resolve_prod_dir()
         prod6 = _resolve_prod6_dir()
         r = _cli("merge-config", str(prod), str(prod6),
                  "-o", str(tmp_merged))
         assert r.returncode == 0
         policy_text = (tmp_merged / "policy").read_text()
-        # Count actual policy lines (non-comment, non-empty)
-        pairs = []
-        for line in policy_text.splitlines():
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#"):
-                parts = stripped.split()
-                if len(parts) >= 3:
-                    pairs.append((parts[0], parts[1]))
-        # No duplicates
-        assert len(pairs) == len(set(pairs)), f"Duplicate policies: {pairs}"
+        # Marker is present
+        assert "IPv6-only policies" in policy_text, (
+            "merge-config must emit the IPv6-only block marker"
+        )
+        # Split into pre-marker (v4) and post-marker (v6) sections
+        pre, _sep, post = policy_text.partition("# IPv6-only policies")
+
+        def _pairs(section: str) -> list[tuple[str, str]]:
+            out: list[tuple[str, str]] = []
+            for line in section.splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    parts = stripped.split()
+                    if len(parts) >= 3:
+                        out.append((parts[0], parts[1]))
+            return out
+
+        v4_pairs = _pairs(pre)
+        v6_pairs = _pairs(post)
+        # No duplicates *within* a section
+        assert len(v4_pairs) == len(set(v4_pairs)), (
+            f"Duplicate v4 policies: {v4_pairs}"
+        )
+        assert len(v6_pairs) == len(set(v6_pairs)), (
+            f"Duplicate v6 policies: {v6_pairs}"
+        )
+        # Every v4 pair has a matching v6 entry — both families are
+        # tracked through compile.
+        assert set(v4_pairs).issubset(set(v6_pairs)), (
+            f"v4 pairs missing from v6 block: "
+            f"{set(v4_pairs) - set(v6_pairs)}"
+        )
 
     @_needs_real_prod
     def test_merge_comment_blocks_combined(self, tmp_merged):
