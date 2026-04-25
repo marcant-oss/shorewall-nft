@@ -305,7 +305,7 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
         if chain_name not in ir.chains:
             ir.add_chain(Chain(
                 name=chain_name,
-                chain_type=ChainType.ROUTE,
+                chain_type=ChainType.FILTER,
                 hook=Hook.PREROUTING,
                 priority=-150,
             ))

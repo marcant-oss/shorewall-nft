@@ -603,7 +603,7 @@ def _emit_mss_clamp_rule(ir: FirewallIR, iface_name: str, mss: int) -> None:
     if chain_name not in ir.chains:
         ir.add_chain(Chain(
             name=chain_name,
-            chain_type=ChainType.ROUTE,
+            chain_type=ChainType.FILTER,
             hook=Hook.FORWARD,
             priority=-150,
         ))
@@ -1226,7 +1226,7 @@ def _process_ecn(ir: FirewallIR, ecn_lines: list[ConfigLine]) -> None:
     if chain_name not in ir.chains:
         ir.add_chain(Chain(
             name=chain_name,
-            chain_type=ChainType.ROUTE,
+            chain_type=ChainType.FILTER,
             hook=Hook.POSTROUTING,
             priority=-150,  # mangle
         ))

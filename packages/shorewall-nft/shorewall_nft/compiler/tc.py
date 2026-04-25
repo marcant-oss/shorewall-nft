@@ -828,7 +828,7 @@ def process_mangle(ir: FirewallIR, tcrules: list[ConfigLine],
     if "mangle-prerouting" not in ir.chains:
         ir.add_chain(Chain(
             name="mangle-prerouting",
-            chain_type=ChainType.ROUTE,
+            chain_type=ChainType.FILTER,
             hook=Hook.PREROUTING,
             priority=-150,
         ))

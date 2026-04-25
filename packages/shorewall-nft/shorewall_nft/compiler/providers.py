@@ -260,7 +260,7 @@ def emit_provider_marks(ir: object, providers: list[Provider]) -> None:
     if "mangle-prerouting" not in ir.chains:
         ir.add_chain(Chain(
             name="mangle-prerouting",
-            chain_type=ChainType.ROUTE,
+            chain_type=ChainType.FILTER,
             hook=Hook.PREROUTING,
             priority=-150,
         ))
