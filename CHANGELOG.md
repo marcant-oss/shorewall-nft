@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-04-25 — zone-pair chain emit aligned to iptables-restore-translate reference)
+
+Cross-checked our compile against ``iptables-restore-translate -f``
+output across four real-world live-dump fixtures and closed every
+zone-pair-chain prefix gap:
+
+- **Zone-pair chain misses ``meta l4proto tcp jump sw_TCPFlags``** —
+  TCP packets carrying SYN+FIN / SYN+RST / FIN+URG+PSH bypassed the
+  tcpflags chain. Surfaced by simlab probe-class H. Commit `b958ff3`.
+- **``sw_TCPFlags`` chain missing the all-zero-flags drop** —
+  ``--tcp-flags FIN,SYN,RST,PSH,ACK,URG NONE`` translates to
+  ``flags & (fin|syn|rst|psh|ack|urg) 0`` which our chain didn't
+  emit. Commit `8e310ee`.
+- **Zone-pair chain misses ``ct state invalid,new,untracked jump
+  sw_DropSmurfs``** — broadcast-saddr filtering only fired on input.
+  Commit `9df4be9`.
+- **Rfc1918 macro emits only ``ip saddr`` matches, no ``ct original
+  daddr``** — DNATed flows whose original target was a private
+  address bypassed the RFC1918 guard. Commit `8065b62`.
+- **Zone-pair chain misses ``ct state invalid,new,untracked jump
+  sw_dynamic-blacklist``** — runtime blacklist (``shorewall blacklist
+  add <IP>``) was not enforced for forwarded flows.
+  Commit `8bcd9a6`.
+- **Zone→fw chains miss top-of-chain ``jump blacklist``** — static
+  ``etc/shorewall/blacklist`` was not enforced on traffic destined
+  for the firewall via forwarded paths. Commit `58dbc73`.
+- **Chain-tail rate-limited log missing entirely** — chains
+  terminated with bare ``jump sw_Reject``; no log line at all even
+  when the policy file's LOG column was set. Now emits
+  ``meter lograte_<chain> { ip daddr limit rate 5/second burst 10
+  packets } log level <lvl> prefix "Shorewall:<chain>:<DISP>:"``
+  before the terminal jump. Commit `b23e7eb`.
+
 ### Fixed (2026-04-24/25 — surfaced via simlab full-mode on real configs)
 
 - **LIMIT action log-level prefix kept in meter name** (#85) —
