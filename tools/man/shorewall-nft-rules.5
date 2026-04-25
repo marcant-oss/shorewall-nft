@@ -120,6 +120,12 @@ Requires nft
 (kernel ≥ 4.13);
 .B \-\-strict\-features
 errors at compile time on kernels that lack it.
+Simlab coverage: the
+.BR shorewall\-nft\-simlab (8)
+.B NftOracle
+flips half-open SYNs against a SYNPROXY-protected port from the
+default ACCEPT expectation to DROP, so the cookie-intercept path
+no longer surfaces as a false-drop in reports.
 .TP
 .B QUOTA[\fI(BYTES[,UNIT])\fR]
 Bandwidth budget cap. Drops further packets once
@@ -149,6 +155,13 @@ Emits
 .B quota over <N> <unit> drop .
 Gated by
 .B has_quota .
+Simlab coverage:
+.B QUOTA
+behaviour needs sustained throughput to cross the byte threshold —
+.BR shorewall\-nft\-simlab (8)
+does not exercise it.  Verify via unit tests +
+.B nft \-c \-f
+on the target kernel.
 Example:
 .RS
 .nf

@@ -238,6 +238,58 @@ behavioural validation.
 The simlab requires root privileges to create network namespaces and TUN/TAP
 interfaces.
 
+.SS Feature coverage
+simlab has two complementary oracles.  The primary
+.B RulesetOracle
+parses the
+.B iptables\-save
+dump (point-of-truth) and answers per-tuple verdict queries — it covers
+everything iptables can express.  The complementary
+.B NftOracle
+parses the compiled nft script directly and patches expected verdicts for
+nft-only features the iptables oracle cannot see.
+.PP
+The current coverage matrix (probe classes A through I, with documented
+skip rationale) lives in the libnftnl-integration phase 6 audit at
+.B tmp/simlab-audit/AUDIT.md
+in the source tree.  Behavioural probe coverage exists for verdicts,
+zone-pair dispatch, NDP/ICMPv6, conntrack-state, family-split policies,
+IPsec, flowtable, and SYNPROXY (cookie intercept).  Features deferred to
+unit tests +
+.B nft \-c \-f
+validation:
+.TP
+.B QUOTA
+Behaviour requires sustained throughput to cross the configured byte
+threshold; the per-batch probe model can't meaningfully exercise it.
+.TP
+.B OSF
+Stateful fingerprint database; no behavioural delta in random probes
+without curated TCP/IP stacks.
+.TP
+.B EXTHDR (cumulative)
+scapy can craft IPv6 extension headers but the 3-netns topology measures
+no behavioural diff beyond match/no-match.
+.TP
+.B DUP
+Out-of-band sink (IDS, syslog, netflow) — no observable behaviour from
+inside the netns.  Defer to stagelab if external-collector validation
+is needed.
+.TP
+.B FWD
+.B fwd
+is a netdev-ingress-only statement.  Outside the scope of inet-table
+mangle-prerouting where the rest of the simlab probes operate.
+.TP
+.B LOG / NFLOG
+Logging produces no packet-level effect; observable only via syslog or
+nfnetlink listeners (out-of-band).
+.TP
+.B TPROXY / REDIRECT
+Need an in-NS listener primitive simlab does not yet have; deferred
+until a probe-class for transparent-proxy redirection lands (probe class
+J in the phase 6 plan).
+
 .SH EXAMPLES
 .PP
 Quick smoke test against the current config using real network state:
