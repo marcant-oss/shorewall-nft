@@ -53,18 +53,21 @@ table inet shorewall {
 	chain fw-loc {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		accept
 	}
 
 	chain fw-net {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		accept
 	}
 
 	chain loc-fw {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto tcp tcp dport 22 accept
 		jump sw_Reject
 	}
@@ -72,6 +75,7 @@ table inet shorewall {
 	chain loc-net {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto udp udp dport 53 accept
 		meta nfproto ipv4 meta l4proto tcp tcp dport 53 accept
 		accept
@@ -80,6 +84,7 @@ table inet shorewall {
 	chain net-fw {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# Admin SSH
 		ip saddr 192.168.1.100 meta l4proto tcp tcp dport 22 accept
@@ -89,6 +94,7 @@ table inet shorewall {
 	chain net-loc {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto tcp tcp dport { 80, 443 } accept
 		jump sw_Drop
 	}

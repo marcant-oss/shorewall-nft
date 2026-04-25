@@ -49,6 +49,7 @@ table inet shorewall {
 		ct state { established, related } accept
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		accept
 	}
 
@@ -56,6 +57,7 @@ table inet shorewall {
 		ct state { established, related } accept
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		accept
 	}
 
@@ -63,6 +65,7 @@ table inet shorewall {
 		ct state { established, related } accept
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto tcp tcp dport 22 accept
 		jump sw_Reject
 	}
@@ -71,6 +74,7 @@ table inet shorewall {
 		ct state { established, related } accept
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		accept
 	}
 
@@ -78,6 +82,7 @@ table inet shorewall {
 		ct state { established, related } accept
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		jump sw_Drop
 	}
 
@@ -85,6 +90,7 @@ table inet shorewall {
 		ct state { established, related } accept
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		jump sw_Drop
 	}
 

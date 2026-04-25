@@ -64,36 +64,42 @@ table inet shorewall {
 	chain fw-loc {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		accept
 	}
 
 	chain fw-net {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		accept
 	}
 
 	chain loc-fw {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		jump sw_Reject
 	}
 
 	chain loc-net {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		accept
 	}
 
 	chain net-fw {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		jump sw_Drop
 	}
 
 	chain net-loc {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
+		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		jump sw_Drop
 	}
 

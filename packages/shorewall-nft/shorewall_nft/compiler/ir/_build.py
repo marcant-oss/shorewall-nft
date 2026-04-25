@@ -214,6 +214,18 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
                 verdict=Verdict.JUMP,
                 verdict_args="sw_TCPFlags",
             ))
+        # Smurfs jump — upstream emits ``ct state invalid,new,untracked
+        # counter jump smurfs`` on every zone-pair chain. The
+        # ``sw_DropSmurfs`` chain handles broadcast / multicast saddr
+        # filtering; without the per-pair jump it only fires on input,
+        # leaving forwarded smurf-source traffic untouched.
+        if "sw_DropSmurfs" in ir.chains and ir.chains["sw_DropSmurfs"].rules:
+            ct_rules.append(Rule(
+                matches=[Match(field="ct state",
+                               value="invalid,new,untracked")],
+                verdict=Verdict.JUMP,
+                verdict_args="sw_DropSmurfs",
+            ))
         chain.rules = ct_rules + list(chain.rules)
 
 
