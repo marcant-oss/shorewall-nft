@@ -57,6 +57,7 @@ import hmac
 import os
 import socket
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -88,6 +89,16 @@ SNAPSHOT_CHUNK_SIZE = 20
 # snapshot reconstruction is abandoned and the metrics counter
 # bumped. The next request recovers from the partial drop.
 SNAPSHOT_TIMEOUT_SEC = 5.0
+
+# Hard caps on the two per-peer dicts. The HA reference shape has
+# exactly one peer node, so these are defensive bounds — not expected
+# to fire in normal operation. They exist so a misbehaving (but
+# HMAC-authenticated) peer that churns origin_node ids or snapshot
+# ids can't drive RSS unbounded, and so the per-chunk
+# ``list(self._snapshot_rx)`` reap stays O(cap), not O(n) in an
+# attacker-chosen n.
+MAX_PEER_NODES_TRACKED = 64
+MAX_SNAPSHOT_RX = 32
 
 # Max payload size for one envelope *before* the HMAC trailer.
 # 1400 bytes keeps us well below typical MTU 1500 minus IP + UDP
@@ -315,13 +326,16 @@ class PeerLink:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._send_seq = 1
-        self._expected_peer_seq: dict[str, int] = {}
+        # LRU-ordered so we can evict the oldest origin_node when the
+        # cap is hit. Bounded by MAX_PEER_NODES_TRACKED.
+        self._expected_peer_seq: OrderedDict[str, int] = OrderedDict()
         self._stopping = False
         self._batch_window_sec = DEFAULT_BATCH_WINDOW_SEC
         # Snapshot reconstruction state: snapshot_id → (received_chunks,
         # expected_total, first_received_mono). Receivers apply entries
         # incrementally as chunks arrive; this state only tracks the
-        # completeness gauge and the per-snapshot timeout.
+        # completeness gauge and the per-snapshot timeout. Bounded by
+        # MAX_SNAPSHOT_RX; oldest-started entry is evicted on overflow.
         self._snapshot_rx: dict[int, dict] = {}
         self._next_snapshot_id = int(time.time()) & 0xFFFFFFFF
         self.metrics = PeerMetrics()
@@ -516,11 +530,21 @@ class PeerLink:
             self.metrics.loop_drops_total += 1
             return
 
-        # Sequence gap detection, per sender.
+        # Sequence gap detection, per sender. OrderedDict-based LRU:
+        # refresh-on-access so the cap (MAX_PEER_NODES_TRACKED) evicts
+        # the least-recently-seen origin_node first.
         expected = self._expected_peer_seq.get(env.origin_node)
-        if expected is not None and env.seq > expected:
-            gap = env.seq - expected
-            self.metrics.frames_lost_total += gap
+        if expected is not None:
+            if env.seq > expected:
+                gap = env.seq - expected
+                self.metrics.frames_lost_total += gap
+            self._expected_peer_seq.move_to_end(env.origin_node)
+        elif len(self._expected_peer_seq) >= MAX_PEER_NODES_TRACKED:
+            evicted_node, _ = self._expected_peer_seq.popitem(last=False)
+            rl.warn(
+                log, ("peer_nodes_cap",),
+                "peer node cap (%d) hit; evicted oldest origin_node=%r",
+                MAX_PEER_NODES_TRACKED, evicted_node)
         self._expected_peer_seq[env.origin_node] = env.seq + 1
 
         payload = env.WhichOneof("payload")
@@ -679,6 +703,18 @@ class PeerLink:
 
         state = self._snapshot_rx.get(snapshot_id)
         if state is None:
+            # Cap: evict the oldest-started partial snapshot if the dict
+            # is full. Bumps snapshot_partials_dropped_total so the
+            # eviction shows up in the same metric as timeout-driven
+            # drops — same semantic (partial snapshot abandoned before
+            # completion), same remediation (peer retries).
+            if len(self._snapshot_rx) >= MAX_SNAPSHOT_RX:
+                oldest_sid = min(
+                    self._snapshot_rx,
+                    key=lambda sid: self._snapshot_rx[sid]["started"],
+                )
+                del self._snapshot_rx[oldest_sid]
+                self.metrics.snapshot_partials_dropped_total += 1
             state = {
                 "received": 0,
                 "total": resp.total_chunks,

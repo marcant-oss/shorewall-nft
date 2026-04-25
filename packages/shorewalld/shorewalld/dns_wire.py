@@ -65,15 +65,22 @@ def extract_qname(
     if qdcount < 1:
         return None
 
+    # Walk labels as memoryview slices — no per-label allocation. Wrapping
+    # a ``bytes`` buf in ``memoryview`` is cheap; slicing a memoryview
+    # returns another memoryview over the same buffer (zero copy). The
+    # prior ``bytes(buf[pos:pos+length])`` burned one alloc per label on
+    # the dnstap hot path. Allocations collapse to just the final join +
+    # decode + lower, regardless of label count.
+    mv = memoryview(buf) if not isinstance(buf, memoryview) else buf
     pos = offset + DNS_HEADER_LEN
-    labels: list[bytes] = []
+    labels: list[memoryview] = []
     total_len = 0
     # Safety cap on label walk to prevent pointer loops — question
     # section must not contain compression pointers per RFC 1035.
     for _ in range(64):
         if pos >= total:
             return None
-        length = buf[pos]
+        length = mv[pos]
         pos += 1
         if length == 0:
             # End of name. Build canonical form and return.
@@ -90,7 +97,7 @@ def extract_qname(
             return None
         if total_len + length + 1 > MAX_QNAME_LEN:
             return None
-        labels.append(bytes(buf[pos:pos + length]))
+        labels.append(mv[pos:pos + length])
         total_len += length + 1
         pos += length
     # Exceeded label-walk cap without terminator.

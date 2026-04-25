@@ -162,6 +162,11 @@ class DnsSetTracker:
         self._allowlist_generation = 0
         self._unknown_qname_total = 0
         self._dropped_oversize_total = 0
+        # Lock-free snapshot of every allowlisted qname as lowercase bytes.
+        # Read from the decoder peek hot path without acquiring _lock —
+        # attribute reads are GIL-atomic. Rebuilt under _lock on each
+        # load_registry / add_qname_alias.
+        self._qnames_bytes_snapshot: frozenset[bytes] = frozenset()
 
     # ── allowlist management ─────────────────────────────────────────
 
@@ -276,7 +281,34 @@ class DnsSetTracker:
                     new_names_added = True
 
             self._allowlist_generation += 1
+            self._rebuild_qnames_bytes_snapshot()
             return new_names_added
+
+    def _rebuild_qnames_bytes_snapshot(self) -> None:
+        # Caller must hold _lock. Cheap compared to a reload, but we still
+        # only run it on allowlist mutation (load_registry, add_qname_alias),
+        # never on the hot decode path.
+        self._qnames_bytes_snapshot = frozenset(
+            qn.encode("ascii", errors="replace")
+            for (qn, _fam) in self._by_name
+        )
+
+    def has_qname_bytes(self, qname_lower: bytes) -> bool:
+        """Return ``True`` if *qname_lower* matches any allowlisted qname.
+
+        Lock-free: the decoder peek path calls this tens of thousands of
+        times per second. Reads a frozenset snapshot that is atomically
+        replaced on allowlist mutation. *qname_lower* must already be
+        lowercase ASCII bytes (PBDNSMessage.qName is serialised lowercase
+        without a trailing dot; we strip a defensive trailing dot if
+        present).
+        """
+        snapshot = self._qnames_bytes_snapshot
+        if qname_lower in snapshot:
+            return True
+        if qname_lower.endswith(b"."):
+            return qname_lower[:-1] in snapshot
+        return False
 
     def set_id_for(self, qname: str, family: int) -> int | None:
         """Look up the compiled ID for a qname + family, or ``None``
@@ -348,6 +380,7 @@ class DnsSetTracker:
             if primary_id is None:
                 return False
             self._by_name[(alias_qname, family)] = primary_id
+            self._rebuild_qnames_bytes_snapshot()
             return True
 
     def note_unknown_qname(self) -> None:

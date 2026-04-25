@@ -104,13 +104,13 @@ class TrackerBridge:
         ``ParseFromString`` for frames whose qname is not in the allowlist.
         The argument must already be lowercased (the peek normalises it).
 
-        This is intentionally a pure boolean check with no side-effects:
-        no counter increments, no lock beyond the tracker\'s own internal
-        lock on ``set_id_for``.
+        Delegates to the tracker's lock-free bytes snapshot — no decode,
+        no canonical_qname, no family-fanout. The prior implementation did
+        ``.decode("ascii") → canonical_qname → set_id_for(V4) → set_id_for(V6)``
+        on every response frame, even rejected ones, which burned two
+        allocations and two lock acquisitions per frame on the 20k fps path.
         """
-        qn = canonical_qname(qname_lower.decode("ascii", errors="replace"))
-        return (self._tracker.set_id_for(qn, FAMILY_V4) is not None
-                or self._tracker.set_id_for(qn, FAMILY_V6) is not None)
+        return self._tracker.has_qname_bytes(qname_lower)
 
     def early_filter_from_wire(
         self, wire: memoryview | bytes

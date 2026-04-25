@@ -407,6 +407,14 @@ class SetWriterMetricsCollector(CollectorBase):
               "Current DNS-update proposal queue depth", m.queue_depth)
         gauge("shorewalld_setwriter_queue_high_water",
               "Peak queue depth since daemon start", m.queue_high_water)
+        # len(dict) is GIL-atomic — no lock needed from the scrape thread.
+        # Cardinality is bounded in practice by concurrent (netns, family)
+        # pairs being batched; the flush loop pops each key every
+        # batch_window. A sustained climb here indicates a stuck worker
+        # dispatch or excessive netns churn.
+        gauge("shorewalld_setwriter_batches_open",
+              "Currently open per-(netns,family) batch entries",
+              float(len(self._writer._batches)))
         counter("shorewalld_setwriter_submits_total",
                 "Total proposals submitted from decoder threads", m.submits_total)
         counter("shorewalld_setwriter_dropped_queue_full_total",
