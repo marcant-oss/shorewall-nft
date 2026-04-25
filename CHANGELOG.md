@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-04-24 — v6-only macros no longer leak into v4 chains)
+
+A custom shorewall6 macro that ships only the v6 PARAM line
+(``ipv6-icmp 128`` for ``Trcrt``, for example) used to expand into
+every v4 zone-pair chain as a dead ``meta nfproto ipv4 meta l4proto
+ipv6-icmp ipv6-icmp dport 128 accept`` rule that never matched
+anything but inflated the ruleset. On the reference live-dump this
+amounted to ~728 dead rules.
+
+Three coordinated changes wire family-tagging through the macro
+pipeline:
+
+- ``merge-config`` now wraps every v6-origin macro file's content
+  with ``?FAMILY ipv6`` … ``?FAMILY any`` so the parser appends
+  ``#shorewall6-scope`` to ``ConfigLine.file`` for every line in the
+  wrap.
+- ``_load_standard_macros`` and ``_load_custom_macros`` store macro
+  entries as 7-tuples ``(action, source, dest, proto, dport, sport,
+  family)`` where ``family ∈ {"ipv4", "ipv6", "any"}``, inferred from
+  ``line.file``. Bundled macros (in ``data/macros/``) stay ``"any"``.
+- ``_expand_macro`` filters entries by ``m_family`` against the
+  calling context (``ctx_is_v4`` / ``ctx_is_v6``) before invoking
+  ``_add_rule``.
+
+Regression test:
+``test_compiler.py::TestMacroFamilyTagging::test_v6_macro_does_not_
+emit_in_v4_context`` builds a tmp fixture with a ``?FAMILY ipv6``-
+wrapped macro, expands it from a v4 rule, and asserts no v4-tagged
+``ipv6-icmp`` rule appears in the resulting chain.
+
 ### Changed (2026-04-24 — silent drops now warn at compile time)
 
 The compiler used to swallow several user-supplied tokens that have no

@@ -146,3 +146,66 @@ class TestPerFamilyPolicySplit:
         )
         # And the family-agnostic terminal is still ACCEPT (v4 path).
         assert chain.policy == Verdict.ACCEPT
+
+
+class TestMacroFamilyTagging:
+    """Macros sourced from a v6 file (or wrapped with ``?FAMILY ipv6``)
+    must NOT have their entries expanded into v4 zone-pair chains.
+
+    Concrete bug surfaced on the reference live-dump: a custom
+    ``macros/macro.Trcrt`` shipped with shorewall6 only had the v6
+    PARAM line ``ipv6-icmp 128``. ``merge-config`` copied the file
+    untagged → the compiler treated those entries as family-agnostic
+    and emitted dead ``meta nfproto ipv4 meta l4proto ipv6-icmp ...``
+    rules into every v4 zone-pair chain. The fix tags v6 macro entries
+    with ``family="ipv6"`` so ``_expand_macro`` skips them in v4
+    context.
+    """
+
+    def _build_macro_fixture(self, tmp_path):
+        cfg = tmp_path / "cfg"
+        cfg.mkdir()
+        (cfg / "shorewall.conf").write_text(
+            "STARTUP_ENABLED=Yes\nDROP_DEFAULT=Drop\nREJECT_DEFAULT=Reject\n"
+        )
+        (cfg / "zones").write_text(textwrap.dedent("""\
+            fw  firewall
+            net ip
+            loc ip
+        """))
+        (cfg / "interfaces").write_text(textwrap.dedent("""\
+            net eth0 -
+            loc eth1 -
+        """))
+        (cfg / "policy").write_text("loc net ACCEPT\nnet all DROP\n")
+        # Custom macro tagged ipv6 — emulates merge-config's wrap.
+        macros = cfg / "macros"
+        macros.mkdir()
+        (macros / "macro.MyV6Trcrt").write_text(textwrap.dedent("""\
+            ?FAMILY ipv6
+            PARAM	-	-	udp	33434:33524
+            PARAM	-	-	ipv6-icmp	128
+            ?FAMILY any
+        """))
+        (cfg / "rules").write_text(
+            "MyV6Trcrt(ACCEPT)	loc	net\n"
+        )
+        return cfg
+
+    def test_v6_macro_does_not_emit_in_v4_context(self, tmp_path):
+        cfg = self._build_macro_fixture(tmp_path)
+        ir = build_ir(load_config(cfg))
+        chain = ir.chains.get("loc-net")
+        assert chain is not None
+        bogus = [
+            r for r in chain.rules
+            if any(m.field == "meta nfproto" and m.value == "ipv4"
+                   for m in r.matches)
+            and any(m.field == "meta l4proto"
+                    and m.value in ("ipv6-icmp", "icmpv6")
+                    for m in r.matches)
+        ]
+        assert bogus == [], (
+            "v6 macro entries leaked into v4 zone-pair chain: "
+            f"{[(r.matches, r.verdict) for r in bogus]}"
+        )

@@ -107,7 +107,7 @@ def _load_standard_macros(ir: FirewallIR, shorewall_dir: Path | None = None) -> 
                 continue
             while len(cols) < 6:
                 cols.append("-")
-            entries.append(tuple(cols[:6]))
+            entries.append((*cols[:6], _macro_entry_family(line)))
 
         if entries:
             ir.macros[macro_name] = entries
@@ -115,6 +115,24 @@ def _load_standard_macros(ir: FirewallIR, shorewall_dir: Path | None = None) -> 
 
 # Macros that we handle natively (better than the standard macro files)
 _NATIVE_HANDLED_MACROS = {"Rfc1918"}
+
+
+def _macro_entry_family(line: ConfigLine) -> str:
+    """Infer the address family of a macro entry from its source path.
+
+    Returns one of ``"ipv4"`` / ``"ipv6"`` / ``"any"``. The merge-config
+    tool wraps shorewall6-origin macro content with ``?FAMILY ipv6`` so
+    the parser appends ``#shorewall6-scope`` to ``line.file``; entries
+    that flow in from a split-source ``etc/shorewall6/macros/`` dir get
+    the literal ``shorewall6`` substring in the path. Either way,
+    ``"shorewall6" in line.file`` is the family signal. Macros loaded
+    from the bundled ``data/macros/`` package directory are family-
+    agnostic and stay ``"any"``.
+    """
+    fname = line.file or ""
+    if "shorewall6" in fname:
+        return "ipv6"
+    return "any"
 
 
 def _load_custom_macros(ir: FirewallIR, macros: dict[str, list]) -> None:
@@ -129,7 +147,7 @@ def _load_custom_macros(ir: FirewallIR, macros: dict[str, list]) -> None:
             # Pad to 6 columns
             while len(cols) < 6:
                 cols.append("-")
-            entries.append(tuple(cols[:6]))
+            entries.append((*cols[:6], _macro_entry_family(line)))
         if entries:
             ir.macros[name] = entries
 
@@ -689,7 +707,25 @@ def _expand_macro(ir: FirewallIR, zones: ZoneModel,
         ctx_is_v4 = not ctx_is_v6
 
         for entry in custom:
-            m_action, m_source, m_dest, m_proto, m_dport, m_sport = entry
+            # Macro entries may be loaded as 6-tuples (legacy) or
+            # 7-tuples (with family tag). Pull the family if present;
+            # default ``"any"`` (works for both v4 and v6 contexts).
+            if len(entry) == 7:
+                m_action, m_source, m_dest, m_proto, m_dport, m_sport, m_family = entry
+            else:
+                m_action, m_source, m_dest, m_proto, m_dport, m_sport = entry
+                m_family = "any"
+
+            # Filter entries by the explicit family tag (set when the
+            # macro file is wrapped with ``?FAMILY ipv6`` or sourced
+            # from a ``shorewall6/macros/`` dir). This is what catches
+            # the proto-only ``ipv6-icmp 128`` PARAM lines in v6 macros
+            # — the address-based ``entry_has_v6`` heuristic below
+            # cannot detect them.
+            if m_family == "ipv6" and ctx_is_v4:
+                continue
+            if m_family == "ipv4" and ctx_is_v6:
+                continue
 
             # Filter entries by address family — skip v4 entries in v6
             # context and vice versa

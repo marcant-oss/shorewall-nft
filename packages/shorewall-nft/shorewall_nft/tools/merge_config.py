@@ -881,6 +881,12 @@ def merge_config(shorewall_dir: Path, shorewall6_dir: Path,
         shutil.copytree(rules_d_v4, output / "rules.d", dirs_exist_ok=True)
 
     # 3. Merge v6 macros
+    # Wrap v6 macro content with ``?FAMILY ipv6`` … ``?FAMILY any`` so the
+    # compiler tags each entry with ``#shorewall6-scope`` in line.file —
+    # without that the v6-only ``ipv6-icmp 128`` lines from a v6 macro
+    # were being expanded into v4 zone-pair chains too, producing dead
+    # ``meta nfproto ipv4 meta l4proto ipv6-icmp …`` rules that never
+    # match anything but bloat the chain.
     macros_v6 = shorewall6_dir / "macros"
     if macros_v6.is_dir():
         macros_out = output / "macros"
@@ -888,13 +894,19 @@ def merge_config(shorewall_dir: Path, shorewall6_dir: Path,
         for f in macros_v6.iterdir():
             if f.is_file():
                 target = macros_out / f.name
+                v6_text = f.read_text(errors="replace")
+                v6_wrapped = (
+                    "?FAMILY ipv6\n"
+                    + v6_text.rstrip("\n") + "\n"
+                    + "?FAMILY any\n"
+                )
                 if target.exists():
                     v4_text = target.read_text(errors="replace")
-                    v6_text = f.read_text(errors="replace")
                     if v6_text.strip() != v4_text.strip():
                         if guided:
                             auto = v4_text.rstrip("\n") + (
-                                "\n# IPv6 entries from shorewall6\n" + v6_text)
+                                "\n# IPv6 entries from shorewall6\n"
+                                + v6_wrapped)
                             result = _ask_block_collision(
                                 f"Macro: {f.name}",
                                 v4_text.splitlines(), v6_text.splitlines(),
@@ -903,9 +915,12 @@ def merge_config(shorewall_dir: Path, shorewall6_dir: Path,
                         else:
                             with open(target, "a") as mf:
                                 mf.write("\n# IPv6 entries from shorewall6\n")
-                                mf.write(v6_text)
+                                mf.write(v6_wrapped)
                 else:
-                    shutil.copy2(f, target)
+                    # v4 side has no version of this macro — write the
+                    # v6 content tagged so the compiler doesn't apply
+                    # it to v4 zone-pair chains.
+                    target.write_text(v6_wrapped)
 
     # 4. Smart merges
     _merge_zones(shorewall_dir / "zones", shorewall6_dir / "zones",
