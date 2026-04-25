@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-24 — capability probe gaps closed)
+
+A libnftnl audit identified 14 ``has_*`` capability fields declared
+on ``NftCapabilities`` but never set inside ``probe()`` — the emitter
+gated emit paths on flags that were always ``False``, leaving the
+features unreachable. Closed gaps for: ``has_masquerade``,
+``has_redirect``, ``has_tproxy``/``has_tproxy_stmt``, ``has_synproxy``/
+``has_synproxy_stmt``/``has_synproxy_obj``, ``has_flow_offload``,
+``has_numgen``, ``has_dup``, ``has_fwd``, ``has_queue``,
+``has_limit_obj``, ``has_secmark_obj``, ``has_ct_timeout_obj``.
+
+* Each new probe runs in its own dedicated chain when the existing
+  chain hook is wrong (TPROXY needs prerouting, redirect needs
+  prerouting, FWD needs netdev/ingress, etc.).
+* ``has_synproxy`` / ``has_tproxy`` / ``has_masquerade`` are
+  preserved as back-compat aliases collapsed onto their stricter
+  forms.
+* Probes that genuinely require kernel modules unavailable in
+  rootless user-namespaces (numgen, dup, flowtable, secmark)
+  return ``False`` there and ``True`` on real-root hosts.
+
+Regression test: ``tests/test_capabilities.py`` is parametric over
+every ``has_*`` field on the dataclass and asserts each is assigned
+somewhere in ``probe()``. The reverse-orphan check catches typos
+that would silently set a dynamic attribute on the instance.
+
 ### Fixed (2026-04-24 — v6-only macros no longer leak into v4 chains)
 
 A custom shorewall6 macro that ships only the v6 PARAM line

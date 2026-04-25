@@ -167,6 +167,7 @@ class NftCapabilities:
         caps.has_meta_nfproto  = _probe_rule("meta nfproto ipv4 accept")
         caps.has_socket        = _probe_rule("socket transparent 1 accept")
         caps.has_osf           = _probe_rule('osf name "Linux" accept')
+        caps.has_numgen        = _probe_rule("numgen random mod 2 accept")
 
         # Statements
         caps.has_limit   = _probe_rule("limit rate 10/second accept")
@@ -174,14 +175,61 @@ class NftCapabilities:
         caps.has_counter = _probe_rule("counter accept")
         caps.has_log     = _probe_rule('log prefix "test" accept')
         caps.has_notrack = _probe_rule("notrack")
+        caps.has_dup     = _probe_rule("dup to 10.0.0.1")
+        caps.has_queue   = _probe_rule("queue num 0")
+        # ``synproxy`` statement — valid in input/forward only; ``__test``
+        # is hooked at input so this works.
+        caps.has_synproxy_stmt = _probe_rule(
+            "synproxy mss 1460 wscale 7 timestamp sack-perm")
+        # Bare ``has_synproxy`` is retained as a back-compat alias for
+        # callers that pre-date the stmt/obj split — collapses to the
+        # statement-shape probe (the most common gate).
+        caps.has_synproxy = caps.has_synproxy_stmt
+        # Bare ``has_tproxy`` mirrors the statement probe (next block) —
+        # alias preserved for callers that gate on the umbrella name.
 
-        # NAT: masquerade only valid in a nat-type chain.
-        _cmd(f"add chain inet {_PROBE_TABLE} __nat_test "
+        # NAT: masquerade only valid in a nat-type chain. The probe also
+        # doubles as the umbrella ``has_nat`` flag; ``has_masquerade``
+        # records the same result for callers that want the stricter
+        # name.
+        _cmd(f"add chain inet {_PROBE_TABLE} __nat_post "
              f"{{ type nat hook postrouting priority 100; }}")
         caps.has_nat = _cmd(
-            f"add rule inet {_PROBE_TABLE} __nat_test masquerade")
-        _cmd(f"flush chain inet {_PROBE_TABLE} __nat_test")
-        _cmd(f"delete chain inet {_PROBE_TABLE} __nat_test")
+            f"add rule inet {_PROBE_TABLE} __nat_post masquerade")
+        caps.has_masquerade = caps.has_nat
+        _cmd(f"flush chain inet {_PROBE_TABLE} __nat_post")
+        _cmd(f"delete chain inet {_PROBE_TABLE} __nat_post")
+        # Redirect needs a prerouting (or output) hook — its own chain.
+        _cmd(f"add chain inet {_PROBE_TABLE} __nat_pre "
+             f"{{ type nat hook prerouting priority -100; }}")
+        caps.has_redirect = _cmd(
+            f"add rule inet {_PROBE_TABLE} __nat_pre "
+            f"meta l4proto tcp redirect to :8080")
+        _cmd(f"flush chain inet {_PROBE_TABLE} __nat_pre")
+        _cmd(f"delete chain inet {_PROBE_TABLE} __nat_pre")
+
+        # TPROXY + FWD probes — need a filter-prerouting (TPROXY) and
+        # netdev-ingress (FWD) chain respectively. Both fail silently
+        # when the kernel module isn't loadable (e.g. unprivileged
+        # netns) and that's fine — caller treats False as "skip".
+        _cmd(f"add chain inet {_PROBE_TABLE} __mangle_test "
+             f"{{ type filter hook prerouting priority -150; }}")
+        caps.has_tproxy_stmt = _cmd(
+            f"add rule inet {_PROBE_TABLE} __mangle_test "
+            f"meta l4proto tcp tproxy to :3128")
+        caps.has_tproxy = caps.has_tproxy_stmt
+        _cmd(f"flush chain inet {_PROBE_TABLE} __mangle_test")
+        _cmd(f"delete chain inet {_PROBE_TABLE} __mangle_test")
+
+        # ``fwd`` is netdev-only — probe a netdev table separately so a
+        # missing netdev family doesn't leak into the inet probe table.
+        if "netdev" in caps.families:
+            _cmd(f"add table netdev {_PROBE_TABLE}_nd")
+            _cmd(f"add chain netdev {_PROBE_TABLE}_nd __fwd_test "
+                 f"{{ type filter hook ingress device \"lo\" priority 0; }}")
+            caps.has_fwd = _cmd(
+                f'add rule netdev {_PROBE_TABLE}_nd __fwd_test fwd to "lo"')
+            _cmd(f"delete table netdev {_PROBE_TABLE}_nd")
 
         # Set features
         caps.has_interval_sets = _cmd(
@@ -216,11 +264,42 @@ class NftCapabilities:
         if caps.has_quota_obj:
             _cmd(f"delete quota inet {_PROBE_TABLE} __q")
 
+        caps.has_limit_obj = _cmd(
+            f"add limit inet {_PROBE_TABLE} __lo "
+            f"{{ rate 100/second }}")
+        if caps.has_limit_obj:
+            _cmd(f"delete limit inet {_PROBE_TABLE} __lo")
+
+        caps.has_synproxy_obj = _cmd(
+            f"add synproxy inet {_PROBE_TABLE} __sp "
+            f"{{ mss 1460 wscale 7 timestamp sack-perm }}")
+        if caps.has_synproxy_obj:
+            _cmd(f"delete synproxy inet {_PROBE_TABLE} __sp")
+
+        caps.has_secmark_obj = _cmd(
+            f'add secmark inet {_PROBE_TABLE} __sm '
+            f'{{ "system_u:object_r:netif_t:s0" }}')
+        if caps.has_secmark_obj:
+            _cmd(f"delete secmark inet {_PROBE_TABLE} __sm")
+
+        # ct timeout — kernel may reject if nf_conntrack_timeout module
+        # isn't loadable in the current netns. False on rejection.
+        caps.has_ct_timeout_obj = _cmd(
+            f'add ct timeout inet {_PROBE_TABLE} __ctt '
+            f'{{ protocol tcp; l3proto ip; policy = '
+            f'{{ established: 600 }}; }}')
+        if caps.has_ct_timeout_obj:
+            _cmd(f"delete ct timeout inet {_PROBE_TABLE} __ctt")
+
         # Flowtable
         caps.has_flowtable = _cmd(
             f"add flowtable inet {_PROBE_TABLE} __ft "
             f"{{ hook ingress priority 0; devices = {{}}; }}")
         if caps.has_flowtable:
+            # flow_offload statement requires the flowtable to live —
+            # probe it before deleting.
+            caps.has_flow_offload = _probe_rule(
+                "ip protocol tcp flow add @__ft")
             _cmd(f"delete flowtable inet {_PROBE_TABLE} __ft")
 
         # Flowtable offload flag (kernel accepts the flag even without HW
