@@ -216,6 +216,108 @@ every `KEEPALIVED_*` knob, the D-Bus ACL, the Prometheus family naming
 convention, control-socket commands, troubleshooting, and migration from
 the legacy `VRRP_SNMP_*` UDP path.
 
+## systemd integration
+
+Both shipping unit files (`shorewalld.service`,
+`shorewalld@.service`) declare:
+
+```ini
+Type=notify
+NotifyAccess=main
+WatchdogSec=30s
+```
+
+The daemon implements the `sd_notify(3)` protocol natively (pure
+Python, no `libsystemd` link, no extra dependency). When
+`$NOTIFY_SOCKET` is unset — dev runs, containers without systemd,
+unit tests — every notification call is a silent no-op, so the
+same binary works in both worlds.
+
+### Startup ordering (`Type=notify`)
+
+`READY=1` fires only after the daemon has finished initialising:
+
+* Prometheus port bound
+* netns profiles built and worker router live
+* DNS pipeline + InstanceManager ready (when configured)
+* dnstap / pbdns / log-dispatcher servers bound
+* control socket accepting connections
+
+Until that point systemd reports the unit as `activating`. Other
+units that declare `After=shorewalld.service` start at the right
+moment instead of racing daemon init. Without `Type=notify` systemd
+would consider the unit `active` the instant the Python interpreter
+forks — even if `bind(:9748)` crashes 200 ms later.
+
+### Watchdog (`WatchdogSec=30s`)
+
+The daemon runs a background task that pings `WATCHDOG=1` every
+~10 s. If the asyncio event loop wedges (a sync call slipped into
+the hot path, a netlink read hangs, a collector blocks) systemd
+sees no ping inside 30 s and SIGKILLs + restarts the unit. Combined
+with the existing per-netns `ParentWorker._auto_respawn` this
+catches both the "one worker died" and the "main loop hung" failure
+modes.
+
+Tune the timeout via a drop-in if 30 s is too aggressive (e.g.
+operators running with `--scrape-interval 60` and very wide netns
+sets):
+
+```ini
+# /etc/systemd/system/shorewalld.service.d/watchdog.conf
+[Service]
+WatchdogSec=120s
+```
+
+Set `WatchdogSec=0` to disable entirely — the daemon's ping task
+silently does nothing when systemd has not armed a watchdog.
+
+### `systemctl status` one-liner (`STATUS=…`)
+
+The same background task refreshes the `STATUS=` text shown by
+`systemctl status shorewalld`:
+
+```
+$ systemctl status shorewalld
+● shorewalld.service - shorewall-nft monitoring + DNS-set API daemon
+     Active: active (running) since Fri 2026-04-25 14:01:23 UTC; 12s ago
+     Status: "prom=:9748 netns=3 sets=8 elements=412 ingress=dnstap,pull,iplist,ctl"
+   Main PID: 12345 (shorewalld)
+```
+
+Fields:
+
+| Token | Meaning |
+|---|---|
+| `prom=HOST:PORT` | Prometheus scrape endpoint |
+| `netns=N` | number of netns profiles being scraped |
+| `sets=N` | DNS sets declared in the tracker |
+| `elements=N` | live set elements across all DNS sets |
+| `ingress=…` | comma list of active subsystems: `dnstap`, `pbdns`, `pull`, `peer`, `iplist`, `ctl` |
+
+The line refreshes every ~10 s without contending with the hot
+path — only cheap O(1) accessors are read.
+
+### Reload semantics (`ExecReload=`)
+
+The shipping unit uses `ExecReload=/bin/kill -USR1 $MAINPID`. The
+SIGUSR1 handler triggers an iplist refresh and wraps it in
+`RELOADING=1` / `READY=1` notifications, so `systemctl reload
+shorewalld` reports correctly when the refresh finishes.
+
+For operators who prefer the dynamic registration path
+(`shorewall-nft start` notifies via the control socket — see
+[Multi-instance operation](#multi-instance-operation--instance)),
+SIGUSR1 / `systemctl reload` is optional.
+
+### Shutdown (`STOPPING=1`)
+
+`STOPPING=1` is sent as the first action of the async shutdown
+sequence, before any subsystem teardown. systemd flips the unit
+state to `deactivating` immediately so monitoring and dependent
+units do not see a stale `active` while the daemon flushes set
+writers, peer link, state store, and worker router.
+
 ## Install
 
 Ships as part of the `shorewall-nft` package. The daemon itself is the

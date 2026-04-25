@@ -31,6 +31,7 @@ from shorewall_nft.nft.dns_sets import (
 )
 from shorewall_nft.nft.netlink import NftInterface
 
+from . import sd_notify
 from .control import ControlMetricsCollector, ControlServer
 from .control_handlers import ControlHandlers
 from .daemon_config import DaemonConfig
@@ -118,6 +119,7 @@ class Daemon:
         self._shutdown_done = False
         self._cleanup_registered = False
         self._stop_event: asyncio.Event | None = None
+        self._sd_notify_task: asyncio.Task[None] | None = None
 
         # Subsystems wired up in run().
         self._nft: NftInterface | None = None
@@ -286,6 +288,13 @@ class Daemon:
 
         # Install SIGUSR1 handler for manual iplist refresh.
         self._install_sigusr1()
+
+        # Tell systemd we are live + start the watchdog/status loop.
+        # No-ops when $NOTIFY_SOCKET is not set (unit tests, dev runs).
+        sd_notify.ready(self._build_sd_status())
+        if sd_notify.enabled():
+            self._sd_notify_task = asyncio.create_task(
+                self._sd_notify_loop(), name="shorewalld.sd_notify")
 
         try:
             await self._stop_event.wait()
@@ -1040,18 +1049,83 @@ class Daemon:
         loop = self._loop
         tracker = self._iplist_tracker
 
+        async def _refresh() -> None:
+            sd_notify.reloading()
+            try:
+                if tracker is not None:
+                    await tracker.refresh_all()
+            finally:
+                sd_notify.ready(self._build_sd_status())
+
         def _handler() -> None:
             log.info("shorewalld caught SIGUSR1 — triggering iplist refresh")
-            if tracker is not None:
-                loop.create_task(
-                    tracker.refresh_all(),
-                    name="shorewalld.iplist.sigusr1_refresh",
-                )
+            loop.create_task(
+                _refresh(), name="shorewalld.iplist.sigusr1_refresh")
 
         try:
             loop.add_signal_handler(signal.SIGUSR1, _handler)
         except (ValueError, OSError, NotImplementedError):
             pass
+
+    async def _sd_notify_loop(self) -> None:
+        """Periodically ping the systemd watchdog and refresh ``STATUS=``.
+
+        Cadence is :func:`sd_notify.status_interval_sec` — short enough
+        to stay under any reasonable ``WatchdogSec=`` while updating
+        the ``systemctl status`` one-liner often enough that operators
+        see live numbers.
+        """
+        interval = sd_notify.status_interval_sec()
+        try:
+            while not (self._stop_event and self._stop_event.is_set()):
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(),  # type: ignore[union-attr]
+                        timeout=interval)
+                    return  # stop_event fired
+                except asyncio.TimeoutError:
+                    pass
+                sd_notify.watchdog_ping()
+                try:
+                    sd_notify.status(self._build_sd_status())
+                except Exception:
+                    log.debug("sd_notify status build failed", exc_info=True)
+        except asyncio.CancelledError:
+            pass
+
+    def _build_sd_status(self) -> str:
+        """One-liner shown by ``systemctl status shorewalld``.
+
+        Cheap accessors only — must not contend with the hot path.
+        """
+        parts: list[str] = [
+            f"prom={self._config.prom_host}:{self._config.prom_port}",
+        ]
+        if self._profile_builder is not None:
+            parts.append(f"netns={len(self._profile_builder.profiles)}")
+        if self._tracker is not None:
+            try:
+                snap = self._tracker.snapshot()
+                parts.append(
+                    f"sets={snap.sets_declared} elements={snap.totals.elements}")
+            except Exception:
+                pass
+        flags: list[str] = []
+        if self._dnstap_server is not None:
+            flags.append("dnstap")
+        if self._pbdns_server is not None:
+            flags.append("pbdns")
+        if self._pull_resolver is not None:
+            flags.append("pull")
+        if self._peer_link is not None:
+            flags.append("peer")
+        if self._iplist_tracker is not None:
+            flags.append("iplist")
+        if self._control_server is not None:
+            flags.append("ctl")
+        if flags:
+            parts.append("ingress=" + ",".join(flags))
+        return " ".join(parts)
 
     def _start_prom_server(self) -> None:
         """Stand up a prometheus_client-backed HTTP scrape endpoint.
@@ -1246,6 +1320,18 @@ class Daemon:
         """
         if self._shutdown_done:
             return
+
+        # Tell systemd before we start tearing things down so the
+        # service state shows STOPPING throughout the teardown phase.
+        sd_notify.stopping()
+
+        if self._sd_notify_task is not None:
+            self._sd_notify_task.cancel()
+            try:
+                await self._sd_notify_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._sd_notify_task = None
 
         errors: list[tuple[str, BaseException]] = []
 

@@ -5,7 +5,15 @@ After=network.target
 Wants=network.target
 
 [Service]
-Type=simple
+# Type=notify: the daemon sends READY=1 once init has actually
+# completed (prom port bound, workers spawned, control socket up).
+# Dependent units with After=shorewalld.service then start at the
+# right moment instead of racing init.
+Type=notify
+NotifyAccess=main
+# WatchdogSec arms sd_notify(WATCHDOG=1); the daemon pings every
+# ~10 s. If the asyncio loop wedges, systemd kills + restarts.
+WatchdogSec=30s
 # Default config: scrape every netns under /run/netns plus own ns,
 # Prometheus on :9748, dnstap endpoint OFF.
 # Override on the command line, via

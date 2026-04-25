@@ -9,7 +9,12 @@ After=network.target shorewall-nft@%i.service
 Wants=network.target
 
 [Service]
-Type=simple
+# See shorewalld.service for the rationale of Type=notify +
+# WatchdogSec — the per-netns instance has the same lifecycle
+# requirements.
+Type=notify
+NotifyAccess=main
+WatchdogSec=30s
 # Per-instance Prometheus port: 9748 + netns-hash-offset would be
 # cleaner, but we keep it simple with a fixed port; operators that
 # want multi-instance scraping should use per-instance NetworkNamespacePath

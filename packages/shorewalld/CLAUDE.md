@@ -14,6 +14,15 @@ No per-package venv. See root `CLAUDE.md` for bootstrap.
   receives runtime config as a single typed `DaemonConfig` (`daemon_config.py`);
   kwargs accepted for back-compat with a `DeprecationWarning`;
   control-socket handlers live in `control_handlers.py` for testability.
+  Emits `sd_notify(3)` lifecycle (`READY=1`, `RELOADING=1`/`READY=1`
+  around SIGUSR1, `STOPPING=1`) and runs a 10 s background task that
+  refreshes the `STATUS=` one-liner + pings `WATCHDOG=1`. See
+  `docs/shorewalld/index.md#systemd-integration`.
+- `sd_notify.py` — pure-Python `sd_notify(3)` client. No libsystemd
+  link, no extras. Silent no-op when `$NOTIFY_SOCKET` is unset so
+  unit tests + container runs work unchanged. Honours
+  `WATCHDOG_PID` so child forks (worker router) cannot accidentally
+  ping the manager.
 - `daemon_config.py` — `DaemonConfig` frozen dataclass (`frozen=True`,
   `slots=True`), 47 fields covering all daemon runtime knobs. Built by
   `cli.py` after merging `ConfDefaults` (from shorewalld.conf) with argparse
