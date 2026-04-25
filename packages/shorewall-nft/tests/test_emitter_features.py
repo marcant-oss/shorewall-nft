@@ -102,6 +102,51 @@ class TestFlowtable:
         assert "hw-tc-offload" not in out
         assert "FLOWTABLE_FLAGS=offload dropped" in out
 
+    def test_flow_add_registers_strict_capability(self):
+        """The ``flow add @ft`` emit registers a ``has_flow_offload``
+        requirement on the IR so ``--strict-features`` can validate it
+        against the probed kernel before nft -f runs."""
+        config = load_config(MINIMAL_DIR)
+        config.settings["FLOWTABLE"] = "eth0"
+        ir = build_ir(config)
+        emit_nft(ir)
+        registered = [
+            r for r in ir.required_features
+            if r.capability == "has_flow_offload"
+        ]
+        assert registered, (
+            "expected emit_nft to register has_flow_offload "
+            "on the IR's required_features list"
+        )
+        # Source hint mentions FLOWTABLE setting so the user can grep
+        assert any(
+            "FLOWTABLE=eth0" in (r.source or "") for r in registered
+        )
+
+    def test_flow_add_strict_mode_reports_missing_capability(self):
+        """In strict mode + a probed caps object reporting
+        ``has_flow_offload=False``, ``check_strict_features`` raises
+        ``UnsupportedFeatureError`` with a useful message."""
+        from shorewall_nft.nft.capabilities import NftCapabilities
+        from shorewall_nft.nft.strict import (
+            UnsupportedFeatureError,
+            check_strict_features,
+        )
+        config = load_config(MINIMAL_DIR)
+        config.settings["FLOWTABLE"] = "eth0"
+        ir = build_ir(config)
+        emit_nft(ir)  # populates ir.required_features
+        caps = NftCapabilities()
+        caps.has_flow_offload = False  # probe failed
+        try:
+            check_strict_features(ir, caps)
+        except UnsupportedFeatureError as e:
+            assert any(
+                r.capability == "has_flow_offload" for r in e.requirements
+            )
+            return
+        assert False, "expected UnsupportedFeatureError"
+
 
 # ──────────────────────────────────────────────────────────────────────
 # OPTIMIZE_VMAP — vmap dispatch

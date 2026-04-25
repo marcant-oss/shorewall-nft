@@ -673,6 +673,17 @@ def _emit_chain(chain: Chain, ir: FirewallIR, indent: str = "",
         # full chain walk. Gated on FLOWTABLE setting being non-empty.
         if (chain.hook == Hook.FORWARD and chain.chain_type == ChainType.FILTER
                 and _parse_flowtable_devices(ir)):
+            # Register the dependency for --strict-features. The probe
+            # checks ``has_flow_offload``; in strict mode an unmet
+            # requirement is a hard error before nft -f sees the script.
+            # Non-strict callers continue to emit unconditionally —
+            # nft -f remains the load-time validator.
+            ir.require_capability(
+                "has_flow_offload",
+                "FLOWTABLE flow-add fastpath in forward chain",
+                source=(f"shorewall.conf FLOWTABLE="
+                        f"{','.join(_parse_flowtable_devices(ir))}"),
+            )
             lines.append(f"{indent}\t# Flowtable fastpath — offload established flows")
             lines.append(f"{indent}\t{emit_flow_offload_rule('ft')}")
             lines.append("")
