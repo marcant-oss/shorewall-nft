@@ -1,8 +1,8 @@
 """Tests for the typed SpecialVerdict discriminated union.
 
 Covers:
-- Construction and value-equality of all 20 dataclasses.
-- SpecialVerdict union alias exports all 20 variants.
+- Construction and value-equality of all 21 dataclasses.
+- SpecialVerdict union alias exports all 21 variants.
 - Each typed variant, when placed on Rule.verdict_args, produces the same
   nft fragment as the legacy string-prefix producer would have produced.
 - Legacy string-prefix path still works (fallback regression).
@@ -42,6 +42,7 @@ from shorewall_nft.compiler.verdicts import (
     SnatVerdict,
     SpecialVerdict,
     SynproxyVerdict,
+    TproxyVerdict,
 )
 from shorewall_nft.nft.emitter import emit_nft
 
@@ -180,16 +181,16 @@ class TestSpecialVerdictUnion:
             DscpVerdict, ClassifyVerdict, EcnClearVerdict,
             CounterVerdict, NamedCounterVerdict, NflogVerdict,
             AuditVerdict,
-            SynproxyVerdict, QuotaVerdict,
+            SynproxyVerdict, QuotaVerdict, TproxyVerdict,
         }
         assert set(args) == expected, (
             f"Union mismatch. Extra: {set(args) - expected}. "
             f"Missing: {expected - set(args)}"
         )
 
-    def test_count_is_20(self):
+    def test_count_is_21(self):
         import typing
-        assert len(typing.get_args(SpecialVerdict)) == 20
+        assert len(typing.get_args(SpecialVerdict)) == 21
 
 
 # ---------------------------------------------------------------------------

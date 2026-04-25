@@ -1,4 +1,4 @@
-.TH SHOREWALL-NFT-MANGLE 5 "2026-04-24" "shorewall-nft 1.10.2" "File Formats"
+.TH SHOREWALL-NFT-MANGLE 5 "2026-04-25" "shorewall-nft 1.10.2" "File Formats"
 .SH NAME
 shorewall\-nft\-mangle \- packet mark (mangle) rules for shorewall-nft
 .SH DESCRIPTION
@@ -33,7 +33,7 @@ are comments.
 l l l.
 Column	Required	Description
 _
-ACTION	yes	Mark action: MARK(N), CONNMARK(N), RESTORE, SAVE, DSCP(...), CLASSIFY(...), or a bare integer mark value (decimal or 0x-hex). Anything else is logged at WARNING level and the rule is skipped.
+ACTION	yes	Mark or divert action: MARK(N), CONNMARK(N), RESTORE, SAVE, DSCP(...), CLASSIFY(...), TPROXY(PORT[,ADDR]), or a bare integer mark value (decimal or 0x-hex). Anything else is logged at WARNING level and the rule is skipped.
 SOURCE	yes	Source zone:address or CIDR
 DEST	yes	Destination zone:address or CIDR
 PROTO	no	Protocol filter
@@ -76,6 +76,25 @@ Restore mark from connection on established traffic:
 RESTORE  all     all
 .fi
 .RE
+.PP
+Transparent-proxy divert (HTTP traffic to local Squid on port 3128):
+.RS
+.nf
+#ACTION                  SOURCE  DEST  PROTO  DPORT
+TPROXY(3128,127.0.0.1)   loc     all   tcp    80
+.fi
+.RE
+The kernel TPROXY module routes the diverted packet to a local
+listener on the given address and port.  The caller is responsible
+for the routing-table glue
+.RB ( "ip rule add fwmark <mark> lookup <table>" )
+\(em compose with a separate MARK action when fwmark-based redirection
+is required.  Gated by the
+.B has_tproxy_stmt
+capability; see
+.BR shorewall\-nft (8)
+.B capabilities
+for the probed kernel feature set.
 
 .SH NFSET / DNS TOKENS
 The SOURCE and DEST columns accept

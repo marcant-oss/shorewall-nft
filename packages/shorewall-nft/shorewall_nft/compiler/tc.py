@@ -50,6 +50,7 @@ from shorewall_nft.compiler.verdicts import (
     MarkVerdict,
     RestoreMarkVerdict,
     SaveMarkVerdict,
+    TproxyVerdict,
 )
 from shorewall_nft.config.parser import ConfigLine
 from shorewall_nft.config.zones import ZoneModel
@@ -819,6 +820,39 @@ def _parse_mark_verdict(raw: str) -> MarkVerdict:
     return MarkVerdict(value=int(raw, 0))
 
 
+def _parse_tproxy_params(params: str) -> TproxyVerdict | None:
+    """Parse the body of a ``TPROXY(...)`` mangle action.
+
+    Accepted forms:
+
+    * ``TPROXY(PORT)``         — listener port only
+    * ``TPROXY(PORT,ADDR)``    — port + listener address (v4 or v6)
+
+    Returns a :class:`TproxyVerdict` on success, ``None`` on a
+    malformed body so the caller can log+skip via the generic
+    "unknown action" warning path.
+
+    PORT must be an integer 1–65535 (decimal or 0x-hex). ADDR is
+    not validated here — the emitter detects v4 vs v6 by looking
+    for a ``:`` in the address literal, and ``nft -f`` rejects any
+    syntactically invalid address at load time.
+    """
+    raw = params.strip()
+    if not raw:
+        return None
+    if "," in raw:
+        port_part, addr_part = (s.strip() for s in raw.split(",", 1))
+    else:
+        port_part, addr_part = raw, ""
+    try:
+        port = int(port_part, 0)
+    except ValueError:
+        return None
+    if port < 1 or port > 65535:
+        return None
+    return TproxyVerdict(port=port, addr=addr_part or None)
+
+
 def process_mangle(ir: FirewallIR, tcrules: list[ConfigLine],
                    mangle: list[ConfigLine], zones: ZoneModel) -> None:
     """Process mangle/tcrules into nft mark rules."""
@@ -897,6 +931,23 @@ def _process_mark_rule(ir: FirewallIR, line: ConfigLine,
         classify_val = action[9:].rstrip(")")
         rule.verdict = Verdict.ACCEPT
         rule.verdict_args = ClassifyVerdict(value=classify_val)
+    elif action.startswith("TPROXY("):
+        tproxy_inner = action[len("TPROXY("):].rstrip(")")
+        tproxy_verdict = _parse_tproxy_params(tproxy_inner)
+        if tproxy_verdict is None:
+            logger.warning(
+                "%s:%d: TPROXY action %r has a malformed body — expected "
+                "TPROXY(PORT) or TPROXY(PORT,ADDR) with PORT in 1..65535. "
+                "Rule skipped.",
+                line.file, line.lineno, action,
+            )
+            return
+        rule.verdict = Verdict.ACCEPT
+        rule.verdict_args = tproxy_verdict
+        ir.require_capability(
+            "has_tproxy_stmt", "TPROXY action",
+            source=f"{line.file}:{line.lineno}",
+        )
     else:
         try:
             int(action, 0)

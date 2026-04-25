@@ -41,6 +41,7 @@ from shorewall_nft.compiler.verdicts import (
     SaveMarkVerdict,
     SnatVerdict,
     SynproxyVerdict,
+    TproxyVerdict,
 )
 from shorewall_nft.nft.flowtable import emit_flow_offload_rule
 
@@ -1233,7 +1234,25 @@ _TYPED_VERDICT_EMITTERS: dict[type, Callable] = {
     AuditVerdict: lambda v: f'log prefix "AUDIT:{v.base_action}: " accept',
     SynproxyVerdict: lambda v: _emit_synproxy_verdict(v),
     QuotaVerdict: lambda v: f"quota over {v.bytes_count} {v.unit} drop",
+    TproxyVerdict: lambda v: _emit_tproxy_verdict(v),
 }
+
+
+def _emit_tproxy_verdict(v: "TproxyVerdict") -> str:
+    """Emit ``tproxy [<family>] to [<addr>:]<port>``.
+
+    Family qualifier (``ip`` / ``ip6``) is added when an address is
+    present so the statement loads under the ``inet`` mangle table —
+    plain ``tproxy to :<port>`` without an address inherits the chain
+    family. IPv6 addresses are detected by the presence of a ``:`` in
+    the address literal and rendered with the bracketed
+    ``[ADDR]:PORT`` form expected by nft.
+    """
+    if v.addr is None:
+        return f"tproxy to :{v.port}"
+    if ":" in v.addr:
+        return f"tproxy ip6 to [{v.addr}]:{v.port}"
+    return f"tproxy ip to {v.addr}:{v.port}"
 
 
 def _emit_synproxy_verdict(v: "SynproxyVerdict") -> str:

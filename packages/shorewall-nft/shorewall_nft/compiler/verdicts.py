@@ -208,6 +208,30 @@ class QuotaVerdict:
     unit: Literal["bytes", "kbytes", "mbytes", "gbytes"] = "bytes"
 
 
+@dataclass(frozen=True)
+class TproxyVerdict:
+    """Transparent-proxy divert (mangle file only).
+
+    Surfaces ``TPROXY(PORT[,ADDR])`` in the ACTION column of the
+    mangle file. Emitted as one of:
+
+    * ``tproxy to :PORT``                 — port only (inherits chain family)
+    * ``tproxy ip to ADDR:PORT``          — IPv4 address present
+    * ``tproxy ip6 to [ADDR]:PORT``       — IPv6 address present
+
+    Gated by ``has_tproxy_stmt``. The companion ``socket transparent``
+    pre-filter match is tracked separately and not exposed via this
+    verdict.
+
+    The kernel routes the diverted packet to a local listener; the
+    caller is responsible for the routing-table glue
+    (``ip rule add fwmark … lookup …``) — composing TPROXY with a
+    MARK rule on the same flow is the typical pattern.
+    """
+    port: int
+    addr: str | None = None
+
+
 # ── Union alias ───────────────────────────────────────────────────────────
 
 SpecialVerdict = Union[
@@ -217,5 +241,5 @@ SpecialVerdict = Union[
     DscpVerdict, ClassifyVerdict, EcnClearVerdict,
     CounterVerdict, NamedCounterVerdict, NflogVerdict,
     AuditVerdict,
-    SynproxyVerdict, QuotaVerdict,
+    SynproxyVerdict, QuotaVerdict, TproxyVerdict,
 ]
