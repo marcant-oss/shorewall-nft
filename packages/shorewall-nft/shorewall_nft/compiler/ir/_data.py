@@ -136,6 +136,12 @@ class Chain:
     priority: int = 0
     policy: Verdict | None = None
     rules: list[Rule] = field(default_factory=list)
+    # Optional log level from the policy file's LOG column. When set
+    # and the chain has a DROP/REJECT policy, the chain-tail emit pass
+    # inserts a rate-limited ``meter <name> { ip daddr limit rate
+    # 5/second burst 10 packets } log level <lvl> prefix "<chain>:..."``
+    # rule before the terminal jump.
+    policy_log_level: str | None = None
 
     @property
     def is_base_chain(self) -> bool:

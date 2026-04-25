@@ -551,6 +551,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_dmz_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-fw:DROP: "
 		jump sw_Reject
 	}
 
@@ -562,6 +563,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_dmz_guest { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-guest:DROP: "
 		jump sw_Reject
 	}
 
@@ -573,6 +575,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_dmz_int { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-int:DROP: "
 		jump sw_Reject
 	}
 
@@ -584,6 +587,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_dmz_iot { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-iot:DROP: "
 		jump sw_Reject
 	}
 
@@ -591,6 +595,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_dmz_lan { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-lan:DROP: "
 		jump sw_Reject
 	}
 
@@ -598,6 +603,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_dmz_mgmt { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-mgmt:DROP: "
 		jump sw_Reject
 	}
 
@@ -609,6 +615,7 @@ table inet shorewall {
 		meta nfproto ipv4 meta l4proto udp udp dport 53 accept
 		meta nfproto ipv4 meta l4proto tcp tcp dport 53 accept
 		meta nfproto ipv4 meta l4proto tcp tcp dport 25 accept
+		meter lograte_dmz_net { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-net:DROP: "
 		jump sw_Reject
 	}
 
@@ -616,6 +623,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_dmz_srv { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-srv:DROP: "
 		jump sw_Reject
 	}
 
@@ -623,6 +631,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_dmz_tunneled { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-tunneled:DROP: "
 		jump sw_Reject
 	}
 
@@ -634,6 +643,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_dmz_voice { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-voice:DROP: "
 		jump sw_Reject
 	}
 
@@ -641,6 +651,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_dmz_vpn { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:dmz-vpn:DROP: "
 		jump sw_Reject
 	}
 
@@ -745,6 +756,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_dmz { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-dmz:DROP: "
 		jump sw_Drop
 	}
 
@@ -757,6 +769,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-fw:DROP: "
 		jump sw_Reject
 	}
 
@@ -778,6 +791,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_int { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-int:DROP: "
 		jump sw_Drop
 	}
 
@@ -789,6 +803,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_iot { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-iot:DROP: "
 		jump sw_Drop
 	}
 
@@ -800,6 +815,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_lan { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-lan:DROP: "
 		jump sw_Drop
 	}
 
@@ -811,6 +827,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_mgmt { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-mgmt:DROP: "
 		jump sw_Drop
 	}
 
@@ -824,6 +841,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_net { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-net:DROP: "
 		jump sw_Drop
 	}
 
@@ -835,6 +853,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_srv { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-srv:DROP: "
 		jump sw_Drop
 	}
 
@@ -846,6 +865,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_tunneled { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-tunneled:DROP: "
 		jump sw_Drop
 	}
 
@@ -857,6 +877,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_voice { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-voice:DROP: "
 		jump sw_Drop
 	}
 
@@ -868,6 +889,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_guest_vpn { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:guest-vpn:DROP: "
 		jump sw_Drop
 	}
 
@@ -894,6 +916,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_int_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:int-fw:DROP: "
 		jump sw_Reject
 	}
 
@@ -906,6 +929,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_int_guest { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:int-guest:DROP: "
 		jump sw_Reject
 	}
 
@@ -929,6 +953,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_int_iot { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:int-iot:DROP: "
 		jump sw_Reject
 	}
 
@@ -941,6 +966,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_int_lan { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:int-lan:DROP: "
 		jump sw_Reject
 	}
 
@@ -953,6 +979,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_int_mgmt { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:int-mgmt:DROP: "
 		jump sw_Reject
 	}
 
@@ -984,6 +1011,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_int_srv { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:int-srv:DROP: "
 		jump sw_Reject
 	}
 
@@ -996,6 +1024,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_int_tunneled { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:int-tunneled:DROP: "
 		jump sw_Reject
 	}
 
@@ -1008,6 +1037,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_int_voice { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:int-voice:DROP: "
 		jump sw_Reject
 	}
 
@@ -1020,6 +1050,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_int_vpn { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:int-vpn:DROP: "
 		jump sw_Reject
 	}
 
@@ -1031,6 +1062,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_dmz { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-dmz:DROP: "
 		jump sw_Reject
 	}
 
@@ -1045,6 +1077,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-fw:DROP: "
 		jump sw_Reject
 	}
 
@@ -1056,6 +1089,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_guest { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-guest:DROP: "
 		jump sw_Reject
 	}
 
@@ -1067,6 +1101,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_int { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-int:DROP: "
 		jump sw_Reject
 	}
 
@@ -1088,6 +1123,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_lan { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-lan:DROP: "
 		jump sw_Reject
 	}
 
@@ -1099,6 +1135,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_mgmt { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-mgmt:DROP: "
 		jump sw_Reject
 	}
 
@@ -1114,6 +1151,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_net { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-net:DROP: "
 		jump sw_Reject
 	}
 
@@ -1125,6 +1163,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_srv { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-srv:DROP: "
 		jump sw_Reject
 	}
 
@@ -1136,6 +1175,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_tunneled { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-tunneled:DROP: "
 		jump sw_Reject
 	}
 
@@ -1147,6 +1187,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_voice { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-voice:DROP: "
 		jump sw_Reject
 	}
 
@@ -1158,6 +1199,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_iot_vpn { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-vpn:DROP: "
 		jump sw_Reject
 	}
 
@@ -1165,6 +1207,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_lan_dmz { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-dmz:DROP: "
 		jump sw_Reject
 	}
 
@@ -1173,6 +1216,7 @@ table inet shorewall {
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto tcp tcp dport 22 accept
+		meter lograte_lan_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-fw:DROP: "
 		jump sw_Reject
 	}
 
@@ -1184,6 +1228,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_lan_guest { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-guest:DROP: "
 		jump sw_Reject
 	}
 
@@ -1195,6 +1240,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_lan_int { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-int:DROP: "
 		jump sw_Reject
 	}
 
@@ -1206,6 +1252,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_lan_iot { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-iot:DROP: "
 		jump sw_Reject
 	}
 
@@ -1213,6 +1260,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_lan_mgmt { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-mgmt:DROP: "
 		jump sw_Reject
 	}
 
@@ -1220,6 +1268,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_lan_net { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-net:DROP: "
 		jump sw_Reject
 	}
 
@@ -1229,6 +1278,7 @@ table inet shorewall {
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		ip daddr 192.0.2.60 meta l4proto tcp tcp dport 8080 accept
 		ip daddr 192.0.2.60 meta l4proto tcp tcp dport 8443 accept
+		meter lograte_lan_srv { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-srv:DROP: "
 		jump sw_Reject
 	}
 
@@ -1236,6 +1286,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_lan_tunneled { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-tunneled:DROP: "
 		jump sw_Reject
 	}
 
@@ -1247,6 +1298,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_lan_voice { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-voice:DROP: "
 		jump sw_Reject
 	}
 
@@ -1254,6 +1306,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_lan_vpn { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:lan-vpn:DROP: "
 		jump sw_Reject
 	}
 
@@ -1262,6 +1315,7 @@ table inet shorewall {
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
+		meter lograte_mgmt_dmz { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-dmz:DROP: "
 		jump sw_Drop
 	}
 
@@ -1271,6 +1325,7 @@ table inet shorewall {
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		ip saddr 192.0.2.10 meta l4proto tcp tcp dport 22 accept
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
+		meter lograte_mgmt_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-fw:DROP: "
 		jump sw_Drop
 	}
 
@@ -1283,6 +1338,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_mgmt_guest { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-guest:DROP: "
 		jump sw_Drop
 	}
 
@@ -1295,6 +1351,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_mgmt_int { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-int:DROP: "
 		jump sw_Drop
 	}
 
@@ -1307,6 +1364,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_mgmt_iot { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-iot:DROP: "
 		jump sw_Drop
 	}
 
@@ -1315,6 +1373,7 @@ table inet shorewall {
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
+		meter lograte_mgmt_lan { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-lan:DROP: "
 		jump sw_Drop
 	}
 
@@ -1337,6 +1396,7 @@ table inet shorewall {
 		ip6 daddr @dns_auth_example_net_v6 meta l4proto tcp tcp dport 443 accept
 		ip daddr @dns_ntp1_example_org_v4 meta l4proto udp udp dport 123 accept
 		ip6 daddr @dns_ntp1_example_org_v6 meta l4proto udp udp dport 123 accept
+		meter lograte_mgmt_net { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-net:DROP: "
 		jump sw_Drop
 	}
 
@@ -1345,6 +1405,7 @@ table inet shorewall {
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
+		meter lograte_mgmt_srv { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-srv:DROP: "
 		jump sw_Drop
 	}
 
@@ -1353,6 +1414,7 @@ table inet shorewall {
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
+		meter lograte_mgmt_tunneled { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-tunneled:DROP: "
 		jump sw_Drop
 	}
 
@@ -1365,6 +1427,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_mgmt_voice { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-voice:DROP: "
 		jump sw_Drop
 	}
 
@@ -1373,6 +1436,7 @@ table inet shorewall {
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
+		meter lograte_mgmt_vpn { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-vpn:DROP: "
 		jump sw_Drop
 	}
 
@@ -1383,6 +1447,7 @@ table inet shorewall {
 		ip daddr 192.0.2.50 meta l4proto tcp tcp dport 80 accept
 		ip daddr 192.0.2.50 meta l4proto tcp tcp dport 443 accept
 		ip saddr 192.0.2.10 meta l4proto tcp tcp dport 22 accept
+		meter lograte_net_dmz { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-dmz:DROP: "
 		jump sw_Reject
 	}
 
@@ -1392,6 +1457,7 @@ table inet shorewall {
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		ip saddr 192.0.2.10 meta l4proto tcp tcp dport 22 accept
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
+		meter lograte_net_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-fw:DROP: "
 		jump sw_Reject
 	}
 
@@ -1403,6 +1469,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_net_guest { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-guest:DROP: "
 		jump sw_Reject
 	}
 
@@ -1414,6 +1481,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_net_int { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-int:DROP: "
 		jump sw_Reject
 	}
 
@@ -1425,6 +1493,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_net_iot { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-iot:DROP: "
 		jump sw_Reject
 	}
 
@@ -1432,6 +1501,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_net_lan { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-lan:DROP: "
 		jump sw_Reject
 	}
 
@@ -1439,6 +1509,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_net_mgmt { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-mgmt:DROP: "
 		jump sw_Reject
 	}
 
@@ -1446,6 +1517,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_net_srv { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-srv:DROP: "
 		jump sw_Reject
 	}
 
@@ -1453,6 +1525,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_net_tunneled { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-tunneled:DROP: "
 		jump sw_Reject
 	}
 
@@ -1464,6 +1537,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_net_voice { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-voice:DROP: "
 		jump sw_Reject
 	}
 
@@ -1471,6 +1545,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_net_vpn { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-vpn:DROP: "
 		jump sw_Reject
 	}
 
@@ -1678,6 +1753,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_tunneled_dmz { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-dmz:DROP: "
 		jump sw_Reject
 	}
 
@@ -1688,6 +1764,7 @@ table inet shorewall {
 		ip daddr 192.0.2.53 meta l4proto udp udp dport 53 meta secpath exists accept
 		ip daddr 192.0.2.53 meta l4proto tcp tcp dport 53 meta secpath exists accept
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 meta secpath exists accept
+		meter lograte_tunneled_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-fw:DROP: "
 		jump sw_Reject
 	}
 
@@ -1699,6 +1776,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_tunneled_guest { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-guest:DROP: "
 		jump sw_Reject
 	}
 
@@ -1710,6 +1788,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_tunneled_int { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-int:DROP: "
 		jump sw_Reject
 	}
 
@@ -1721,6 +1800,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_tunneled_iot { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-iot:DROP: "
 		jump sw_Reject
 	}
 
@@ -1728,6 +1808,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_tunneled_lan { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-lan:DROP: "
 		jump sw_Reject
 	}
 
@@ -1735,6 +1816,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_tunneled_mgmt { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-mgmt:DROP: "
 		jump sw_Reject
 	}
 
@@ -1742,6 +1824,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_tunneled_net { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-net:DROP: "
 		jump sw_Reject
 	}
 
@@ -1749,6 +1832,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_tunneled_srv { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-srv:DROP: "
 		jump sw_Reject
 	}
 
@@ -1760,6 +1844,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_tunneled_voice { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-voice:DROP: "
 		jump sw_Reject
 	}
 
@@ -1767,6 +1852,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meter lograte_tunneled_vpn { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:tunneled-vpn:DROP: "
 		jump sw_Reject
 	}
 
@@ -1778,6 +1864,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_dmz { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-dmz:DROP: "
 		jump sw_Reject
 	}
 
@@ -1790,6 +1877,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-fw:DROP: "
 		jump sw_Reject
 	}
 
@@ -1801,6 +1889,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.20
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_guest { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-guest:DROP: "
 		jump sw_Reject
 	}
 
@@ -1812,6 +1901,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_int { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-int:DROP: "
 		jump sw_Reject
 	}
 
@@ -1823,6 +1913,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.30
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_iot { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-iot:DROP: "
 		jump sw_Reject
 	}
 
@@ -1834,6 +1925,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_lan { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-lan:DROP: "
 		jump sw_Reject
 	}
 
@@ -1845,6 +1937,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_mgmt { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-mgmt:DROP: "
 		jump sw_Reject
 	}
 
@@ -1858,6 +1951,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_net { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-net:DROP: "
 		jump sw_Reject
 	}
 
@@ -1869,6 +1963,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_srv { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-srv:DROP: "
 		jump sw_Reject
 	}
 
@@ -1880,6 +1975,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_tunneled { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-tunneled:DROP: "
 		jump sw_Reject
 	}
 
@@ -1901,6 +1997,7 @@ table inet shorewall {
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:bond0.40
 		meta l4proto udp udp dport { 546, 547 } accept
+		meter lograte_voice_vpn { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:voice-vpn:DROP: "
 		jump sw_Reject
 	}
 
@@ -1917,6 +2014,7 @@ table inet shorewall {
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto tcp tcp dport 22 accept
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
+		meter lograte_vpn_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:vpn-fw:DROP: "
 		jump sw_Reject
 	}
 
@@ -1967,6 +2065,7 @@ table inet shorewall {
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		meta nfproto ipv4 reject
+		meter lograte_vpn_mgmt { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:vpn-mgmt:DROP: "
 		jump sw_Reject
 	}
 

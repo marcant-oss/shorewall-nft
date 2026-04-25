@@ -306,6 +306,13 @@ def _process_policies(ir: FirewallIR, policy_lines: list[ConfigLine],
                 chain = ir.get_or_create_chain(chain_name)
                 if chain.policy is None:
                     chain.policy = verdict
+                # Stash the LOG column from the policy line so the
+                # chain-tail emit pass can render the rate-limited log
+                # rule before the terminal jump. Empty / "-" / "$LOG"
+                # placeholders fall back to the global LOG setting at
+                # emit time.
+                if log_level and log_level != "-":
+                    chain.policy_log_level = log_level
 
 
 def _process_notrack(ir: FirewallIR, notrack_lines: list[ConfigLine],
@@ -1754,16 +1761,62 @@ def _apply_default_actions(ir: FirewallIR, settings: dict[str, str]) -> None:
         if chain.policy == Verdict.DROP and drop_default in ACTION_CHAIN_MAP:
             # Replace simple drop policy with jump to action chain
             chain.policy = Verdict.JUMP
+            _maybe_emit_chain_tail_log(chain, settings)
             chain.rules.append(Rule(
                 verdict=Verdict.JUMP,
                 verdict_args=ACTION_CHAIN_MAP[drop_default],
             ))
         elif chain.policy == Verdict.REJECT and reject_default in ACTION_CHAIN_MAP:
             chain.policy = Verdict.JUMP
+            _maybe_emit_chain_tail_log(chain, settings)
             chain.rules.append(Rule(
                 verdict=Verdict.JUMP,
                 verdict_args=ACTION_CHAIN_MAP[reject_default],
             ))
+
+
+def _maybe_emit_chain_tail_log(chain: Chain, settings: dict[str, str]) -> None:
+    """Emit a rate-limited log rule before the terminal jump.
+
+    Mirrors upstream's iptables-restore-translate output:
+
+        meter <name> { ip daddr limit rate 5/second burst 10 packets } \\
+            log level <lvl> prefix "Shorewall:<chain>:REJECT:"
+        jump <Reject|Drop>
+
+    The meter is per-chain (unique name) so multiple zone-pair chains
+    don't collide on a shared ``lograte`` meter — same constraint the
+    LIMIT-action meter-name fix dealt with earlier.
+
+    Skips emission when the chain has no ``_policy_log_level``
+    attribute (no LOG column in the policy line). The log_level may
+    be ``$LOG`` — resolve via the global ``LOG`` setting; fall back to
+    ``info`` if neither is set.
+    """
+    raw_lvl = chain.policy_log_level
+    if not raw_lvl:
+        return
+    if raw_lvl in ("$LOG", "$Log", "$log"):
+        raw_lvl = settings.get("LOG", "info")
+    # nft accepts symbolic syslog priorities + numeric 0-7. Normalise
+    # the most common forms; anything else passes through verbatim and
+    # the kernel rejects unknown values at load time (which is fine —
+    # better a clear error than a silent log-level drift).
+    lvl = raw_lvl.strip().lower()
+    chain_id = chain.name.replace("-", "_")
+    meter_name = f"lograte_{chain_id}"
+    disp = "DROP" if chain.policy == Verdict.JUMP else chain.policy.value.upper()
+    chain.rules.append(Rule(
+        matches=[
+            Match(field="meter", value=(
+                f"{meter_name} {{ ip daddr limit rate 5/second "
+                "burst 10 packets }"
+            )),
+        ],
+        verdict=Verdict.LOG,
+        log_level=lvl,
+        log_prefix=f"Shorewall:{chain.name}:{disp}:",
+    ))
 
 
 def _process_synparams(ir: FirewallIR, lines: list[ConfigLine],

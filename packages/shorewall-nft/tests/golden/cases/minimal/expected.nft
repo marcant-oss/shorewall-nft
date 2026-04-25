@@ -69,6 +69,7 @@ table inet shorewall {
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto tcp tcp dport 22 accept
+		meter lograte_loc_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:loc-fw:DROP: "
 		jump sw_Reject
 	}
 
@@ -88,6 +89,7 @@ table inet shorewall {
 		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
 		# Admin SSH
 		ip saddr 192.168.1.100 meta l4proto tcp tcp dport 22 accept
+		meter lograte_net_fw { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-fw:DROP: "
 		jump sw_Drop
 	}
 
@@ -96,6 +98,7 @@ table inet shorewall {
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
 		meta nfproto ipv4 meta l4proto tcp tcp dport { 80, 443 } accept
+		meter lograte_net_loc { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:net-loc:DROP: "
 		jump sw_Drop
 	}
 
