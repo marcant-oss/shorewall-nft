@@ -519,10 +519,18 @@ def create_dynamic_blacklist(ir: FirewallIR, settings: dict[str, str]) -> None:
     mode = dbl.strip().lower()
 
     chain = ir.get_or_create_chain("sw_dynamic-blacklist")
+    # v4 set membership → DROP. The companion ``dynamic_blacklist_v6``
+    # set carries the IPv6 entries; the emitter declares both sets when
+    # ``ir._dynamic_blacklist`` is set.
     chain.rules.append(Rule(
         matches=[Match(field="ip saddr", value="@dynamic_blacklist")],
         verdict=Verdict.DROP,
-        comment="dynamic blacklist",
+        comment="dynamic blacklist (v4)",
+    ))
+    chain.rules.append(Rule(
+        matches=[Match(field="ip6 saddr", value="@dynamic_blacklist_v6")],
+        verdict=Verdict.DROP,
+        comment="dynamic blacklist (v6)",
     ))
 
     if not hasattr(ir, "_dynamic_blacklist"):
@@ -531,12 +539,25 @@ def create_dynamic_blacklist(ir: FirewallIR, settings: dict[str, str]) -> None:
     if mode in ("ipset,disconnect", "ipset,disconnect-src"):
         forward = ir.chains.get("forward")
         if forward is not None:
-            disconnect_rule = Rule(
+            # Two siblings: one per family. Insert v6 first so that
+            # after the second insert(0) the v4 rule sits at index 0
+            # (matches the original test expectation that the FIRST
+            # forward rule references @dynamic_blacklist).
+            disconnect_v6 = Rule(
+                matches=[
+                    Match(field="ip6 saddr", value="@dynamic_blacklist_v6"),
+                    Match(field="ct state", value="established"),
+                ],
+                verdict=Verdict.DROP,
+                comment="dynamic blacklist:disconnect (v6)",
+            )
+            forward.rules.insert(0, disconnect_v6)
+            disconnect_v4 = Rule(
                 matches=[
                     Match(field="ip saddr", value="@dynamic_blacklist"),
                     Match(field="ct state", value="established"),
                 ],
                 verdict=Verdict.DROP,
-                comment="dynamic blacklist:disconnect",
+                comment="dynamic blacklist:disconnect (v4)",
             )
-            forward.rules.insert(0, disconnect_rule)
+            forward.rules.insert(0, disconnect_v4)

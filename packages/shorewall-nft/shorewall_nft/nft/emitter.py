@@ -276,7 +276,11 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
 
     _declare_missing_sets(lines, ir, declared_sets)
 
-    # Dynamic blacklist set (with timeout support)
+    # Dynamic blacklist sets (with timeout support) — one per family.
+    # The chain ``sw_dynamic-blacklist`` carries one DROP rule per
+    # family that matches against its respective set; the emitter
+    # therefore declares both sets unconditionally when the flag is on
+    # so the matching rules always have a target set to reference.
     if hasattr(ir, '_dynamic_blacklist') and ir._dynamic_blacklist:
         if "dynamic_blacklist" not in declared_sets:
             lines.append("")
@@ -284,6 +288,14 @@ def emit_nft(ir: FirewallIR, static_nft: str | None = None,
             lines.append("\t# nft add element inet shorewall dynamic_blacklist { 1.2.3.4 timeout 1h }")
             lines.append("\tset dynamic_blacklist {")
             lines.append("\t\ttype ipv4_addr;")
+            lines.append("\t\tflags timeout;")
+            lines.append("\t}")
+        if "dynamic_blacklist_v6" not in declared_sets:
+            lines.append("")
+            lines.append("\t# Dynamic blacklist (IPv6) — add entries at runtime:")
+            lines.append("\t# nft add element inet shorewall dynamic_blacklist_v6 { 2001:db8::1 timeout 1h }")
+            lines.append("\tset dynamic_blacklist_v6 {")
+            lines.append("\t\ttype ipv6_addr;")
             lines.append("\t\tflags timeout;")
             lines.append("\t}")
 

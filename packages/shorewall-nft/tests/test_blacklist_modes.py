@@ -153,6 +153,93 @@ class TestDynamicBlacklistDisconnect:
         assert "sw_dynamic-blacklist" in ir.chains
 
 
+# ── v6 sibling parity (audit gap closure) ────────────────────────────────────
+
+
+class TestDynamicBlacklistV6Parity:
+    """The dynamic-blacklist chain + disconnect rules must emit a v6 sibling.
+
+    Surfaced by the v4-vs-v6 emit-parity audit at
+    `tmp/v4-v6-parity-audit/AUDIT.md` — the chain previously held only an
+    `ip saddr @dynamic_blacklist` DROP rule, so a blacklisted IPv6 source
+    bypassed the entire mechanism. Closure: a parallel `ip6 saddr
+    @dynamic_blacklist_v6` rule sits next to its v4 sibling, and the
+    emitter declares both sets when the flag is on.
+    """
+
+    @pytest.mark.parametrize("mode", ["Yes", "ipset-only", "ipset,disconnect"])
+    def test_chain_has_v6_drop_rule(self, mode):
+        ir = _ir_with_forward(DYNAMIC_BLACKLIST=mode)
+        create_dynamic_blacklist(ir, ir.settings)
+        chain = ir.chains["sw_dynamic-blacklist"]
+        assert any(
+            r.verdict == Verdict.DROP
+            and any(m.field == "ip6 saddr"
+                    and "@dynamic_blacklist_v6" in m.value
+                    for m in r.matches)
+            for r in chain.rules
+        ), (
+            f"mode={mode!r}: sw_dynamic-blacklist chain must hold a "
+            "ip6 saddr @dynamic_blacklist_v6 DROP rule"
+        )
+
+    @pytest.mark.parametrize("mode", ["Yes", "ipset-only"])
+    def test_chain_has_both_v4_and_v6_drop_rules(self, mode):
+        ir = FirewallIR()
+        ir.settings["DYNAMIC_BLACKLIST"] = mode
+        create_dynamic_blacklist(ir, ir.settings)
+        chain = ir.chains["sw_dynamic-blacklist"]
+        v4 = sum(
+            1 for r in chain.rules
+            if any(m.field == "ip saddr" and "@dynamic_blacklist" == m.value.split("_v6")[0].rstrip("@")
+                   for m in r.matches)
+        )
+        v6 = sum(
+            1 for r in chain.rules
+            if any(m.field == "ip6 saddr" and "@dynamic_blacklist_v6" in m.value
+                   for m in r.matches)
+        )
+        # 1 v4 + 1 v6 — exactly one DROP rule per family.
+        assert v4 == 1 and v6 == 1, f"mode={mode!r}: chain rules={chain.rules!r}"
+
+    @pytest.mark.parametrize("mode", ["ipset,disconnect", "ipset,disconnect-src"])
+    def test_disconnect_inserts_both_families_in_forward(self, mode):
+        ir = _ir_with_forward(DYNAMIC_BLACKLIST=mode)
+        create_dynamic_blacklist(ir, ir.settings)
+        forward_rules = ir.chains["forward"].rules
+        # Both v4 and v6 disconnect rules must be at the top of the
+        # forward chain. v4 sits at index 0 (preserves the existing
+        # contract); v6 at index 1.
+        assert len(forward_rules) >= 2
+        v4_rule, v6_rule = forward_rules[0], forward_rules[1]
+        assert any(m.field == "ip saddr" and m.value == "@dynamic_blacklist"
+                   for m in v4_rule.matches)
+        assert any(m.field == "ip6 saddr"
+                   and m.value == "@dynamic_blacklist_v6"
+                   for m in v6_rule.matches)
+        # Both must drop established flows.
+        for r in (v4_rule, v6_rule):
+            assert r.verdict == Verdict.DROP
+            assert any(m.field == "ct state" and "established" in m.value
+                       for m in r.matches)
+
+
+class TestDynamicBlacklistEmitDeclaresBothSets:
+    """The emitter must declare BOTH dynamic_blacklist sets when the flag is on."""
+
+    def test_emit_declares_v4_and_v6_sets(self):
+        from shorewall_nft.nft.emitter import emit_nft
+
+        ir = FirewallIR()
+        ir.settings["DYNAMIC_BLACKLIST"] = "Yes"
+        create_dynamic_blacklist(ir, ir.settings)
+        out = emit_nft(ir)
+        assert "set dynamic_blacklist {" in out
+        assert "type ipv4_addr;" in out
+        assert "set dynamic_blacklist_v6 {" in out
+        assert "type ipv6_addr;" in out
+
+
 # ── BLACKLIST file processing ────────────────────────────────────────────────
 
 

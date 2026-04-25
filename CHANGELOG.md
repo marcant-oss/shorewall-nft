@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-04-25 — DYNAMIC_BLACKLIST IPv6 gap)
+
+* The dynamic-blacklist mechanism now emits a v6 sibling rule and
+  set: a blacklisted IPv6 source previously bypassed the entire
+  drop chain because only ``ip saddr @dynamic_blacklist`` was
+  emitted. Closure: the ``sw_dynamic-blacklist`` chain now holds
+  one DROP rule per family (``ip saddr @dynamic_blacklist`` plus
+  ``ip6 saddr @dynamic_blacklist_v6``); the emitter declares both
+  sets when ``DYNAMIC_BLACKLIST`` is enabled. The same v6 sibling
+  is added to the forward-chain disconnect rule under the
+  ``ipset,disconnect`` and ``ipset,disconnect-src`` modes.
+* Operators populate the IPv6 set the same way as the v4 set:
+  ``nft add element inet shorewall dynamic_blacklist_v6
+  { 2001:db8::1 timeout 1h }``.
+* Surfaced by the v4-vs-v6 emit-parity audit at
+  ``tmp/v4-v6-parity-audit/AUDIT.md``.
+
 ### Added (2026-04-25 — SECMARK / WP-F2)
 
 * **``secmarks`` file is now compiled** (was: parsed and silently
