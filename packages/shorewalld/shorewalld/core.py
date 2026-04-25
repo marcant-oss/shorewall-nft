@@ -21,7 +21,6 @@ import os
 import signal
 import socket
 import sys
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -112,106 +111,7 @@ def _merge_dns_registries(
 class Daemon:
     """shorewalld top-level. One instance per process."""
 
-    def __init__(
-        self,
-        config: DaemonConfig | None = None,
-        *,
-        # Legacy kwargs — deprecated; pass a DaemonConfig instead.
-        prom_host: str | None = None,
-        prom_port: int | None = None,
-        api_socket: str | None = None,
-        netns_spec: list[str] | str | None = None,
-        scrape_interval: float | None = None,
-        reprobe_interval: float | None = None,
-        allowlist_file: Path | None = None,
-        pbdns_socket: str | None = None,
-        pbdns_tcp: str | None = None,
-        socket_mode: int | None = None,
-        socket_owner: str | int | None = None,
-        socket_group: str | int | None = None,
-        peer_bind_host: str | None = None,
-        peer_bind_port: int | None = None,
-        peer_host: str | None = None,
-        peer_port: int | None = None,
-        peer_auth_key_file: Path | None = None,
-        peer_heartbeat_interval: float = 5.0,
-        state_dir: Path | None = None,
-        state_enabled: bool = True,
-        state_no_load: bool = False,
-        state_flush: bool = False,
-        instances: list[str] | None = None,
-        control_socket: str | None = None,
-        control_socket_netns: str | None = None,
-        iplist_configs: list[Any] | None = None,
-        enable_vrrp_collector: bool = False,
-        vrrp_snmp_enabled: bool = False,
-        vrrp_snmp_host: str = "127.0.0.1",
-        vrrp_snmp_port: int = 161,
-        vrrp_snmp_community: str = "public",
-        vrrp_snmp_timeout: float = 1.0,
-        dns_dedup_refresh_threshold: float = 0.5,
-        batch_window_seconds: float = 0.010,
-    ) -> None:
-        if config is not None and prom_host is not None:
-            # Mixed call: config + kwargs.  kwargs are silently ignored but
-            # callers should be told they're doing something unexpected.
-            warnings.warn(
-                "Daemon() received both a DaemonConfig and legacy kwargs; "
-                "kwargs are ignored — pass only config=DaemonConfig(...)",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        if config is None:
-            # Legacy kwargs path — build a DaemonConfig from the kwargs so
-            # the rest of the class can read from self._config uniformly.
-            if prom_host is None or prom_port is None or netns_spec is None:
-                raise TypeError(
-                    "Daemon() requires prom_host, prom_port, and netns_spec "
-                    "when called without a DaemonConfig")
-            warnings.warn(
-                "Daemon() kwargs are deprecated; pass a DaemonConfig instead. "
-                "Example: Daemon(config=DaemonConfig(prom_host=..., ...))",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            config = DaemonConfig(
-                prom_host=prom_host,
-                prom_port=prom_port,
-                api_socket=api_socket,
-                netns_spec=netns_spec,
-                scrape_interval=scrape_interval if scrape_interval is not None else 30.0,
-                reprobe_interval=reprobe_interval if reprobe_interval is not None else 300.0,
-                allowlist_file=allowlist_file,
-                pbdns_socket=pbdns_socket,
-                pbdns_tcp=pbdns_tcp,
-                socket_mode=socket_mode,
-                socket_owner=socket_owner,
-                socket_group=socket_group,
-                peer_bind_host=peer_bind_host,
-                peer_bind_port=peer_bind_port,
-                peer_host=peer_host,
-                peer_port=peer_port,
-                peer_auth_key_file=peer_auth_key_file,
-                peer_heartbeat_interval=peer_heartbeat_interval,
-                state_dir=state_dir,
-                state_enabled=state_enabled,
-                state_no_load=state_no_load,
-                state_flush=state_flush,
-                instances=tuple(instances or []),
-                control_socket=control_socket,
-                control_socket_netns=control_socket_netns,
-                iplist_configs=tuple(iplist_configs or []),
-                enable_vrrp_collector=enable_vrrp_collector,
-                vrrp_snmp_enabled=vrrp_snmp_enabled,
-                vrrp_snmp_host=vrrp_snmp_host,
-                vrrp_snmp_port=vrrp_snmp_port,
-                vrrp_snmp_community=vrrp_snmp_community,
-                vrrp_snmp_timeout=vrrp_snmp_timeout,
-                dns_dedup_refresh_threshold=dns_dedup_refresh_threshold,
-                batch_window_seconds=batch_window_seconds,
-            )
-
+    def __init__(self, config: DaemonConfig) -> None:
         self._config = config
 
         self._loop: asyncio.AbstractEventLoop | None = None

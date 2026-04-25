@@ -218,12 +218,12 @@ def test_daemon_with_allowlist_builds_pipeline(
         monkeypatch.setattr(core_mod, "WorkerRouter", _stub_router_ctor)
 
         state_dir = tmp_path / "state"
-        d = Daemon(
+        d = Daemon(config=DaemonConfig(
             prom_host="127.0.0.1", prom_port=0, api_socket=None,
             netns_spec=[""], scrape_interval=30.0, reprobe_interval=300.0,
             allowlist_file=allowlist_file,
             state_dir=state_dir,
-        )
+        ))
 
         async def trigger_stop():
             # Give _start_dns_pipeline time to finish wiring.

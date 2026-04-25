@@ -3,15 +3,12 @@
 Covers:
 - DaemonConfig is frozen (FrozenInstanceError on assign).
 - DaemonConfig uses slots (no __dict__; undeclared attr raises AttributeError).
-- Daemon(config=DaemonConfig(...)) uses the typed path — no DeprecationWarning.
-- Daemon(prom_host=...) kwargs path emits DeprecationWarning.
-- Mixed call (config= + kwargs) emits DeprecationWarning and ignores kwargs.
+- Daemon(config=DaemonConfig(...)) is the only construction path.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import warnings
 
 import pytest
 
@@ -99,57 +96,13 @@ def test_daemonconfig_defaults_reasonable():
 # ── Daemon integration ─────────────────────────────────────────────────────
 
 
-def test_daemon_config_path_no_deprecation_warning():
-    """Daemon(config=DaemonConfig(...)) must NOT emit DeprecationWarning."""
+def test_daemon_config_path():
+    """Daemon(config=DaemonConfig(...)) is the canonical construction path."""
     from shorewalld.core import Daemon
 
     cfg = _minimal_config()
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
-        # Must not raise — the config path is the clean path.
-        d = Daemon(config=cfg)
+    d = Daemon(config=cfg)
     assert d._config is cfg
-
-
-def test_daemon_kwargs_path_emits_deprecation_warning():
-    """Daemon(prom_host=..., ...) legacy kwargs must emit DeprecationWarning."""
-    from shorewalld.core import Daemon
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        _d = Daemon(
-            prom_host="127.0.0.1",
-            prom_port=9748,
-            api_socket=None,
-            netns_spec=[""],
-            scrape_interval=30.0,
-            reprobe_interval=300.0,
-        )
-
-    dep_warnings = [
-        w for w in caught
-        if issubclass(w.category, DeprecationWarning)
-        and "DaemonConfig" in str(w.message)
-    ]
-    assert dep_warnings, (
-        "Expected a DeprecationWarning about DaemonConfig from the kwargs path")
-
-
-def test_daemon_mixed_call_emits_deprecation_warning():
-    """Daemon(config=..., prom_host=...) mixed call must emit DeprecationWarning."""
-    from shorewalld.core import Daemon
-
-    cfg = _minimal_config()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        _d = Daemon(config=cfg, prom_host="10.0.0.1")
-
-    dep_warnings = [
-        w for w in caught
-        if issubclass(w.category, DeprecationWarning)
-    ]
-    assert dep_warnings, (
-        "Expected a DeprecationWarning for mixed config= + kwargs call")
 
 
 def test_daemon_config_fields_accessible_via_properties():
@@ -168,38 +121,9 @@ def test_daemon_config_fields_accessible_via_properties():
     assert d._config is cfg
 
 
-def test_daemon_kwargs_path_constructs_correct_config():
-    """Legacy kwargs path builds a DaemonConfig with matching values."""
+def test_daemon_requires_config():
+    """Daemon() without config= must raise TypeError."""
     from shorewalld.core import Daemon
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        d = Daemon(
-            prom_host="127.0.0.1",
-            prom_port=9748,
-            api_socket="/tmp/test.sock",
-            netns_spec=["fw"],
-            scrape_interval=60.0,
-            reprobe_interval=120.0,
-            dns_dedup_refresh_threshold=0.7,
-            batch_window_seconds=0.020,
-        )
-
-    assert d._config.prom_host == "127.0.0.1"
-    assert d._config.prom_port == 9748
-    assert d._config.api_socket == "/tmp/test.sock"
-    assert d._config.netns_spec == ["fw"]
-    assert d._config.scrape_interval == 60.0
-    assert d._config.reprobe_interval == 120.0
-    assert d._config.dns_dedup_refresh_threshold == 0.7
-    assert d._config.batch_window_seconds == 0.020
-
-
-def test_daemon_missing_required_kwargs_raises():
-    """Legacy kwargs path without prom_host/prom_port/netns_spec must raise TypeError."""
-    from shorewalld.core import Daemon
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        with pytest.raises(TypeError, match="prom_host"):
-            Daemon()
+    with pytest.raises(TypeError):
+        Daemon()  # type: ignore[call-arg]

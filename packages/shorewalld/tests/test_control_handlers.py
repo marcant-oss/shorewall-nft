@@ -320,16 +320,17 @@ class TestShutdownErrorAggregation:
     def test_shutdown_aggregates_errors_and_exits_nonzero(self, monkeypatch):
         """A broken subsystem must not suppress other shutdown steps."""
         from shorewalld.core import Daemon
+        from shorewalld.daemon_config import DaemonConfig
 
         # Build a minimal daemon without starting the event loop.
-        d = Daemon(
+        d = Daemon(config=DaemonConfig(
             prom_host="127.0.0.1",
             prom_port=0,
             api_socket=None,
             netns_spec=[""],
             scrape_interval=30.0,
             reprobe_interval=300.0,
-        )
+        ))
 
         # Arm the stop event so _shutdown() doesn't deadlock.
         loop = asyncio.new_event_loop()
@@ -384,15 +385,16 @@ class TestShutdownErrorAggregation:
     def test_clean_shutdown_does_not_exit_nonzero(self, monkeypatch):
         """When all steps succeed, sys.exit must NOT be called."""
         from shorewalld.core import Daemon
+        from shorewalld.daemon_config import DaemonConfig
 
-        d = Daemon(
+        d = Daemon(config=DaemonConfig(
             prom_host="127.0.0.1",
             prom_port=0,
             api_socket=None,
             netns_spec=[""],
             scrape_interval=30.0,
             reprobe_interval=300.0,
-        )
+        ))
 
         exit_codes: list[int] = []
         monkeypatch.setattr(sys, "exit", lambda c: exit_codes.append(c))

@@ -11,6 +11,7 @@ from shorewalld.cli import (
     build_parser,
 )
 from shorewalld.core import Daemon
+from shorewalld.daemon_config import DaemonConfig
 
 # ── CLI parsing ───────────────────────────────────────────────────────
 
@@ -94,7 +95,7 @@ def _make_daemon(**overrides) -> Daemon:
         reprobe_interval=300.0,
     )
     defaults.update(overrides)
-    return Daemon(**defaults)
+    return Daemon(config=DaemonConfig(**defaults))
 
 
 def test_daemon_constructs():
