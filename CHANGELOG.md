@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-04-25
+
+**Highlights** — libnftnl-integration phases 0-7 closed: SYNPROXY,
+TPROXY, DUP, DYNSET, EXTHDR, QUOTA, CONNLIMIT (action form),
+SECMARK (WP-F2), and the dynamic-blacklist IPv6 sibling all wired
+behind ``has_*`` capability probes + ``--strict-features`` gating.
+Phase-1 capability probe gaps closed; per-family policy split and
+v6-only macro leak fixes from the simlab cross-check pass also
+landed. simlab grew an NftOracle for nft-native feature
+classification (probe class I — SYNPROXY) plus the feature-coverage
+skip-list documentation in ``shorewall-nft-simlab(8)``.
+
 ### Fixed (2026-04-25 — DYNAMIC_BLACKLIST IPv6 gap)
 
 * The dynamic-blacklist mechanism now emits a v6 sibling rule and

@@ -1,3 +1,27 @@
+shorewall-nft (1.11.0-1) unstable; urgency=medium
+
+  * Release 1.11.0: libnftnl-integration phases 0-7 closed.
+    New rule-file ACTION verdicts: SYNPROXY (TCP SYN-cookie engine),
+    QUOTA (byte-budget cap), CONNLIMIT(N[:mask]) (concurrent-connection
+    cap, action form). New mangle-file ACTIONs: TPROXY (transparent-
+    proxy divert) and DUP (tap-copy). New parser surface: ?DYNSET
+    directive (auto-blacklist on probe), HEADERS column (IPv6
+    extension-header match), and the previously-ignored secmarks
+    file is now compiled (WP-F2: SELinux MAC labelling via named
+    secmark objects + per-rule meta secmark set). Dynamic blacklist
+    chain now emits an IPv6 sibling rule + dynamic_blacklist_v6 set
+    so blacklisted IPv6 sources are dropped (the v4-only emit
+    pre-1.11.0 silently bypassed v6). Capability probe coverage
+    closed for has_masquerade, has_redirect, has_tproxy_stmt,
+    has_synproxy_stmt, has_synproxy_obj, has_flow_offload,
+    has_dup, has_fwd, has_exthdr, has_dynset, has_connlimit,
+    has_secmark_obj. --strict-features now catches every nft-native
+    feature at compile time. simlab grew an NftOracle for nft-only
+    feature classification (probe class I — SYNPROXY half-open
+    SYN cookie intercept).
+
+ -- André Valentin <avalentin@marcant.net>  Sat, 25 Apr 2026 22:00:00 +0000
+
 shorewall-nft (1.10.2-1) unstable; urgency=medium
 
   * Release 1.10.2: Phase 6 upstream-Shorewall config-coverage parity.
