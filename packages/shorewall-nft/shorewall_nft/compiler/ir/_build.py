@@ -226,6 +226,21 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
                 verdict=Verdict.JUMP,
                 verdict_args="sw_DropSmurfs",
             ))
+        # Dynamic-blacklist jump — every iptables zone-pair chain has
+        # ``-A <chain> --ctstate INVALID,NEW,UNTRACKED -j dynamic``
+        # so runtime-added blacklist entries (``shorewall blacklist
+        # add <IP>``) are enforced for forwarded traffic, not just on
+        # the input chain. Without it, dynamically blacklisted
+        # addresses can still establish forwarded flows. Skip the
+        # jump when DYNAMIC_BLACKLIST=No keeps the chain absent.
+        if ("sw_dynamic-blacklist" in ir.chains
+                and ir.chains["sw_dynamic-blacklist"].rules):
+            ct_rules.append(Rule(
+                matches=[Match(field="ct state",
+                               value="invalid,new,untracked")],
+                verdict=Verdict.JUMP,
+                verdict_args="sw_dynamic-blacklist",
+            ))
         chain.rules = ct_rules + list(chain.rules)
 
 
