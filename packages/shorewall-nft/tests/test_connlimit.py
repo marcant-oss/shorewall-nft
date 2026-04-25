@@ -135,3 +135,74 @@ class TestNoConnlimit:
         rule = Rule(connlimit="", verdict=Verdict.ACCEPT)
         stmts = _emit_rule_lines(rule)
         assert "ct count" not in stmts[0]
+
+
+# ── action-form parser + capability gate (post-libnftnl follow-up) ─────────
+
+
+import shutil  # noqa: E402
+
+from shorewall_nft.compiler.ir import build_ir  # noqa: E402
+from shorewall_nft.compiler.ir.rules import _parse_connlimit_params  # noqa: E402
+from shorewall_nft.config.parser import load_config  # noqa: E402
+from shorewall_nft.nft.emitter import emit_nft  # noqa: E402
+
+MINIMAL_DIR = (
+    __import__("pathlib").Path(__file__).parent / "configs" / "minimal"
+)
+
+
+class TestParseConnlimitParams:
+    def test_bare_count(self):
+        assert _parse_connlimit_params("10") == "10"
+
+    def test_count_with_mask(self):
+        assert _parse_connlimit_params("50:24") == "50:24"
+
+    def test_invalid_returns_none(self):
+        assert _parse_connlimit_params("") is None
+        assert _parse_connlimit_params("notanumber") is None
+        assert _parse_connlimit_params("10:") is None
+        assert _parse_connlimit_params("10:24:5") is None
+
+
+def _config_with_rule(tmp_path, rule_line: str):
+    cfg = tmp_path / "cfg"
+    shutil.copytree(MINIMAL_DIR, cfg)
+    rules = cfg / "rules"
+    rules.write_text(rules.read_text() + "\n" + rule_line + "\n")
+    return cfg
+
+
+class TestConnlimitActionForm:
+    def test_action_emits_ct_count(self, tmp_path):
+        cfg = _config_with_rule(tmp_path, "CONNLIMIT(10)\tloc\tnet\ttcp\t80")
+        ir = build_ir(load_config(cfg))
+        out = emit_nft(ir)
+        assert "ct count over 10" in out
+        caps_required = {r.capability for r in ir.required_features}
+        assert "has_connlimit" in caps_required
+
+    def test_action_with_mask_emits_saddr_match(self, tmp_path):
+        cfg = _config_with_rule(tmp_path, "CONNLIMIT(50:24)\tloc\tnet\ttcp\t80")
+        ir = build_ir(load_config(cfg))
+        out = emit_nft(ir)
+        assert "ip saddr and 255.255.255.0 ct count over 50" in out
+
+    def test_column_form_registers_capability(self, tmp_path):
+        """The classic CONNLIMIT *column* now also registers has_connlimit."""
+        rule = "ACCEPT\tloc\tnet\ttcp\t80\t-\t-\t-\t-\t-\t10:24"
+        cfg = _config_with_rule(tmp_path, rule)
+        ir = build_ir(load_config(cfg))
+        out = emit_nft(ir)
+        assert "ct count over 10" in out
+        caps_required = {r.capability for r in ir.required_features}
+        assert "has_connlimit" in caps_required
+
+    def test_malformed_action_does_not_register_capability(self, tmp_path):
+        """``CONNLIMIT(bogus)`` falls through; capability is NOT registered."""
+        cfg = _config_with_rule(
+            tmp_path, "CONNLIMIT(bogus)\tloc\tnet\ttcp\t80")
+        ir = build_ir(load_config(cfg))
+        caps_required = {r.capability for r in ir.required_features}
+        assert "has_connlimit" not in caps_required

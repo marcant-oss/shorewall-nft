@@ -168,6 +168,50 @@ Example:
 QUOTA(500m)  net  $FW  tcp  80,443
 .fi
 .RE
+.TP
+.B CONNLIMIT[\fI(N[:mask])\fR]
+Concurrent-connection cap.  Drops further connections once
+.I N
+existing flows match the rule's 5-tuple from the same source.  Two
+forms:
+.RS
+.IP \(bu 2
+.B CONNLIMIT(N)
+— per-source-IP limit; the (N+1)th concurrent connection is
+dropped.
+.IP \(bu 2
+.B CONNLIMIT(N:mask)
+—
+.I mask
+is an IPv4 CIDR prefix length (e.g.
+.BR 24 ).
+The kernel groups source addresses by prefix and applies the count
+per group.
+.B CONNLIMIT(50:24)
+limits 50 concurrent connections per /24.
+.RE
+Action form mirrors the existing
+.B CONNLIMIT
+column (see column table above): both produce
+.B ct count over <N>
+and, with a mask, prepend
+.BR "ip saddr and <netmask>" .
+The action form additionally drops the over-limit connection; column
+form lets the rule's own ACTION column decide the verdict.
+Gated by
+.B has_connlimit
+(kernel ≥ 4.18);
+.B \-\-strict\-features
+errors at compile time on kernels that lack the
+.B ct count
+match.
+Example:
+.RS
+.nf
+CONNLIMIT(10)     net  $FW  tcp  22
+CONNLIMIT(50:24)  net  $FW  tcp  443
+.fi
+.RE
 
 .SS SOURCE / DEST syntax
 .TP

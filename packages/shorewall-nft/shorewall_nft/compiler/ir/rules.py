@@ -351,6 +351,33 @@ def _parse_quota_params(params: str):
     return QuotaVerdict(bytes_count=count, unit="bytes")
 
 
+def _parse_connlimit_params(params: str) -> str | None:
+    """Parse the body of a ``CONNLIMIT(...)`` action.
+
+    Returns the ``count`` or ``count:mask`` string the IR
+    ``Rule.connlimit`` field expects, or ``None`` on a malformed
+    body so the caller can fall through to the unknown-action path.
+
+    Accepted forms (matching the existing CONNLIMIT *column* syntax
+    in :manpage:`shorewall-nft-rules(5)` so the action and column
+    forms stay symmetric):
+
+    * ``CONNLIMIT(N)``        — drop when concurrent count exceeds N
+    * ``CONNLIMIT(N:mask)``   — same, but bucket source IPs by IPv4
+      prefix length (e.g. ``50:24`` → 50 connections per /24)
+    """
+    raw = params.strip()
+    if not raw:
+        return None
+    import re as _re
+    m = _re.match(r"^(\d+)(?::(\d+))?$", raw)
+    if not m:
+        return None
+    count = m.group(1)
+    mask = m.group(2)
+    return f"{count}:{mask}" if mask else count
+
+
 def _expand_zone_list(spec: str, zones: ZoneModel) -> list[str]:
     """Expand a comma-separated zone list in a source/dest spec.
 
@@ -647,6 +674,11 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
         if user == "-": user = None
         if mark == "-": mark = None
         if connlimit == "-": connlimit = None
+        if connlimit is not None:
+            ir.require_capability(
+                "has_connlimit", "CONNLIMIT column",
+                source=f"{line.file}:{line.lineno}",
+            )
         if time_col == "-": time_col = None
         if headers == "-": headers = None
         if switch == "-": switch = None
@@ -688,6 +720,26 @@ def _process_rules(ir: FirewallIR, rule_lines: list[ConfigLine],
                           line, verdict_args=quota_verdict)
                 continue
             # Malformed QUOTA — fall through (will fail with unknown action)
+
+        if action_str.startswith("CONNLIMIT("):
+            params = action_str[len("CONNLIMIT("):].rstrip(")")
+            connlimit_spec = _parse_connlimit_params(params)
+            if connlimit_spec is not None:
+                ir.require_capability(
+                    "has_connlimit", "CONNLIMIT action",
+                    source=f"{line.file}:{line.lineno}",
+                )
+                # CONNLIMIT(N[:mask]) is a Shorewall convenience action:
+                # add the ct-count match to the rule and DROP when the
+                # count is exceeded. The column form is preserved by
+                # passing connlimit= so the existing emitter path at
+                # nft/emitter.py:1407 produces ``ct count over N`` for
+                # both shapes.
+                _add_rule(ir, zones, Verdict.DROP, None,
+                          source_spec, dest_spec, proto, dport, sport,
+                          line, connlimit=connlimit_spec)
+                continue
+            # Malformed CONNLIMIT — fall through to unknown-action error
 
         # Parse action — may be macro like SSH(ACCEPT), Ping/ACCEPT, or plain ACCEPT
         macro_match = _MACRO_RE.match(action_str) or _SLASH_MACRO_RE.match(action_str)

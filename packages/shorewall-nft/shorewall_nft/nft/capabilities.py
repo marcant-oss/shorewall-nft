@@ -95,6 +95,7 @@ class NftCapabilities:
     has_fwd: bool = False
     has_exthdr: bool = False
     has_dynset: bool = False
+    has_connlimit: bool = False
 
     # Set features
     has_interval_sets: bool = False
@@ -179,6 +180,10 @@ class NftCapabilities:
         caps.has_notrack = _probe_rule("notrack")
         caps.has_dup     = _probe_rule("dup to 10.0.0.1")
         caps.has_queue   = _probe_rule("queue num 0")
+        # ``ct count over N`` — the kernel's connlimit match. Available
+        # since 4.18; the IR ``Rule.connlimit`` field uses this and the
+        # ``CONNLIMIT(N[:mask])`` action requires it.
+        caps.has_connlimit = _probe_rule("ct count over 5 drop")
         # ``exthdr`` matches IPv6 extension headers; ``frag`` is widely
         # supported and a safe canary for the family. Probes both the
         # ``exists`` and ``missing`` variants in one rule.
