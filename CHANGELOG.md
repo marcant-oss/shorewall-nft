@@ -29,6 +29,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning. See ``shorewall-nft-secmarks(5)`` LIMITATIONS for the
   deferred shape and rationale.
 
+### Changed (2026-04-25 — shorewalld internals: typed config + run() phase-split)
+
+* **shorewalld** ``Daemon.__init__`` now takes only
+  ``config: DaemonConfig`` — the legacy 38-kwarg back-compat shim
+  (with its DeprecationWarning) is removed. External Python embedders
+  who constructed ``Daemon(prom_host=…, prom_port=…, …)`` directly
+  must migrate to ``Daemon(config=DaemonConfig(prom_host=…, …))``.
+  The ``shorewalld`` CLI is unaffected (it has used the typed path
+  since v1.4).
+* **shorewalld** ``Daemon.run()`` is now a thin orchestrator: the
+  scrape stack, optional VRRP collectors, and bootstrap-allowlist
+  resolution have been factored into ``_build_scrape_stack``,
+  ``_register_optional_vrrp_collectors``, and
+  ``_resolve_bootstrap_allowlist`` respectively. No behavioural
+  change; pure clarity refactor.
+* **shorewalld** perf: lock-free ``frozenset[bytes]`` allowlist
+  snapshot for the dnstap/PBDNSMessage decoder peek, memoryview-based
+  qname label walk (no per-label allocation), bounded peer dicts
+  (LRU origin_node cap 64, oldest-started snapshot-rx cap 32), and a
+  new ``shorewalld_setwriter_batches_open`` gauge.
+
 ### Added (2026-04-25 — CONNLIMIT action form + capability gate)
 
 * **``CONNLIMIT(N[:mask])``** — concurrent-connection cap action.

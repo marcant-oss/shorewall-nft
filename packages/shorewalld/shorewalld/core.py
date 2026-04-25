@@ -217,56 +217,8 @@ class Daemon:
             self._config.netns_spec,
         )
 
-        # ── subsystem startup ─────────────────────────────────────
-        self._nft = NftInterface()
-        self._registry = ShorewalldRegistry()
-        self._scraper = NftScraper(self._nft, ttl_s=self._config.scrape_interval)
-        # Create the worker router early (tracker attaches later
-        # during DNS-pipeline bootstrap) so the exporter's /proc-reading
-        # collectors can delegate their reads to netns-pinned workers
-        # from the first scrape onwards. Workers are forked lazily on
-        # first use (scrape or SetWriter dispatch).
-        self._router = WorkerRouter(loop=self._loop)
-        self._profile_builder = ProfileBuilder(
-            self._nft, self._registry, self._scraper, self._router)
-
-        netns_list = resolve_netns_list(self._config.netns_spec)
-        self._profile_builder.build(netns_list)
-        self._profile_builder.reprobe()
-        log.info(
-            "shorewalld built %d netns profile(s): %s",
-            len(self._profile_builder.profiles),
-            list(self._profile_builder.profiles),
-        )
-
-        # Register the rtnl-handle-count gauge (process-wide singleton).
-        from .collectors._shared import RtnlHandlesCollector
-        self._registry.add(RtnlHandlesCollector())  # type: ignore[arg-type]
-
-        # Optional VRRP D-Bus collector (opt-in, requires jeepney).
-        if self._config.enable_vrrp_collector:
-            from .collectors.vrrp import VrrpCollector as _VrrpCollector
-            from .collectors.vrrp import VrrpSnmpConfig as _VrrpSnmpConfig
-            _snmp_cfg: _VrrpSnmpConfig | None = None
-            if self._config.vrrp_snmp_enabled:
-                _snmp_cfg = _VrrpSnmpConfig(
-                    host=self._config.vrrp_snmp_host,
-                    port=self._config.vrrp_snmp_port,
-                    community=self._config.vrrp_snmp_community,
-                    timeout=self._config.vrrp_snmp_timeout,
-                )
-                log.info(
-                    "shorewalld VRRP SNMP augmentation enabled: "
-                    "%s:%d community=%r timeout=%.1fs",
-                    self._config.vrrp_snmp_host, self._config.vrrp_snmp_port,
-                    self._config.vrrp_snmp_community, self._config.vrrp_snmp_timeout,
-                )
-            _vc = _VrrpCollector(
-                snmp_config=_snmp_cfg,
-                keepalived_snmp_unix=self._config.keepalived_snmp_unix,
-            )
-            self._registry.add(_vc)
-            log.info("shorewalld VRRP D-Bus collector registered")
+        netns_list = self._build_scrape_stack()
+        self._register_optional_vrrp_collectors()
 
         # keepalived SNMP/MIB integration — only when KEEPALIVED_SNMP_UNIX
         # is configured. Falls through to the legacy VrrpCollector path
@@ -289,16 +241,7 @@ class Daemon:
         # (pbdns / peer link / state / reload monitor) layers on top.
         # Started BEFORE the dnstap server so the DnstapServer can
         # pick up the tracker bridge for its routing path.
-        #
-        # When --instance specs are given without --allowlist-file,
-        # bootstrap the pipeline from the first instance's allowlist
-        # path so the tracker is available for the InstanceManager.
-        bootstrap_allowlist = self._config.allowlist_file
-        if bootstrap_allowlist is None and self._config.instances:
-            first_spec = parse_instance_spec(self._config.instances[0])
-            if first_spec.allowlist_path.exists():
-                bootstrap_allowlist = first_spec.allowlist_path
-
+        bootstrap_allowlist = self._resolve_bootstrap_allowlist()
         if bootstrap_allowlist is not None:
             await self._start_dns_pipeline(netns_list, bootstrap_allowlist)
 
@@ -349,6 +292,81 @@ class Daemon:
         finally:
             await self._async_shutdown()
         return 0
+
+    def _build_scrape_stack(self) -> list[str]:
+        """Build the always-on scrape stack and return the resolved netns list.
+
+        The worker router is created early (tracker attaches later during
+        DNS-pipeline bootstrap) so the exporter's /proc-reading collectors
+        can delegate their reads to netns-pinned workers from the first
+        scrape onwards. Workers are forked lazily on first use.
+        """
+        assert self._loop is not None
+
+        self._nft = NftInterface()
+        self._registry = ShorewalldRegistry()
+        self._scraper = NftScraper(self._nft, ttl_s=self._config.scrape_interval)
+        self._router = WorkerRouter(loop=self._loop)
+        self._profile_builder = ProfileBuilder(
+            self._nft, self._registry, self._scraper, self._router)
+
+        netns_list = resolve_netns_list(self._config.netns_spec)
+        self._profile_builder.build(netns_list)
+        self._profile_builder.reprobe()
+        log.info(
+            "shorewalld built %d netns profile(s): %s",
+            len(self._profile_builder.profiles),
+            list(self._profile_builder.profiles),
+        )
+
+        from .collectors._shared import RtnlHandlesCollector
+        self._registry.add(RtnlHandlesCollector())  # type: ignore[arg-type]
+        return netns_list
+
+    def _register_optional_vrrp_collectors(self) -> None:
+        """Register the VRRP D-Bus collector if opt-in via config."""
+        if not self._config.enable_vrrp_collector:
+            return
+        assert self._registry is not None
+
+        from .collectors.vrrp import VrrpCollector as _VrrpCollector
+        from .collectors.vrrp import VrrpSnmpConfig as _VrrpSnmpConfig
+        snmp_cfg: _VrrpSnmpConfig | None = None
+        if self._config.vrrp_snmp_enabled:
+            snmp_cfg = _VrrpSnmpConfig(
+                host=self._config.vrrp_snmp_host,
+                port=self._config.vrrp_snmp_port,
+                community=self._config.vrrp_snmp_community,
+                timeout=self._config.vrrp_snmp_timeout,
+            )
+            log.info(
+                "shorewalld VRRP SNMP augmentation enabled: "
+                "%s:%d community=%r timeout=%.1fs",
+                self._config.vrrp_snmp_host, self._config.vrrp_snmp_port,
+                self._config.vrrp_snmp_community, self._config.vrrp_snmp_timeout,
+            )
+        self._registry.add(_VrrpCollector(
+            snmp_config=snmp_cfg,
+            keepalived_snmp_unix=self._config.keepalived_snmp_unix,
+        ))
+        log.info("shorewalld VRRP D-Bus collector registered")
+
+    def _resolve_bootstrap_allowlist(self) -> Path | None:
+        """Pick the allowlist file to bootstrap the DNS-set pipeline.
+
+        Prefers ``--allowlist-file`` when set. Otherwise, when only
+        ``--instance`` specs are given, falls back to the first instance's
+        allowlist path so the tracker is available for the InstanceManager
+        without operators having to repeat the path on the CLI.
+        """
+        if self._config.allowlist_file is not None:
+            return self._config.allowlist_file
+        if not self._config.instances:
+            return None
+        first_spec = parse_instance_spec(self._config.instances[0])
+        if first_spec.allowlist_path.exists():
+            return first_spec.allowlist_path
+        return None
 
     async def _start_dns_pipeline(
         self,
