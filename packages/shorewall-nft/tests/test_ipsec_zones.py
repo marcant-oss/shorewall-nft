@@ -214,24 +214,25 @@ def test_policy_clause_with_proto_direction_in():
     assert clause == "meta secpath exists"
 
 
-def test_policy_clause_with_mode_direction_out_returns_none():
-    """mode= on egress has no nft expression — returns None (caller skips).
+def test_policy_clause_with_mode_direction_out_uses_meta_ipsec_exists():
+    """mode= on egress without reqid/spi falls back to ``meta ipsec exists``.
 
     ``meta secpath`` is populated only during ingress xfrm decap; the
-    kernel rejects it on output hooks with ``Operation not supported``.
-    Without reqid/spi on the zone, there is no narrow ``ipsec out`` match
-    to fall back on, so the emitter drops the match entirely.
+    kernel rejects it on output hooks. ``meta ipsec exists`` is the
+    direction-agnostic existence check accepted by nft 1.1.x — coarser
+    than ``ipsec out reqid N`` but at least confines the rule to xfrm-
+    bound packets instead of leaving the match empty.
     """
     zones = _zones_with_ipsec(["mode=tunnel"])
     clause = _build_ipsec_policy_clause("vpn", zones, "out")
-    assert clause is None
+    assert clause == "meta ipsec exists"
 
 
-def test_policy_clause_no_opts_direction_out_returns_none():
-    """A bare ipsec zone on egress also falls through to None."""
+def test_policy_clause_no_opts_direction_out_uses_meta_ipsec_exists():
+    """A bare ipsec zone on egress also falls back to ``meta ipsec exists``."""
     zones = _zones_with_ipsec([])
     clause = _build_ipsec_policy_clause("vpn", zones, "out")
-    assert clause is None
+    assert clause == "meta ipsec exists"
 
 
 def test_policy_clause_with_reqid():
@@ -296,19 +297,21 @@ def test_inject_ipsec_policy_adds_match_when_dst_is_ipsec_with_reqid():
     assert last.value == "ipsec out reqid 42"
 
 
-def test_inject_ipsec_policy_skips_out_match_without_reqid():
-    """dst-ipsec zone without reqid/spi emits no egress match.
+def test_inject_ipsec_policy_out_without_reqid_uses_meta_ipsec_exists():
+    """dst-ipsec zone without reqid/spi appends ``meta ipsec exists``.
 
-    ``meta secpath`` is ingress-only in the kernel; without a narrow
-    ``ipsec out reqid N`` to fall back on, the compiler warns and
-    drops the match so the rule at least remains loadable.
+    ``meta secpath`` is ingress-only; ``meta ipsec exists`` is the
+    direction-agnostic existence check that confines the rule to
+    xfrm-bound packets. Coarser than ``ipsec out reqid N`` but
+    expressible without per-tunnel metadata.
     """
     zones = _zones_with_ipsec(["proto=esp"])
     rule = Rule()
     rule.matches.append(Match(field="meta l4proto", value="tcp"))
     _inject_ipsec_policy_match(rule, "fw", "vpn", zones)
-    assert len(rule.matches) == 1
-    assert rule.matches[0].field == "meta l4proto"
+    assert len(rule.matches) == 2
+    assert rule.matches[-1].field == "inline"
+    assert rule.matches[-1].value == "meta ipsec exists"
 
 
 def test_inject_ipsec_no_match_for_non_ipsec_zones():

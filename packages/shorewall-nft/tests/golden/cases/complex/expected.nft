@@ -468,7 +468,7 @@ table inet shorewall {
 	}
 
 	chain +nfset_abuse_v4-tunneled {
-		meta nfproto ipv4 drop
+		meta nfproto ipv4 meta ipsec exists drop
 	}
 
 	chain +nfset_abuse_v4-voice {
@@ -516,7 +516,7 @@ table inet shorewall {
 	}
 
 	chain +nfset_abuse_v6-tunneled {
-		meta nfproto ipv4 drop
+		meta nfproto ipv4 meta ipsec exists drop
 	}
 
 	chain +nfset_abuse_v6-voice {
@@ -1019,7 +1019,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
-		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
+		meta nfproto ipv4 meta l4proto icmp icmp type 8 meta ipsec exists accept
 		# dhcp:br0
 		meta l4proto udp udp dport { 67, 68 } accept
 		# dhcpv6:br0
@@ -1413,7 +1413,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
-		meta nfproto ipv4 meta l4proto icmp icmp type 8 accept
+		meta nfproto ipv4 meta l4proto icmp icmp type 8 meta ipsec exists accept
 		meter lograte_mgmt_tunneled { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:mgmt-tunneled:DROP: "
 		jump sw_Drop
 	}

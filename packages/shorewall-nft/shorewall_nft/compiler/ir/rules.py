@@ -15,11 +15,8 @@ config dir).  Both functions write into ``ir.macros`` on the
 
 from __future__ import annotations
 
-import logging
 import re
 from pathlib import Path
-
-_log = logging.getLogger("shorewall_nft.compiler.ir.rules")
 
 from shorewall_nft.compiler.ir._data import (
     FirewallIR,
@@ -1109,13 +1106,17 @@ def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
     ``direction`` must be ``"in"`` (traffic *from* the zone) or ``"out"``
     (traffic *to* the zone).
 
-    nftables 1.1.x exposes two IPsec match forms, each with its own
+    nftables 1.1.x exposes three IPsec match forms with overlapping
     scope:
 
     * ``meta secpath exists`` — matches any packet the kernel decoded
       via xfrm on **ingress**. Rejected by the kernel on egress hooks
       with ``Operation not supported`` because the secpath is populated
       during decap, not encap.
+    * ``meta ipsec exists`` — direction-agnostic existence check that
+      matches whenever a packet is/will be subject to an xfrm SA.
+      Works on egress too (validated on nft 1.1.1, kernel 6.11). The
+      cheap fallback when reqid/spi aren't known.
     * ``ipsec {in|out} [reqid N] [spi 0xN]`` — narrow SPD match. Works
       on both ingress (SA that decoded) and egress (SPD entry that
       will encap), but requires reqid/spi to narrow.
@@ -1124,10 +1125,9 @@ def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
 
     * ``direction="in"`` + no reqid/spi → ``meta secpath exists``.
     * ``direction="in"`` with reqid/spi → ``ipsec in reqid N`` / ``spi …``.
-    * ``direction="out"`` + no reqid/spi → **no nft equivalent**; returns
-      ``None`` with a compile-time warning. Emergency fallback is
-      iptables-nft-restore's ``xt match "policy"`` — see
-      ``reference_iptables_nft_restore`` note.
+    * ``direction="out"`` + no reqid/spi → ``meta ipsec exists`` (broad
+      existence check; loses per-tunnel granularity but at least confines
+      the rule to xfrm-bound packets).
     * ``direction="out"`` with reqid/spi → ``ipsec out reqid N`` / ``spi …``.
 
     Shorewall's ``proto=`` / ``mode=`` filters have no nft counterpart
@@ -1153,20 +1153,13 @@ def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
         # check. proto=/mode=/mark= are silently lost.
         return "meta secpath exists"
 
-    # Egress: nft has no direction-agnostic SPD match. Without reqid/spi
-    # the only expressible alternative is the kernel-rejected
-    # ``meta secpath exists`` on an output hook. Skip the match with a
-    # warning — the caller omits the entire match, leaving the rule to
-    # rely on interface/route dispatch for IPsec confinement.
-    _log.warning(
-        "ipsec zone %r (direction=out) has no reqid/spi — cannot express "
-        "egress SPD match in nft. Emitting no match; packets reach the "
-        "zone-pair rules solely by interface/route dispatch. Set reqid= "
-        "or spi= on the zone to re-enable a narrow ``ipsec out reqid N`` "
-        "match.",
-        zone_name,
-    )
-    return None
+    # Egress without reqid/spi: ``meta ipsec exists`` is the
+    # direction-agnostic existence check accepted by nft 1.1.1+.
+    # Coarser than ``ipsec out reqid N`` (no per-tunnel discrimination)
+    # but at least confines the rule to packets bound for an xfrm SA
+    # rather than dispatching solely by interface. Verified on kernel
+    # 6.11 / nft 1.1.1 against the reference 3-zone fixture.
+    return "meta ipsec exists"
 
 
 def _inject_ipsec_policy_match(rule: "Rule", src_zone: str, dst_zone: str,

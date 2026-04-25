@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-04-24 — ipsec egress fallback without reqid/spi)
+
+- **IPsec egress without reqid/spi emitted no match** — the compiler
+  used to drop the IPsec match entirely on egress when reqid/spi was
+  unset (``cannot express egress SPD match in nft`` warning), leaving
+  the rule to dispatch by interface alone. ``meta ipsec exists`` is a
+  direction-agnostic existence match accepted by nft 1.1.x — coarser
+  than ``ipsec out reqid N`` but at least confines the rule to xfrm-
+  bound packets. Verified on kernel 6.11 / nft 1.1.1 against all four
+  live-dump fixtures.
+
 ### Fixed (2026-04-24 — per-family policy split)
 
 - **Zone-pair chain dropped per-family policy disagreement** — when v4
