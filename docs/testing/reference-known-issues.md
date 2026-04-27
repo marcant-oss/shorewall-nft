@@ -113,22 +113,3 @@ bug.
   ``addr("add", ...)`` is called with ``local=X address=peer
   prefixlen=32`` for PtP forms.
 
-## tun0 / point-to-point peer routes (open, 1 case)
-
-- ``voice→vpn 192.168.192.254→10.8.1.42 udp:5060`` fails because
-  simlab's NS_FW installs ``10.8.1.1/32`` on ``tun0`` but the
-  kernel's auto-installed peer route (``10.8.1.2 dev tun0`` from
-  the PtP semantics of ``inet X peer Y/PLEN``) is missing in the
-  simulated namespace.  Result: routes ``10.8.1.0/24 via 10.8.1.2
-  dev tun0`` fail to install (next-hop unreachable), the kernel
-  falls through to the default route via ``bond1``, and the
-  forward dispatcher matches ``voice-net`` instead of
-  ``voice-vpn`` — ``voice-net`` chain has no rule for
-  ``10.8.1.42:5060`` and rejects.
-- The ``inet X peer Y/PLEN`` parsing already lands in
-  ``state.interfaces['tun0'].addrs4`` (commit pending — extends
-  ``_INET_RE``); the missing piece is ``topology.py`` installing
-  the address with explicit ``peer=Y`` so the kernel synthesises
-  the peer route as it would in production.
-- Tracked as ``simlab/topology.py`` open follow-up; not blocking
-  the loop.
