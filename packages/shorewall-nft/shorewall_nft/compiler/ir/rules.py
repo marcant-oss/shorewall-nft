@@ -1048,11 +1048,40 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             # ``all:217.14.160.0/20`` is misclassified as v6 because the
             # zone-prefix colon trips the IPv6 colon heuristic.
             def _spec_family_tag(spec: str) -> str | None:
-                if "_v6" in spec:
+                # Case-insensitive: matches ``$SIP_V6`` / ``$sip_v6``
+                # / ``<$WHATEVER_V4>`` alike.  Earlier revisions only
+                # recognised lowercase, mis-classifying any rule whose
+                # spec referenced an UPPER_V6/UPPER_V4 variable.
+                lo = spec.lower()
+                if "_v6" in lo:
                     return "v6"
-                if "_v4" in spec:
+                if "_v4" in lo:
                     return "v4"
                 return None
+
+            def _expand_params(spec: str) -> str:
+                # Pre-expand ``$VAR`` / ``${VAR}`` / ``<$VAR>`` /
+                # ``<${VAR}>`` references against ``ir.params`` so
+                # ``is_ipv6_spec`` sees the actual address rather
+                # than an opaque token.  Unknown variables stay
+                # untouched (same fall-back as parser._expand_vars).
+                params = getattr(ir, "params", None) or {}
+                if not params:
+                    return spec
+                # ``<$VAR>`` / ``<${VAR}>`` forms first — the angle
+                # brackets are a Shorewall list-of-values marker, but
+                # for family detection the brackets carry no extra
+                # information; we treat them as plain references.
+                expanded = re.sub(
+                    r"<\$\{?([A-Za-z_]\w*)\}?>",
+                    lambda m: params.get(m.group(1), m.group(0)),
+                    spec)
+                expanded = re.sub(
+                    r"\$\{?([A-Za-z_]\w*)\}?",
+                    lambda m: params.get(m.group(1), m.group(0)),
+                    expanded)
+                return expanded
+
             tag = _spec_family_tag(source_spec) or _spec_family_tag(dest_spec)
             if tag == "v6":
                 rule_is_v6 = True
@@ -1072,9 +1101,38 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                     return spec
                 rule_is_v6 = bool(
                     line.file and "shorewall6" in line.file
-                ) or is_ipv6_spec(_strip_zone(source_spec)) \
-                  or is_ipv6_spec(_strip_zone(dest_spec))
+                ) or is_ipv6_spec(_strip_zone(_expand_params(source_spec))) \
+                  or is_ipv6_spec(_strip_zone(_expand_params(dest_spec)))
             rule_is_v4 = not rule_is_v6
+
+            # Zone-flag gate (``all``-expansion only): when an
+            # ``all`` / ``any`` source or destination expands into a
+            # zone-pair whose family doesn't match the rule's, skip
+            # that pair.  Classic Shorewall does this implicitly by
+            # maintaining separate iptables / ip6tables rule databases
+            # (an ipv4-only zone is invisible to the v6 walker), so an
+            # IPv6 rule with ``all`` source never lands in an
+            # ipv4-only zone-pair.  Without the explicit gate
+            # shorewall-nft's combined ``inet`` emit *would* land
+            # there, and the chain-complete short-circuit would then
+            # silently drop the same rule from the legitimate
+            # dual-stack pair next to it.  Explicit zone references
+            # bypass the gate (caller knows what they wrote — useful
+            # for cross-family ipset rules that intentionally emit
+            # into both families regardless of zone flag, e.g.
+            # ``+dns_NAME_v6`` references in a chain whose source zone
+            # is ``ipv4``).
+            if is_all_expansion:
+                sz_zone = zones.zones.get(sz)
+                dz_zone = zones.zones.get(dz)
+                if rule_is_v6:
+                    if (sz_zone and sz_zone.is_ipv4) or \
+                       (dz_zone and dz_zone.is_ipv4):
+                        continue
+                else:   # rule_is_v4
+                    if (sz_zone and sz_zone.is_ipv6) or \
+                       (dz_zone and dz_zone.is_ipv6):
+                        continue
 
             # Mirror classic shorewall's chain-complete short-circuit
             # (Chains.pm:1832 sets the flag on terminating wildcards;
@@ -1111,8 +1169,23 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             # fail_accepts in the simlab triage; classic iptables-side
             # has neither rule (chain-tail policy ACCEPT covers the
             # accept side, the explicit DROP still fires for NTP).
+            # Use the per-family policy slot when the chain has a
+            # split policy: classic shorewall keeps independent
+            # iptables / ip6tables policies and the merged config can
+            # set ``int-voice ACCEPT`` for v4 but ``int-voice REJECT``
+            # for v6 (or vice versa).  Without consulting the family-
+            # specific slot the redundant-ACCEPT skip below would drop
+            # a legitimate v6 ACCEPT into a chain whose v6 policy is
+            # actually REJECT — surfaced as 24 fail_drops on the
+            # rossini reference.  Falls back to the unified policy
+            # when the family-specific slot is None (single-policy
+            # chain — current behaviour preserved).
+            family_policy = (
+                chain.policy_v6 if rule_is_v6 else chain.policy_v4
+            ) or chain.policy
+
             if (is_all_expansion and verdict == Verdict.ACCEPT
-                    and chain.policy == Verdict.ACCEPT
+                    and family_policy == Verdict.ACCEPT
                     and not verdict_args):
                 continue
 
@@ -1127,7 +1200,10 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             # without any host/proto/port narrowing — explicit
             # `customer-a→adm DROP` stays in the chain.
             drop_like = (Verdict.DROP, Verdict.REJECT)
-            chain_drops = chain.policy in drop_like
+            # Mirror the per-family lookup used for the ACCEPT skip
+            # above so a chain with split policy doesn't swallow a
+            # rule meant for the other family.
+            chain_drops = family_policy in drop_like
             rule_is_drop_like = verdict in drop_like
             # Unconditional / narrowing-free flag — feeds both the
             # redundant-catch-all skip below AND the chain-complete

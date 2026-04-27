@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-27 — alt-table route loader for simlab)
+
+* `shorewall_nft_simlab.dumps.load_fw_state` accepts new optional
+  paths ``ip4routes_all`` / ``ip6routes_all`` (the ``ip route show
+  table all`` dumps from ``tools/simlab-collect.sh``).  Routes whose
+  ``table != 254`` (main) are merged into ``state.routes4`` /
+  ``routes6`` so the topology builder installs them under the right
+  table number — needed for any reference whose ``ip4rules`` carries
+  ``from all lookup 220``-style policy-routing selectors that point
+  at static-table next-hops the live FW uses for internal subnets.
+  Without this, simlab silently lost the rossini snapshot's 8
+  table-220 routes (``100.68.0.0/16``, ``172.27.0.0/16`` etc.) and
+  fell through to the upstream default — wrong path for any internal
+  destination behind those routes.  Tests:
+  ``tests/unit/test_dumps_routes_all.py``.
+
+### Fixed (2026-04-27 — DHCP auto-emit over-broad)
+
+* `compiler/ir/_build.py:_process_dhcp_interfaces` no longer fans
+  the auto-DHCP-ACCEPT rule into every zone-pair chain involving a
+  dhcp-enabled zone.  Mirrors classic shorewall (`Misc.pm:1136-1166`):
+  emits only into ``<zone>-fw`` / ``fw-<zone>`` (host as DHCP
+  client/server), ``<zone>-<zone>`` (intra-zone), and cross-zone
+  forward chains *only* when the iface carries the ``bridge`` flag
+  (DHCP relay between bridge ports).  Without the gate, simlab
+  surfaced 6 systematic fail_accepts on probes like ``cust→tpoff
+  udp:68`` whose ``cust2tpoff`` chain in iptables.txt falls through
+  to REJECT — and ``udp 67,68 ACCEPT`` was sitting at the top of the
+  compiled chain, ACCEPTing them.
+* Tests: `tests/test_compiler_dhcp.py` (4 cases — emitted in
+  zone-fw, NOT in cross-zone without bridge, IS emitted in
+  cross-zone WITH bridge, emitted in self-zone).
+
+### Fixed (2026-04-27 — rule-family heuristic on parameter references)
+
+* `compiler/ir/rules.py` now expands ``$VAR`` / ``${VAR}`` /
+  ``<$VAR>`` references against ``ir.params`` before running the
+  IPv4-vs-IPv6 detection on a rule's source / destination spec, and
+  matches the ``_v6`` / ``_v4`` tag suffix case-insensitively.  Rules
+  whose dest was written as ``voice:<$SIP_V6>`` (the canonical
+  shorewall6 idiom in the marcant-fw reference) used to be
+  mis-classified as IPv4 — combined with the chain-complete
+  short-circuit, that silently dropped 24 legitimate IPv6 rules
+  from the ``int-voice`` chain in the rossini snapshot.  Surfaced
+  by `tools/simlab-reference-loop.sh` (24 fail_drop in iter 0,
+  0 after the fix).
+* New ``FirewallIR.params`` field exposes the parsed ``params``
+  file so late stages can do their own variable expansion without
+  re-reading the file.
+* ``all`` / ``any`` zone expansion now skips zone pairs whose
+  source or destination zone is the wrong family for the rule
+  being processed (``rule_is_v6`` and an ``ipv4``-only zone, or
+  vice versa).  Mirrors classic shorewall's separate iptables /
+  ip6tables runtimes; without the gate, ``all → voice:<$SIP_V6>``
+  would leak v6 rules into v4-only zone pairs and the chain-
+  complete short-circuit would then drop the v6 rule from the
+  legitimate dual-stack pair next to them.  Explicit zone
+  references (e.g. ``net dns:github.com`` to a v4-only zone) are
+  unaffected — the gate fires only for ``all``-expansion fan-out.
+* Tests: `tests/test_compiler_family_heuristic.py` (3 cases —
+  uppercase ``$SIP_V6`` matches, v6 rule skipped on ipv4-only
+  zone for ``all``-expansion, uppercase ``$DNS_V4`` matches as v4).
+
 ### Fixed (2026-04-27 — chain-complete short-circuit)
 
 * Compiler now mirrors classic shorewall's ``$chainref->{complete}``

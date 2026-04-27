@@ -735,10 +735,25 @@ def _process_host_options(ir: FirewallIR, zones: ZoneModel) -> None:
 def _process_dhcp_interfaces(ir: FirewallIR, zones: ZoneModel) -> None:
     """Generate DHCP allow rules for interfaces with 'dhcp' option.
 
-    Shorewall automatically allows UDP 67,68 (DHCP) on interfaces
-    configured with the dhcp option. This creates rules in both
-    the input chain (for DHCP to the firewall) and in all zone-pair
-    chains involving this zone (for DHCP forwarding).
+    Mirrors classic shorewall's ``Misc.pm:1136-1166`` (`add rules for
+    DHCP` block) precisely — *not* the over-eager fan-out an earlier
+    revision emitted into every zone-pair chain involving a
+    dhcp-enabled zone.  Classic emits DHCP rules only:
+
+      1. ``<zone>-fw`` / ``fw-<zone>`` (zone↔firewall, the
+         ``input_option_chain`` / ``output_option_chain`` pair) — the
+         DHCP server / client may live on the firewall itself.
+      2. ``<zone>-<zone>`` self chain (intra-zone forwarding for
+         a bridge port — DHCP request to a relay on the same bridge).
+      3. forward chain ``<zone>-<other>`` ONLY when the iface carries
+         ``bridge`` — that's classic's ``forward_option_chain`` gated
+         on ``get_interface_option(..., 'bridge')``.
+
+    Without this gate every cust→tpoff / voic2→mgmt etc. probe with
+    ``udp dport 67/68`` was silently ACCEPTed because the DHCP rule
+    sat above the chain's REJECT/DROP fall-through.  The rossini
+    reference replay surfaced this as 6 fail_accepts on probe
+    classes that classic shorewall correctly REJECTs.
     """
     for zone in zones.zones.values():
         for iface in zone.interfaces:
@@ -771,21 +786,26 @@ def _process_dhcp_interfaces(ir: FirewallIR, zones: ZoneModel) -> None:
                         comment=f"dhcpv6:{iface.name}",
                     ))
 
-            # DHCP to/from firewall (INPUT/OUTPUT chains)
+            # 1. DHCP to/from firewall (INPUT/OUTPUT — host as
+            # client/server). Always emitted for any dhcp iface.
             _add_dhcp_to_chain(f"{zone.name}-{fw}")
             _add_dhcp_to_chain(f"{fw}-{zone.name}")
 
-            # Self-zone DHCP (bridge interfaces)
+            # 2. Self-zone forwarding (bridge ports).
             _add_dhcp_to_chain(f"{zone.name}-{zone.name}")
 
-            # DHCP forwarding from this zone to ALL other zones
-            # (Shorewall generates DHCP allow in all zone-pair chains
-            # where the dhcp-enabled zone is the source)
-            for other_zone in zones.zones.values():
-                if other_zone.name == zone.name or other_zone.is_firewall:
-                    continue
-                _add_dhcp_to_chain(f"{zone.name}-{other_zone.name}")
-                _add_dhcp_to_chain(f"{other_zone.name}-{zone.name}")
+            # 3. Cross-zone forwarding ONLY for bridge interfaces
+            # (DHCP relay between bridge ports).  Classic shorewall
+            # gates this on ``get_interface_option($iface, 'bridge')``;
+            # without bridge, DHCP traffic must be explicitly
+            # configured per-rule like any other UDP forwarding.
+            if "bridge" in iface.options:
+                for other_zone in zones.zones.values():
+                    if (other_zone.name == zone.name
+                            or other_zone.is_firewall):
+                        continue
+                    _add_dhcp_to_chain(f"{zone.name}-{other_zone.name}")
+                    _add_dhcp_to_chain(f"{other_zone.name}-{zone.name}")
 
 
 def _process_blacklist(ir: FirewallIR,

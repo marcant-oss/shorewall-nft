@@ -420,6 +420,15 @@ class FirewallIR:
     zones: ZoneModel = field(default_factory=ZoneModel)
     chains: dict[str, Chain] = field(default_factory=dict)
     settings: dict[str, str] = field(default_factory=dict)
+    # Shell-style variable definitions from the ``params`` config file
+    # (``KEY=VALUE``).  Stored on the IR so late stages — notably the
+    # rule-family heuristic in ``compiler/ir/rules.py`` — can pre-expand
+    # ``$VAR`` / ``<$VAR>`` references that appear in a rule's source
+    # / destination spec.  Without that expansion the heuristic mis-
+    # classifies rules whose addresses live behind a variable name
+    # (e.g. ``voice:<$SIP_V6>,<$SIP_HA>``) — see issue tracked in
+    # ``docs/testing/reference-known-issues.md``.
+    params: dict[str, str] = field(default_factory=dict)
     # Chains for the separate `inet shorewall_stopped` table — populated
     # from routestopped. Kept apart from `chains` so the main emitter
     # never mixes them into the running ruleset.

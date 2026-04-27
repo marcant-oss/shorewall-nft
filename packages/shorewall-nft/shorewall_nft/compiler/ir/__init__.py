@@ -155,6 +155,10 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
     """Build the complete IR from a parsed config."""
     zones = build_zone_model(config)
     ir = FirewallIR(zones=zones, settings=config.settings)
+    # Stash params so the rule-family heuristic in rules.py can
+    # expand ``<$VAR>`` references in source / destination specs
+    # before deciding IPv4 vs IPv6.
+    ir.params = dict(getattr(config, "params", {}))
     ir.mark_geometry = MarkGeometry.from_settings(config.settings)
     ir._fastaccept = settings_bool(config.settings, "FASTACCEPT", True)
 
