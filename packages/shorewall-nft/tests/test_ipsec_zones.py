@@ -490,14 +490,19 @@ def test_ipsec6_zone_has_options_parsed():
 
 @pytest.mark.parametrize("token,fragment", [
     ("proto=esp", "proto='esp'"),
-    ("mode=tunnel", "mode='tunnel'"),
     ("mark=0x10", "mark='0x10'"),
 ])
 def test_ipsec_options_emits_warning_for_unsupported_token(token, fragment):
-    """``proto=`` / ``mode=`` / ``mark=`` have no nft expression and were
-    silently dropped from emit before. The parser now raises a
-    ``UserWarning`` so users learn at compile time that the token won't
-    survive into the nft ruleset.
+    """``proto=`` / ``mark=`` have no nft expression and are silently
+    dropped from emit.  The parser raises a ``UserWarning`` so users
+    learn at compile time that the token won't survive into the nft
+    ruleset.
+
+    ``mode=`` is no longer warned: the kernel's ``nft_xfrm`` hook
+    resolves the SA from the packet's secpath so a ``ipsec <dir>
+    reqid N`` match implicitly disambiguates by mode through the
+    reqid→SA binding — the ``mode=`` token is documentation-only,
+    not a silent loss of intent.
     """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -517,12 +522,15 @@ def test_ipsec_options_emits_warning_for_unsupported_token(token, fragment):
 
 
 def test_ipsec_options_no_warning_for_supported_tokens():
-    """``reqid=`` / ``spi=`` / ``mss=`` / ``strict`` / ``next`` are all
-    expressible in nft — no warning should fire."""
+    """``reqid=`` / ``spi=`` / ``mss=`` / ``strict`` / ``next`` / ``mode=``
+    no longer raise a UserWarning — mode is implicit in the SA reqid
+    binding so its silent drop is not a loss of intent.
+    """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         _parse_ipsec_options(
-            ["strict", "next", "mss=1400", "reqid=42", "spi=0x1000"],
+            ["strict", "next", "mss=1400", "reqid=42", "spi=0x1000",
+             "mode=tunnel", "mode=transport"],
             zone_name="vpn",
         )
     user_warns = [w for w in caught if issubclass(w.category, UserWarning)]

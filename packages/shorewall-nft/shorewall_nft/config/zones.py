@@ -307,14 +307,15 @@ def _parse_ipsec_options(options: list[str],
                 UserWarning, stacklevel=2,
             )
         elif tok.startswith("mode="):
+            # ``mode=tunnel|transport`` has no direct nft match expression,
+            # but the kernel's nft_xfrm hook resolves the SA from the
+            # packet's secpath and the SA itself encodes mode — so a
+            # ``ipsec <dir> reqid N`` match implicitly disambiguates by
+            # mode through the reqid→SA binding.  Mode is recorded for
+            # documentation but no rule emit is needed; the warning
+            # previously raised here was outdated and is dropped.
             value = tok.split("=", 1)[1].lower()
             opts.mode = value
-            warnings.warn(
-                f"shorewall-nft: ipsec zone {zone_name!r}: "
-                f"mode={value!r} has no nft expression — dropped. "
-                f"Use ``reqid=`` to narrow the match per SA.",
-                UserWarning, stacklevel=2,
-            )
         elif tok.startswith("mark="):
             try:
                 raw = tok.split("=", 1)[1]
