@@ -860,6 +860,13 @@ def extract_nat_rules(rules: list[ConfigLine]) -> tuple[list[ConfigLine], list[C
     """Separate DNAT/REDIRECT rules from regular rules.
 
     Returns (nat_rules, remaining_rules).
+
+    For each ``DNAT`` line, also synthesises an ``ACCEPT`` companion
+    ConfigLine into ``remaining_rules``: classic Shorewall splits a
+    DNAT into a NAT rewrite *and* a FILTER ACCEPT that gates the
+    post-DNAT chain by ``ct original daddr <ORIG_DEST>``.  Without the
+    companion, packets emerge from PREROUTING with the rewritten dst
+    but hit a default-DROP zone-pair chain.
     """
     nat_rules = []
     remaining = []
@@ -875,7 +882,128 @@ def extract_nat_rules(rules: list[ConfigLine]) -> tuple[list[ConfigLine], list[C
 
         if base_action in ("DNAT", "REDIRECT"):
             nat_rules.append(line)
+            if base_action == "DNAT":
+                companion = _synthesize_dnat_filter_accept(line)
+                if companion is not None:
+                    remaining.append(companion)
         else:
             remaining.append(line)
 
     return nat_rules, remaining
+
+
+def _synthesize_dnat_filter_accept(line: ConfigLine) -> ConfigLine | None:
+    """Build the FILTER ACCEPT companion for a ``DNAT`` rules-file line.
+
+    Input shape (cols)::
+
+        0  DNAT[:loglevel]
+        1  SOURCE
+        2  DESTZONE:INTERNAL_IP[:REWRITTEN_PORT]
+        3  PROTO
+        4  DPORT      (the externally-visible port; classic also
+                       installs --ctorigdstport for this when col 2
+                       carries a port rewrite)
+        5  SPORT
+        6  ORIG_DEST  (the externally-visible IP)
+
+    Output ConfigLine columns::
+
+        ACCEPT  SOURCE  DESTZONE:INTERNAL_IP  PROTO  EFFECTIVE_DPORT  SPORT  ORIG_DEST
+
+    where ``EFFECTIVE_DPORT`` is the rewritten port from col 2 if
+    present, otherwise the original DPORT.  This is what FILTER sees
+    after PREROUTING: dst-IP is internal, dst-port is the post-rewrite
+    port, and ``ct original daddr`` still carries the pre-NAT public
+    IP for the ``--ctorigdst`` match emitted by the regular rules
+    pipeline.
+    """
+    cols = line.columns
+    if len(cols) < 3:
+        return None
+
+    src = cols[1]
+    dest_raw = cols[2]
+    proto = cols[3] if len(cols) > 3 else "-"
+    dport = cols[4] if len(cols) > 4 else "-"
+    sport = cols[5] if len(cols) > 5 else "-"
+    orig_dest = cols[6] if len(cols) > 6 else "-"
+
+    dest_for_filter, rewritten_port = _split_dnat_dest_for_filter(dest_raw)
+    dport_for_filter = rewritten_port if rewritten_port is not None else dport
+
+    new_cols = [
+        "ACCEPT",
+        src,
+        dest_for_filter,
+        proto,
+        dport_for_filter,
+        sport,
+        orig_dest,
+    ]
+
+    return ConfigLine(
+        columns=new_cols,
+        file=line.file,
+        lineno=line.lineno,
+        comment_tag=line.comment_tag,
+        section=line.section,
+        raw=line.raw,
+        format_version=line.format_version,
+    )
+
+
+def _split_dnat_dest_for_filter(dest_raw: str) -> tuple[str, str | None]:
+    """Split a DNAT DEST column into ``(zone:ip, rewritten_port_or_None)``.
+
+    Handles the four shapes Shorewall accepts:
+
+    * ``zone``                              → bare zone, no IP
+    * ``zone:ipv4``                         → no port rewrite
+    * ``zone:ipv4:port``                    → IPv4 port rewrite
+    * ``zone:[ipv6]``                       → bracketed v6, no port rewrite
+    * ``zone:[ipv6]:port``                  → bracketed v6 port rewrite
+    * ``zone:ipv6``                         → bare v6, no port rewrite
+                                              (Shorewall6 requires brackets
+                                              when a port follows, so a
+                                              bare v6 spec never carries
+                                              a rewritten port)
+
+    Splitting on ``:`` blindly would mangle every IPv6 address that lacks
+    brackets — the synthesised FILTER companion would land in the wrong
+    chain and the address-family detection in the rules pipeline would
+    misclassify the rule as IPv4.
+    """
+    if ":" not in dest_raw:
+        return dest_raw, None
+
+    zone, _, rest = dest_raw.partition(":")
+
+    # Bracketed IPv6: ``[ipv6]`` or ``[ipv6]:port``.
+    # DNAT-column syntax is ``[v6]`` to separate the address from a
+    # following ``:port``; the rules-file accepts ``<v6>`` for the same
+    # purpose.  We rewrite to the angle-bracket form so the synthesised
+    # ACCEPT goes through ``_parse_zone_spec``'s ``zone:<addr>`` branch
+    # and lands in the IPv6-family slot of the zone-pair chain.
+    if rest.startswith("["):
+        end = rest.find("]")
+        if end == -1:
+            return dest_raw, None  # malformed — pass through untouched
+        ip = rest[1:end]
+        after = rest[end + 1:]
+        if after.startswith(":"):
+            return f"{zone}:<{ip}>", after[1:]
+        return f"{zone}:<{ip}>", None
+
+    # Bare IPv6 without brackets — must carry no port rewrite (no
+    # canonical Shorewall6 syntax to disambiguate from a trailing port).
+    # ``2001:db8::1`` contains ≥2 colons.
+    if rest.count(":") >= 2:
+        return f"{zone}:<{rest}>", None
+
+    # IPv4 with optional ``:port`` suffix.
+    if ":" in rest:
+        ip, _, port = rest.partition(":")
+        return f"{zone}:{ip}", port
+
+    return dest_raw, None

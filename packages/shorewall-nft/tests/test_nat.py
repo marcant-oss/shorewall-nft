@@ -93,6 +93,145 @@ class TestNAT:
         assert "type nat hook prerouting priority -100;" in self.output
         assert "type nat hook postrouting priority 100;" in self.output
 
+    def test_dnat_emits_filter_accept_companion(self):
+        """Classic Shorewall splits a ``DNAT`` row into a NAT rewrite *and*
+        a FILTER ACCEPT gating the post-DNAT chain by ``ct original daddr``.
+        Without the companion the rewritten packet hits the zone-pair
+        chain's default DROP/REJECT policy and the DNAT'd service is
+        unreachable.
+        """
+        # The nat fixture's net2loc chain must contain an ACCEPT with both
+        # the post-DNAT internal IP (192.168.1.10) and ct original daddr
+        # set to the pre-DNAT public IP (203.0.113.1).
+        assert (
+            "ip daddr 192.168.1.10 ct original daddr 203.0.113.1 "
+            "meta l4proto tcp tcp dport 80 accept"
+        ) in self.output
+
+
+class TestDnatFilterCompanion:
+    """``extract_nat_rules`` must synthesise an ACCEPT companion for every
+    DNAT row so the regular rules pipeline lands a FILTER rule next to
+    the NAT rewrite.  Direct unit tests for the synthesis function so
+    the column mapping (esp. ``zone:ip:rewritten_port``) is locked in.
+    """
+
+    def _synth(self, cols):
+        from shorewall_nft.compiler.nat import _synthesize_dnat_filter_accept
+        from shorewall_nft.config.parser import ConfigLine
+        line = ConfigLine(columns=cols, file="rules", lineno=1)
+        return _synthesize_dnat_filter_accept(line)
+
+    def test_no_port_rewrite_keeps_original_dport(self):
+        comp = self._synth([
+            "DNAT", "net", "loc:192.168.1.10", "tcp", "80,443", "-", "203.0.113.1"
+        ])
+        assert comp is not None
+        # ACCEPT row keeps original DPORT 80,443; DEST is zone:ip (no port)
+        assert comp.columns == [
+            "ACCEPT", "net", "loc:192.168.1.10", "tcp", "80,443", "-", "203.0.113.1"
+        ]
+
+    def test_port_rewrite_uses_post_dnat_port(self):
+        # zone:ip:port → FILTER must match the *rewritten* port (post-NAT)
+        comp = self._synth([
+            "DNAT", "net", "loc:192.168.1.10:80", "tcp", "8080", "-", "203.0.113.1"
+        ])
+        assert comp is not None
+        assert comp.columns == [
+            "ACCEPT", "net", "loc:192.168.1.10", "tcp", "80", "-", "203.0.113.1"
+        ]
+
+    def test_extract_nat_rules_appends_companion_to_remaining(self):
+        from shorewall_nft.compiler.nat import extract_nat_rules
+        from shorewall_nft.config.parser import ConfigLine
+        rules = [
+            ConfigLine(
+                columns=["DNAT", "net", "loc:192.168.1.10", "tcp", "80",
+                         "-", "203.0.113.1"],
+                file="rules", lineno=1),
+            ConfigLine(
+                columns=["ACCEPT", "loc", "net", "tcp", "53"],
+                file="rules", lineno=2),
+        ]
+        nat_rules, remaining = extract_nat_rules(rules)
+        assert len(nat_rules) == 1
+        assert len(remaining) == 2
+        assert remaining[0].columns[0] == "ACCEPT"
+        assert remaining[0].columns[6] == "203.0.113.1"   # synth companion
+        assert remaining[1].columns[1] == "loc"           # original ACCEPT
+
+    def test_redirect_emits_no_companion(self):
+        # REDIRECT does not need a FILTER ACCEPT companion — the redirect
+        # target is the firewall itself, so the existing input-chain
+        # rules govern admission.
+        from shorewall_nft.compiler.nat import extract_nat_rules
+        from shorewall_nft.config.parser import ConfigLine
+        rules = [ConfigLine(
+            columns=["REDIRECT", "loc", "3128", "tcp", "80"],
+            file="rules", lineno=1)]
+        nat_rules, remaining = extract_nat_rules(rules)
+        assert len(nat_rules) == 1
+        assert remaining == []
+
+    def test_ipv6_bracketed_dest_no_port(self):
+        # DNAT DEST uses ``[v6]`` to separate IP from optional :port.
+        # The synthesised companion converts to the rules-file ``<v6>``
+        # form so ``_parse_zone_spec`` lands it in the IPv6 slot.
+        comp = self._synth([
+            "DNAT", "net", "loc:[2001:db8::1]", "tcp", "443",
+            "-", "2001:db8:cafe::5"
+        ])
+        assert comp is not None
+        assert comp.columns == [
+            "ACCEPT", "net", "loc:<2001:db8::1>", "tcp", "443",
+            "-", "2001:db8:cafe::5"
+        ]
+
+    def test_ipv6_bracketed_dest_with_port_rewrite(self):
+        comp = self._synth([
+            "DNAT", "net", "loc:[2001:db8::1]:80", "tcp", "8080",
+            "-", "2001:db8:cafe::5"
+        ])
+        assert comp is not None
+        # FILTER must match the rewritten port (80) in the post-DNAT chain.
+        assert comp.columns == [
+            "ACCEPT", "net", "loc:<2001:db8::1>", "tcp", "80",
+            "-", "2001:db8:cafe::5"
+        ]
+
+    def test_ipv6_bare_dest_no_port(self):
+        # Bare IPv6 (no brackets) — Shorewall6 syntax permits this when
+        # there's no port rewrite.  We rewrite to the ``<v6>`` form for
+        # the same reason as the bracketed branch.
+        comp = self._synth([
+            "DNAT", "net", "loc:2001:db8::1", "tcp", "443",
+            "-", "2001:db8:cafe::5"
+        ])
+        assert comp is not None
+        assert comp.columns == [
+            "ACCEPT", "net", "loc:<2001:db8::1>", "tcp", "443",
+            "-", "2001:db8:cafe::5"
+        ]
+
+    def test_split_helper_table(self):
+        from shorewall_nft.compiler.nat import _split_dnat_dest_for_filter
+        # IPv4
+        assert _split_dnat_dest_for_filter("loc:192.0.2.1") == (
+            "loc:192.0.2.1", None)
+        assert _split_dnat_dest_for_filter("loc:192.0.2.1:8080") == (
+            "loc:192.0.2.1", "8080")
+        # IPv6 bracketed → angle-bracket rewrite
+        assert _split_dnat_dest_for_filter("loc:[2001:db8::1]") == (
+            "loc:<2001:db8::1>", None)
+        assert _split_dnat_dest_for_filter("loc:[2001:db8::1]:80") == (
+            "loc:<2001:db8::1>", "80")
+        # IPv6 bare → also rewritten to ``<v6>`` form
+        assert _split_dnat_dest_for_filter("loc:2001:db8::1") == (
+            "loc:<2001:db8::1>", None)
+        # Zone-only
+        assert _split_dnat_dest_for_filter("loc") == ("loc", None)
+
 
 class TestRedirect:
     """REDIRECT action: rewrite destination to a local port on the firewall.

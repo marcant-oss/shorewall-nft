@@ -68,35 +68,41 @@ previously skipped these and over-predicted ACCEPT.  Now treats
 ``--ctorigdst <CIDR>`` as a dst constraint and sees the drop.
 14 fail_drops eliminated (iter 5 → iter 6).
 
-## shorewall-nft IPv4 ctorigdst FILTER rules missing (open, ~23 cases)
+## shorewall-nft DNAT FILTER ACCEPT companion missing (RESOLVED 2026-04-27)
 
-The DNAT per-rule enumerator in shorewall-nft-simlab (commit
-``f221efe``) surfaced this: classic Shorewall emits
-``-A net2voice -d 192.168.192.7 -p tcp -m conntrack --ctorigdst
-203.0.113.85 -m tcp --dport 80 -j ACCEPT`` (and similar) into
-the FILTER chain to gate access to a DNAT'd internal IP by the
-*pre*-DNAT public address.  shorewall-nft's compiled nft chain
-is missing the corresponding IPv4 rule:
+Resolved in ``shorewall-nft/packages/shorewall-nft/shorewall_nft/
+compiler/nat.py`` by ``_synthesize_dnat_filter_accept`` +
+``_split_dnat_dest_for_filter`` (covered by ``test_nat.py::
+TestDnatFilterCompanion``).
+
+Symptom: classic Shorewall splits each ``DNAT`` rules-file row
+into a NAT rewrite *and* a FILTER ``ACCEPT`` gating the post-DNAT
+zone-pair chain by ``ct original daddr <ORIG_DEST>``.  Without
+the companion the rewritten packet hits the chain's default
+DROP/REJECT policy.  shorewall-nft was emitting only the NAT
+rewrite — every DNAT'd IPv4 service to a private internal IP
+was rejected post-PREROUTING.  The ~23 ``fail_drop`` probes seen
+on the rossini snapshot's ``net→voice``, ``net→int``,
+``net→linux``, ``net→mgmt``, ``net→srv`` clusters all stemmed
+from this single missing emit.
+
+Fix: ``extract_nat_rules`` now also synthesises an ``ACCEPT``
+``ConfigLine`` for every ``DNAT`` row and feeds it through the
+regular rules pipeline.  IPv6 covered too (DNAT-column ``[v6]``
+syntax is rewritten to the rules-file ``<v6>`` form so
+``_parse_zone_spec`` lands the rule in the IPv6 family slot).
+
+Compiled output now contains the missing rules, e.g.:
 
     ip daddr 192.168.192.7 ct original daddr 203.0.113.85 \
         meta l4proto tcp tcp dport 80 accept
+    ip6 daddr 2001:db8:cafe::5 ct original daddr 2001:db8:public::1 \
+        meta l4proto tcp tcp dport 443 accept
 
-The IPv6 counterparts of these rules ARE emitted in the same
-chain; only the IPv4 forms are dropped.  Result: every DNAT'd
-IPv4 service to a private internal IP is rejected by the FILTER
-chain after PREROUTING does the rewrite.
-
-Likely fix surface: ``shorewall-nft/packages/shorewall-nft/
-shorewall_nft/compiler/ir/rules.py`` — the ``-m conntrack
---ctorigdst`` predicate handling probably has the same
-case-sensitivity / family-detection issue as the earlier
-``$SIP_V6`` / chain-complete fix-set: pre-expand ``$VAR`` in
-ctorigdst args before the family heuristic runs, or treat the
-ctorigdst presence itself as a family-agnostic match marker.
-
-Tracked separately; loop's ``dnat_mismatch`` bucket is still 0
-(the DNAT rewrite itself is correct) — this manifests as
-``fail_drop`` on the per-rule DNAT probes.
+The IPv6 ACCEPT rules that used to appear in the same chain
+were *not* DNAT-derived — they came from regular ``ACCEPT``
+rows in ``rules`` (Shorewall6's snapshot has 0 v6 DNAT rules).
+The fix is a no-op for those.
 
 ## simlab cold-start NDP/ARP race (largely RESOLVED 2026-04-28)
 

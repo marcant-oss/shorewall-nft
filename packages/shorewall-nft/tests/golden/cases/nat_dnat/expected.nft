@@ -100,6 +100,7 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		ip daddr 192.168.10.5 ct original daddr 203.0.113.10 meta l4proto tcp tcp dport 80 accept
 		jump sw_Drop
 	}
 
