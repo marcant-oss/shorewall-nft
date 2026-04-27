@@ -135,13 +135,21 @@ COMMON_FLAGS="--data /root/ref-stage/data \
               --config /root/ref-stage/etc/shorewall46 \
               --report-dir /root/simlab-reports"
 RUN_FLAGS="full --random $RANDOM_N --max-per-pair $MAX_PER_PAIR \
-                --seed $SEED --summary-only --probe-timeout 1.0"
+                --seed $SEED --summary-only --probe-timeout 1.0 --trace on"
 
 REPLAY_PATH=""
 if (( ITER >= 1 )) && [[ -f "$PREV_DIR/failed-probes.json" ]]; then
-    REPLAY_PATH="/root/replay-iter-$ITER.json"
-    rsync -aq "$PREV_DIR/failed-probes.json" "root@$HOST:$REPLAY_PATH"
-    RUN_FLAGS="$RUN_FLAGS --replay $REPLAY_PATH"
+    # Empty failed-probes.json → previous iter was clean.  Re-run as
+    # a fresh full sweep (not replay) so the stop-condition's "2
+    # consecutive zero-failure iters" check exercises the full
+    # probe surface twice, not just the empty replay set.
+    if grep -q '"probe_ids": \[\]' "$PREV_DIR/failed-probes.json"; then
+        echo "[loop] previous iter had no failures — running fresh full sweep"
+    else
+        REPLAY_PATH="/root/replay-iter-$ITER.json"
+        rsync -aq "$PREV_DIR/failed-probes.json" "root@$HOST:$REPLAY_PATH"
+        RUN_FLAGS="$RUN_FLAGS --replay $REPLAY_PATH"
+    fi
 fi
 
 UNIT="simlab-iter-$ITER-$$"
