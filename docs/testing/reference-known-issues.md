@@ -18,24 +18,43 @@ suppression filter when it shows up in three consecutive iterations.
 - Mitigation: add stub routes in `topology.py` once the loop runs
   green on everything else.
 
-## DNAT to public IP outside the simlab netns (known UDP edge-case)
+## Worker post-egress stub-classification (4 fail_drop stragglers)
 
-- Reverse DNAT rules that rewrite an internal dst to a public IP
-  (e.g. ``-d 192.168.191.5 -p udp --dport 69 -j DNAT --to 217.14.168.5``,
-  the TFTP relay pattern) egress on the net-zone interface but the
-  rewritten dst has no listener inside the simlab topology.  For
-  TCP probes this is fine (no SYN-ACK ≠ REJECT).  For UDP probes
-  the upstream simulator stub returns ICMP port-unreach which the
-  worker classifies as REJECT, producing one stable ``fail_drop``
-  per such rule.
-- Surfaces against the rossini snapshot as one ``test→net`` UDP/69
-  TFTP probe.
-- Mitigation (deferred): worker should treat post-DNAT egress to
-  a public-only-route'd dst as PASS once the egress frame is
-  observed on the expected iface (the rewrite itself is the only
-  thing the FILTER walker can validate; the upstream behaviour is
-  out-of-scope).  Or: per-rule walker skips UDP rules whose
-  rewrite target leaves the simlab netns.
+After the DNAT FILTER ACCEPT companion fix + saddr-aware DNAT
+walker land, the rossini reference replay converges to 4 stable
+``fail_drop`` cases.  All four follow the same pattern:
+
+* Oracle classifies as ACCEPT (correctly).
+* Compiler emits the correct rule.
+* FILTER chain on the post-DNAT tuple does ACCEPT.
+* But the simlab worker classifies the upstream stub's
+  port-unreach / RST as ``observed=REJECT``.
+
+Concrete cases on the snapshot:
+
+| ID    | Path                                    | Why classified REJECT                            |
+|-------|-----------------------------------------|--------------------------------------------------|
+| 3     | ``net→int``  tcp:22 → 192.168.191.8     | No listener at post-DNAT dst; stub TCP-RST       |
+| 96    | ``test→net`` udp:69 → 217.14.168.5      | UDP TFTP, post-DNAT dst public, no listener      |
+| 10032 | ``cam→voice`` udp:33495 (Trcrt range)   | UDP traceroute probe, no listener at dst         |
+| 10209 | ``inst→voice`` udp:33468 (Trcrt range)  | dito                                             |
+
+Mitigation (deferred): the worker should treat post-egress
+behaviour as out-of-scope once the rewritten frame has been
+observed on the expected iface — what we're validating here is
+the FW's emit, not the upstream listener's response.  Either:
+
+* Worker classifies "egress observed + no return frame" as PASS
+  for any probe whose dst falls outside the simlab netns'
+  responder set, OR
+* Per-rule walker skips probes whose rewrite target leaves the
+  simlab netns, OR
+* simlab grows a per-iface response-stub registry and the user
+  configures which dst-IPs should auto-RST / auto-port-unreach
+  vs. silently absorb.
+
+None of these need to land for compiler-correctness validation;
+the 4 stragglers are noise on the rossini snapshot.
 
 ## DNAT coverage gap — per-rule path
 
