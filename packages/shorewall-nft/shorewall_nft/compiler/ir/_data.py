@@ -151,6 +151,27 @@ class Chain:
     # family-agnostic terminal — current behaviour preserved.
     policy_v4: Verdict | None = None
     policy_v6: Verdict | None = None
+    # Mirrors classic shorewall's ``$chainref->{complete}`` flag
+    # (``Chains.pm:1832``).  Once a terminating, fully unconditional
+    # rule is added (``DROP``/``REJECT``/``-g`` with no host/proto/
+    # port narrowing), classic stops appending further rules — line
+    # 8400 of ``expand_rule1`` short-circuits with
+    # ``return if $chainref->{complete};``.  Real configs lean on
+    # this idiom: a wildcard ``DROP:$LOG <zone> any`` blocks the
+    # rules-file-tail rules (``?SHELL`` includes, etc.) from ever
+    # reaching that ``<zone>2X`` chain.  ``_add_rule`` mirrors the
+    # behaviour by checking these flags before appending and
+    # setting them when emitting an unconditional terminating
+    # verdict.
+    #
+    # Separate v4 / v6 slots: classic shorewall keeps independent
+    # iptables and ip6tables chains, so its single ``complete`` flag
+    # is implicitly per-family.  shorewall-nft compiles into a single
+    # merged ``inet`` chain, so we track the two slots explicitly to
+    # avoid a v4-side close inadvertently swallowing a v6-side rule
+    # (or vice versa).
+    complete_v4: bool = False
+    complete_v6: bool = False
 
     @property
     def is_base_chain(self) -> bool:

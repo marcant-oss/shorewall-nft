@@ -1033,6 +1033,66 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             chain_name = _zone_pair_chain_name(sz, dz, zones)
             chain = ir.get_or_create_chain(chain_name)
 
+            # Determine the rule's address family so the chain-complete
+            # check / set below operates on the correct slot.  Classic
+            # shorewall maintains independent iptables / ip6tables chains,
+            # so its single ``complete`` flag is implicitly per-family;
+            # shorewall-nft compiles into a merged ``inet`` chain, so we
+            # need to disambiguate.  Heuristic: ``+nfset_*_v4`` /
+            # ``+nfset_*_v6`` and ``+dns_*_v4`` / ``+dns_*_v6`` sentinels
+            # (produced by the dns:/dnsr:/nfset: pre-pass) tag the family
+            # in their suffix.  Fall back to ``"shorewall6" in line.file``
+            # plus an address inspection (``is_ipv6_spec``) of the
+            # source/dest spec, after stripping the leading ``zone:``
+            # qualifier — without the strip a v4 spec like
+            # ``all:217.14.160.0/20`` is misclassified as v6 because the
+            # zone-prefix colon trips the IPv6 colon heuristic.
+            def _spec_family_tag(spec: str) -> str | None:
+                if "_v6" in spec:
+                    return "v6"
+                if "_v4" in spec:
+                    return "v4"
+                return None
+            tag = _spec_family_tag(source_spec) or _spec_family_tag(dest_spec)
+            if tag == "v6":
+                rule_is_v6 = True
+            elif tag == "v4":
+                rule_is_v6 = False
+            else:
+                def _strip_zone(spec: str) -> str:
+                    if ":" in spec:
+                        head, _, tail = spec.partition(":")
+                        # Don't strip when the head looks like the first
+                        # hextet of an IPv6 literal (``2001:db8::1``);
+                        # zone names are alpha+digits+underscore+dash.
+                        if head and not re.fullmatch(
+                                r"[A-Za-z_$][\w-]*", head):
+                            return spec
+                        return tail
+                    return spec
+                rule_is_v6 = bool(
+                    line.file and "shorewall6" in line.file
+                ) or is_ipv6_spec(_strip_zone(source_spec)) \
+                  or is_ipv6_spec(_strip_zone(dest_spec))
+            rule_is_v4 = not rule_is_v6
+
+            # Mirror classic shorewall's chain-complete short-circuit
+            # (Chains.pm:1832 sets the flag on terminating wildcards;
+            # expand_rule1:8400 ``return if $chainref->{complete}``).
+            # When a previous rule emitted an unconditional terminating
+            # verdict into this chain, every subsequent ``all:`` /
+            # ``?SHELL include`` add for the same chain in the same
+            # family is silently dropped — those rules are unreachable
+            # in iptables-save, so emitting them in nft would diverge
+            # from the point of truth.  Real configs lean on this
+            # idiom: e.g. a ``DROP:$LOG <zone> any`` catch-all closes
+            # the chain before later ``rules.d/`` includes can append
+            # ACCEPTs.
+            if rule_is_v4 and chain.complete_v4:
+                continue
+            if rule_is_v6 and chain.complete_v6:
+                continue
+
             # Shorewall optimization: don't add ACCEPT rules to chains
             # that already have ACCEPT policy (redundant).
             # Only applies to "all" expansion — explicit rules always
@@ -1069,13 +1129,33 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             drop_like = (Verdict.DROP, Verdict.REJECT)
             chain_drops = chain.policy in drop_like
             rule_is_drop_like = verdict in drop_like
+            # Unconditional / narrowing-free flag — feeds both the
+            # redundant-catch-all skip below AND the chain-complete
+            # post-emit set further down (mirroring classic's
+            # ``! @matches && ($jump eq 'g' || is_terminating)`` test).
+            unconditional = (
+                not verdict_args
+                and not src_addrs and not dst_addrs
+                and not proto and not dport and not sport
+                and not origdest and not headers
+                and not mark and not connlimit and not user
+                and not time_match and not switch and not helper
+            )
             if (is_all_expansion and rule_is_drop_like and chain_drops
-                    and not verdict_args
-                    and not src_addrs and not dst_addrs
-                    and not proto and not dport and not sport
-                    and not origdest and not headers
-                    and not mark and not connlimit and not user
-                    and not time_match and not switch and not helper):
+                    and unconditional):
+                # Catch-all DROP/REJECT redundant with chain policy —
+                # don't emit, but do close the chain for this family.
+                # Classic shorewall marks ``$chainref->{complete} = 1``
+                # here too; without this set, downstream ``?SHELL
+                # include`` rules.d files would still append rules to
+                # a chain the user has already terminated.  Verified
+                # against live elgar iptables.txt where the agfeo→siem
+                # rules.d entries are absent because of a wildcard
+                # ``DROP:$LOG agfeo any`` rule processed first.
+                if rule_is_v4:
+                    chain.complete_v4 = True
+                if rule_is_v6:
+                    chain.complete_v6 = True
                 continue
 
             rule = Rule(
@@ -1335,6 +1415,22 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             _inject_ipsec_policy_match(rule, sz, dz, zones)
 
             chain.rules.append(rule)
+
+            # Mirror classic ``Chains.pm:1832``: an unconditional
+            # terminating verdict closes the chain for this family.
+            # Subsequent ``_add_rule`` calls hit the
+            # ``chain.complete_*`` short-circuit at loop top.
+            # Verdicts that count as terminating: ACCEPT/DROP/REJECT/
+            # GOTO — JUMP returns control to the caller, so it does
+            # NOT close.  ``unconditional`` is the same flag used by
+            # the redundant-catch-all skip above.
+            if (unconditional and verdict in
+                    (Verdict.ACCEPT, Verdict.DROP,
+                     Verdict.REJECT, Verdict.GOTO)):
+                if rule_is_v4:
+                    chain.complete_v4 = True
+                if rule_is_v6:
+                    chain.complete_v6 = True
 
 
 def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
