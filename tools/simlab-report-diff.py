@@ -50,7 +50,8 @@ def _bucket_counts(report: dict) -> dict[str, int]:
         k: 0 for k in (
             "pass_accept", "pass_drop",
             "fail_drop", "fail_accept", "wrong_verdict",
-            "rate_limited", "errored", "dnat_mismatch",
+            "rate_limited", "errored",
+            "dnat_mismatch", "snat_mismatch",
             "variant_artifact",
         )
     }
@@ -92,15 +93,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{'bucket':<16} {'A':>8} {'B':>8} {'Δ':>8}")
     print("-" * 44)
     for k in ("pass_accept", "pass_drop", "fail_drop", "fail_accept",
-              "wrong_verdict", "dnat_mismatch", "rate_limited",
-              "variant_artifact", "errored"):
+              "wrong_verdict", "dnat_mismatch", "snat_mismatch",
+              "rate_limited", "variant_artifact", "errored"):
         delta = cb[k] - ca[k]
         marker = " "
         if delta > 0 and k in ("fail_drop", "fail_accept",
-                               "wrong_verdict", "dnat_mismatch"):
+                               "wrong_verdict", "dnat_mismatch",
+                               "snat_mismatch"):
             marker = "▲"   # regression in a failure bucket
         elif delta < 0 and k in ("fail_drop", "fail_accept",
-                                 "wrong_verdict", "dnat_mismatch"):
+                                 "wrong_verdict", "dnat_mismatch",
+                                 "snat_mismatch"):
             marker = "▼"   # improvement in a failure bucket
         print(f"{k:<16} {ca[k]:>8} {cb[k]:>8} {delta:>+8} {marker}")
 

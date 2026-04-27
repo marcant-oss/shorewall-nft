@@ -72,7 +72,7 @@ previously skipped these and over-predicted ACCEPT.  Now treats
 
 * Without ``--trace on``, fresh full runs of the loop produce
   ~17 fail_drops, dominated by ``dmz→net`` to public IPs (DNS /
-  NTP probes to 217.14.x).  The compiled FILTER chain ACCEPTs
+  NTP probes to 203.0.113.x).  The compiled FILTER chain ACCEPTs
   the packet (``nft monitor trace`` with ``--trace`` confirms),
   but the simlab worker on bond1 doesn't see the egress packet
   in time → ``observed=DROP`` (timeout).

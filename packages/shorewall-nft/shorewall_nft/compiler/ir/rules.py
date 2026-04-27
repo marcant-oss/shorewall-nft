@@ -1045,7 +1045,7 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             # plus an address inspection (``is_ipv6_spec``) of the
             # source/dest spec, after stripping the leading ``zone:``
             # qualifier — without the strip a v4 spec like
-            # ``all:217.14.160.0/20`` is misclassified as v6 because the
+            # ``all:203.0.113.0/20`` is misclassified as v6 because the
             # zone-prefix colon trips the IPv6 colon heuristic.
             def _spec_family_tag(spec: str) -> str | None:
                 # Case-insensitive: matches ``$SIP_V6`` / ``$sip_v6``

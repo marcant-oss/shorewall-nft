@@ -53,7 +53,7 @@ def collect_failures(report_path: Path,
     seen: Counter = Counter()
     failure_buckets = {
         "fail_drop", "fail_accept", "wrong_verdict",
-        "dnat_mismatch", "errored",
+        "dnat_mismatch", "snat_mismatch", "errored",
     }
 
     for p in probes:

@@ -48,7 +48,7 @@ def _baseline_files(extra_rules: str = "") -> dict[str, str]:
     """
     return {
         "shorewall.conf": "",
-        "params": "SIP_V6=2a00:f88:0:30c0::5\n",
+        "params": "SIP_V6=2001:db8:cafe::5\n",
         "zones": (
             "fw       firewall\n"
             "int      ip\n"
@@ -83,7 +83,7 @@ def test_uppercase_v6_param_classified_as_v6(tmp_path: Path) -> None:
     matched = False
     for r in ir.chains["int-voice"].rules:
         for m in getattr(r, "matches", []):
-            if m.field == "ip6 daddr" and "2a00:f88:0:30c0::5" in m.value:
+            if m.field == "ip6 daddr" and "2001:db8:cafe::5" in m.value:
                 matched = True
                 break
     assert matched, (
@@ -109,7 +109,7 @@ def test_v6_rule_skipped_for_ipv4_only_zone(tmp_path: Path) -> None:
         for r in ir.chains["dmz-voice"].rules:
             for m in getattr(r, "matches", []):
                 assert not (m.field == "ip6 daddr" and
-                            "2a00:f88:0:30c0::5" in m.value), (
+                            "2001:db8:cafe::5" in m.value), (
                     "v6 rule leaked into dmz-voice chain (dmz is ipv4-only)"
                 )
 
