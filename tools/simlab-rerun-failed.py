@@ -32,7 +32,6 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-
 _DEFAULT_FAIL_BUCKETS = {
     "fail_drop", "fail_accept", "wrong_verdict", "errored", "dnat_mismatch",
 }

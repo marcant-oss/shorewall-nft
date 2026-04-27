@@ -26,7 +26,6 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
 
 from shorewall_nft.compiler.ir import build_ir
 from shorewall_nft.config.parser import load_config
