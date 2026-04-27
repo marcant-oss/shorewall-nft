@@ -18,6 +18,25 @@ suppression filter when it shows up in three consecutive iterations.
 - Mitigation: add stub routes in `topology.py` once the loop runs
   green on everything else.
 
+## DNAT to public IP outside the simlab netns (known UDP edge-case)
+
+- Reverse DNAT rules that rewrite an internal dst to a public IP
+  (e.g. ``-d 192.168.191.5 -p udp --dport 69 -j DNAT --to 217.14.168.5``,
+  the TFTP relay pattern) egress on the net-zone interface but the
+  rewritten dst has no listener inside the simlab topology.  For
+  TCP probes this is fine (no SYN-ACK ≠ REJECT).  For UDP probes
+  the upstream simulator stub returns ICMP port-unreach which the
+  worker classifies as REJECT, producing one stable ``fail_drop``
+  per such rule.
+- Surfaces against the rossini snapshot as one ``test→net`` UDP/69
+  TFTP probe.
+- Mitigation (deferred): worker should treat post-DNAT egress to
+  a public-only-route'd dst as PASS once the egress frame is
+  observed on the expected iface (the rewrite itself is the only
+  thing the FILTER walker can validate; the upstream behaviour is
+  out-of-scope).  Or: per-rule walker skips UDP rules whose
+  rewrite target leaves the simlab netns.
+
 ## DNAT coverage gap — per-rule path
 
 - The `dnat_mismatch` bucket is populated from random-probe runs,
