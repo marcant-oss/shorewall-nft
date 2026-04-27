@@ -126,6 +126,26 @@ def test_parse_ipsec_options_reqid_comma_list_with_spaces():
     assert opts.reqid == [10, 20, 30]
 
 
+def test_parse_ipsec_options_reqid_any():
+    """``reqid=any`` and bare ``reqid`` set ``reqid_any`` so the
+    compiler emits ``ipsec <dir> reqid != 0`` instead of pinning a
+    specific value.  Validates the broader-but-still-narrow ipsec
+    match path documented in :func:`_build_ipsec_policy_clause`.
+    """
+    opts = _parse_ipsec_options(["reqid=any"])
+    assert opts.reqid_any is True
+    assert opts.reqid == []
+
+    opts = _parse_ipsec_options(["reqid"])
+    assert opts.reqid_any is True
+    assert opts.reqid == []
+
+    # Numeric value still goes the explicit-reqid path.
+    opts = _parse_ipsec_options(["reqid=99"])
+    assert opts.reqid_any is False
+    assert opts.reqid == [99]
+
+
 def test_parse_ipsec_options_spi_decimal():
     opts = _parse_ipsec_options(["spi=12345"])
     assert opts.spi == 12345

@@ -49,6 +49,11 @@ class IpsecOptions:
     # ``ipsec <dir> reqid { N1, N2, ... }``. Single values stay
     # one-element lists; emit collapses to ``reqid N`` in that case.
     reqid: list[int] = field(default_factory=list)
+    # ``reqid=any`` (or just ``reqid`` with no value) is the
+    # "match-any-reqid" form, emitted as ``ipsec <dir> reqid != 0``.
+    # Narrower than ``meta ipsec exists`` (excludes reqid=0 special-
+    # case SAs) but doesn't pin a specific tunnel.
+    reqid_any: bool = False
     spi: int | None = None
     proto: str | None = None      # ``esp`` | ``ah`` | ``comp``
     mode: str | None = None       # ``tunnel`` | ``transport``
@@ -281,16 +286,22 @@ def _parse_ipsec_options(options: list[str],
                 opts.mss = int(tok.split("=", 1)[1])
             except ValueError:
                 pass
-        elif tok.startswith("reqid="):
-            raw = tok.split("=", 1)[1]
-            for part in raw.split(","):
-                part = part.strip()
-                if not part:
-                    continue
-                try:
-                    opts.reqid.append(int(part))
-                except ValueError:
-                    pass
+        elif tok == "reqid" or tok.startswith("reqid="):
+            raw = tok.split("=", 1)[1] if "=" in tok else ""
+            # ``reqid=any`` and bare ``reqid`` map to the "any-reqid"
+            # match form (``ipsec <dir> reqid != 0``).  Numeric lists
+            # stay the explicit-reqid path.
+            if raw.lower() in ("", "any"):
+                opts.reqid_any = True
+            else:
+                for part in raw.split(","):
+                    part = part.strip()
+                    if not part:
+                        continue
+                    try:
+                        opts.reqid.append(int(part))
+                    except ValueError:
+                        pass
         elif tok.startswith("spi="):
             try:
                 raw = tok.split("=", 1)[1]

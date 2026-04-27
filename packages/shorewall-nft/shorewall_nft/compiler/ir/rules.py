@@ -1383,9 +1383,16 @@ def _build_ipsec_policy_clause(zone_name: str, zones: ZoneModel,
 
     opts = z.ipsec_options
     has_reqid = bool(opts and opts.reqid)
+    has_reqid_any = bool(opts and getattr(opts, "reqid_any", False))
     has_spi = bool(opts and opts.spi is not None)
-    if opts is not None and (has_reqid or has_spi):
+    if opts is not None and (has_reqid or has_reqid_any or has_spi):
         parts = [f"ipsec {direction}"]
+        if has_reqid_any and not has_reqid:
+            # ``reqid=any`` / bare ``reqid``: match any non-zero
+            # reqid, narrower than ``meta ipsec exists`` (excludes
+            # the kernel's reqid=0 "default" SAs).  nft 1.1.x parses
+            # this as ``ipsec <dir> reqid != 0``.
+            parts.append("reqid != 0")
         if has_reqid:
             if len(opts.reqid) == 1:
                 parts.append(f"reqid {opts.reqid[0]}")
