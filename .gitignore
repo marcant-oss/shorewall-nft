@@ -13,6 +13,11 @@ tools/deploy.json
 # ─────────────────────────────────────────────────────────────
 docs/testing/simlab-reports/*/fail-pcaps/
 
+# Reference-replay loop run artefacts — per-iteration report.json,
+# diff-vs-prev.txt, failed-probes.json.  Reproducible from the loop
+# driver; not tracked in git history.
+docs/testing/simlab-reports/loop/
+
 # ─────────────────────────────────────────────────────────────
 # Claude Code local state
 # ─────────────────────────────────────────────────────────────

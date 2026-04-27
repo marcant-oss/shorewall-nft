@@ -223,7 +223,52 @@ Commands:
     --random N         number of random probes (default 50)
     --seed SEED        random seed (default = wall clock)
     -v / --verbose     dump raw sysctl values before the run
+    --summary-only     drop per-probe + per-pcap detail; emit only
+                       categories + mismatched probes (~1 % size of
+                       a normal run; intended for feedback-loops)
+    --replay PATH      bypass probe generators; run only the probe_ids
+                       listed in PATH (a JSON file produced by
+                       tools/simlab-rerun-failed.py).  Pair with the
+                       same --seed/--random/--max-per-pair as the
+                       source run so the IDs reproduce.
 ```
+
+### Reference snapshot replay (auto-loop)
+
+When iterating against a live-firewall capture (see
+`shorewall-config/reference/`), use the dedicated loop driver:
+
+```bash
+SHOREWALL_SIMLAB_HOST=rossini-test \
+    tools/simlab-reference-loop.sh
+```
+
+Each invocation runs **one** iteration:
+
+1. `tools/reference-stage.sh` (called on the remote host) merges
+   the captured `etc/shorewall/` + `etc/shorewall6/` trees into a
+   unified `etc/shorewall46/` and copies the dumps into the layout
+   simlab's `--data` flag expects.  Filenames follow the plural
+   convention from `tools/simlab-collect.sh` (`ip4rules`,
+   `ip6rules`, etc.).
+2. The first iteration (`iter-0`) runs the smoketest with
+   `full --random 200 --max-per-pair 30 --summary-only`.
+3. Subsequent iterations consume `iter-(N-1)/failed-probes.json`
+   via `--replay`, so only the previously-mismatched probes get
+   re-executed.
+4. `tools/simlab-report-diff.py` prints a ~30-line bucket delta
+   between the two reports; the script's exit code drives the
+   loop's "any new regressions?" decision.
+
+DNAT/REDIRECT validation is enabled automatically: every random
+probe consults `RulesetOracle.classify_dnat` and the worker captures
+the observed egress destination tuple; divergent rewrites land in
+the `dnat_mismatch` bucket.  IPv4 + IPv6 are handled symmetrically
+(reference snapshots with empty IPv6 NAT remain in `pass_accept`).
+
+Stop condition for the loop: two consecutive iterations with zero
+entries in `fail_drop`, `fail_accept`, `wrong_verdict`,
+`dnat_mismatch` over the diff.
 
 ### End-to-end workflow
 
