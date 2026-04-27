@@ -1035,14 +1035,25 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
 
             # Shorewall optimization: don't add ACCEPT rules to chains
             # that already have ACCEPT policy (redundant).
-            # Only applies to "all" expansion — explicit rules always go in.
-            # Exception: FASTACCEPT=No means established traffic goes through
-            # all chains, so ACCEPT rules ARE needed for accounting.
-            fastaccept = getattr(ir, '_fastaccept', True)
+            # Only applies to "all" expansion — explicit rules always
+            # go in.  The optimization fires regardless of FASTACCEPT:
+            # classic Shorewall (legacy iptables) omits the redundant
+            # ACCEPT in both FASTACCEPT=Yes and FASTACCEPT=No
+            # configurations.  Earlier versions of this optimizer
+            # gated on ``fastaccept`` to keep ACCEPT rules around for
+            # per-rule accounting under FASTACCEPT=No, but that gate
+            # caused real shadowing bugs: e.g. ``NTP(ACCEPT) all:$PFX
+            # $FW:$TIME`` (line N) followed by ``NTP(DROP) all $FW``
+            # (line N+M) both expanded into ``mgmt2fw``; the surviving
+            # ACCEPT then matched mgmt-source NTP packets *before* the
+            # explicit DROP could fire, violating the rules-file
+            # intent.  Reference firewall surfaced this as 12 NTP
+            # fail_accepts in the simlab triage; classic iptables-side
+            # has neither rule (chain-tail policy ACCEPT covers the
+            # accept side, the explicit DROP still fires for NTP).
             if (is_all_expansion and verdict == Verdict.ACCEPT
                     and chain.policy == Verdict.ACCEPT
-                    and not verdict_args
-                    and fastaccept):
+                    and not verdict_args):
                 continue
 
             # Symmetric optimisation for DROP/REJECT: a rule like
