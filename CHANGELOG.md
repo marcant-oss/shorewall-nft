@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-04-27 — chain-complete short-circuit)
+
+* Compiler now mirrors classic shorewall's ``$chainref->{complete}``
+  flag (``Chains.pm:1832`` / ``expand_rule1:8400``).  Once a
+  terminating, fully unconditional rule (``DROP``/``REJECT``/``-g``
+  with no host/proto/port narrowing) is appended to a chain, every
+  subsequent ``_add_rule`` for the same chain in the same family
+  is silently dropped.  Real configs lean on this idiom: a
+  wildcard ``DROP:$LOG <zone> any`` catch-all closes the chain
+  before later ``rules.d/`` includes can append ACCEPTs — the
+  iptables-side ground truth has no such rules in the affected
+  ``<zone>2X`` chains, so emitting them in nft would diverge from
+  the point of truth.  Implementation: ``Chain.complete_v4`` /
+  ``complete_v6`` slots (separate per family because shorewall-nft
+  compiles into a merged ``inet`` chain — classic's single flag is
+  implicitly per-family via independent iptables / ip6tables
+  chains).  Surfaced as 51 fail_accept on the reference fixture
+  (agfeo→siem leak); cleared after this fix in combination with
+  the simlab-side improvements landed in shorewall-nft-simlab.
+
 ## [1.11.0] - 2026-04-25
 
 **Highlights** — libnftnl-integration phases 0-7 closed: SYNPROXY,

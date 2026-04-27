@@ -522,3 +522,53 @@ callers continue to work unchanged.  New code should import directly from
 - **pcap-on-failure** is wired on the packet-builder side
   (`packets.export_trace_pcap`) but not yet attached to the
   controller's post-run cleanup. Top item on the roadmap.
+
+## Common pitfalls
+
+### `--config` must point at the same source as `iptables.txt`
+
+The simlab oracle reads `iptables.txt` / `ip6tables.txt` from
+`--data` and uses them as the point of truth.  The compiler reads
+the shorewall config from `--config`.  When the two **diverge** —
+e.g. you keep a "current" working copy of the rules file that has
+been edited but the firewall hasn't yet reloaded — every probe
+that hits a rule whose ordering shifted between the two snapshots
+shows up as a fail_drop or fail_accept.
+
+The chain-complete short-circuit (introduced in 1.11.x) makes this
+divergence very visible: a wildcard catch-all like `DROP:$LOG
+<zone> any` closes the chain, and any rules added *after* it
+(e.g. via `?SHELL cat /etc/shorewall/rules.d/*.rules`) are
+silently dropped.  If `iptables.txt` was captured under one rule
+ordering and `--config` points at a snapshot with the catch-all
+moved earlier or later, the resulting chains differ — observed on
+the reference fixture as 51 false-positive fail_accept (now
+resolved by switching `--config` to the same snapshot that
+produced `iptables.txt`).
+
+**Rule of thumb**: the snapshot bundle from `simlab-collect.sh`
+contains both `iptables.txt` and `etc/shorewall/` from the same
+`shorewall-save` moment.  Always pass them as a pair:
+
+```
+shorewall-nft-simlab \
+    --data    /var/tmp/fw-snapshot \
+    --config  /var/tmp/fw-snapshot/etc/shorewall \
+    full ...
+```
+
+When you must compile a different config (e.g. testing a
+proposed rules-file change before deploying it), regenerate the
+oracle from that same config first:
+
+```
+# 1. classic-compile the proposed config
+shorewall-compile.sh --shorewall /path/to/proposed-config \
+                     --output    /tmp/proposed-oracle
+# 2. swap iptables.txt + ip6tables.txt into the snapshot dir
+cp /tmp/proposed-oracle/iptables.txt   /var/tmp/fw-snapshot/
+cp /tmp/proposed-oracle/ip6tables.txt  /var/tmp/fw-snapshot/
+# 3. run simlab
+shorewall-nft-simlab --data /var/tmp/fw-snapshot \
+                     --config /path/to/proposed-config full ...
+```
