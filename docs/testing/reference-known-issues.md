@@ -68,30 +68,38 @@ previously skipped these and over-predicted ACCEPT.  Now treats
 ``--ctorigdst <CIDR>`` as a dst constraint and sees the drop.
 14 fail_drops eliminated (iter 5 → iter 6).
 
-## simlab dmz→net NDP/ARP cold-start race (mitigation: ``--trace on``)
+## simlab cold-start NDP/ARP race (largely RESOLVED 2026-04-28)
 
-* Without ``--trace on``, fresh full runs of the loop produce
-  ~17 fail_drops, dominated by ``dmz→net`` to public IPs (DNS /
-  NTP probes to 203.0.113.x).  The compiled FILTER chain ACCEPTs
-  the packet (``nft monitor trace`` with ``--trace`` confirms),
-  but the simlab worker on bond1 doesn't see the egress packet
-  in time → ``observed=DROP`` (timeout).
-* With ``--trace on``, the same probes pass cleanly.  The kernel
-  trace hook at priority -300 introduces a small per-packet
-  delay that lets the simlab reader thread complete its
-  ARP-responder + dispatch loop on the cold-start NDP/ARP
-  exchange before the actual probe packet arrives.
-* ``tools/simlab-reference-loop.sh`` therefore ships with
-  ``--trace on`` in ``RUN_FLAGS``.  The trade-off: nft-trace
-  output adds ~few hundred KB per iter to the run dir (still
-  far smaller than the per-pcap detail ``--summary-only``
-  drops).  Removing ``--trace`` re-introduces the cold-start
-  fail_drops and is not recommended for loop runs.
-* Tracked as an open simlab follow-up: rework the worker's
-  cold-start ARP/NDP handling so it doesn't depend on the
-  trace-induced delay.  Most likely fix is to install static
-  neighbor entries for default-gateway IPs in ``topology.py``
-  before the first probe batch fires.
+Resolved by two complementary mechanisms in
+shorewall-nft-simlab (commit ``003b2aa``):
+
+* ``topology.py``: sets ``net.ipv4.conf.{all,default}.arp_accept=1``
+  in NS_FW so the kernel CREATES neighbour entries from
+  received gratuitous ARP replies (default ``0`` only updates
+  existing entries).  IPv6 NDP with the Override flag is
+  accepted by default and creates entries unconditionally.
+* ``controller.SimController.announce_neighbours()`` replaces
+  the probe-based ``_ndp_warmup`` with protocol-correct GARP
+  (IPv4) + unsolicited Neighbor Advertisement (IPv6) frames
+  written into each iface's TAP fd before the first probe
+  batch.  The frame's source MAC is ``_WORKER_MAC`` (the same
+  fake MAC the simulator's ARP/NDP responder hands out) so
+  the kernel doesn't see the announcement as coming "from its
+  own address" and discard it as a martian.
+
+Effect on the rossini snapshot:
+
+* Before any warmup:                  17 fail_drops (fresh full).
+* With ``--trace on`` only:           2 fail_drops.
+* With GARP/NA warmup + ``--trace``:  1 transient flake.
+
+``tools/simlab-reference-loop.sh`` keeps ``--trace on`` in
+``RUN_FLAGS`` as belt-and-braces — empirically catches the
+last few cases the announcement warmup doesn't preempt.  The
+combination converges the loop to ≤1 flaky probe per fresh
+sweep; that flake is non-deterministic (different probe each
+run) and represents simulator noise rather than a compiler
+bug.
 
 ## tun0 / point-to-point peer routes (RESOLVED 2026-04-27)
 
