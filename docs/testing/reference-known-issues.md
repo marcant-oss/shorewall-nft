@@ -58,20 +58,32 @@ suppression filter when it shows up in three consecutive iterations.
 - v6 `dnat_mismatch == 0` is the *expected* steady state, not
   evidence of v6 coverage.
 
-## net→<internal> ICMP echo-request fail_drops (open, ~15 cases)
+## net→<internal> ICMP echo-request fail_drops (RESOLVED 2026-04-27)
 
-- Probes from external (217.14.x non-FW) IPs to internal targets
-  (192.168.x / 172.31.x) with `icmp type 8` are oracle-classified
-  as `direct accept` (matches `-A net2X -p icmp --icmp-type 8 -j
-  ACCEPT` in iptables.txt).  Compiled chain has an equivalent
-  `meta nfproto ipv4 meta l4proto icmp icmp type 8 accept` rule.
-  Yet the simlab FW drops them — `nft monitor trace` shows the
-  chain returning `drop` after no rule matches.  Hypotheses:
-  - simlab probe payload sets icmp type 8 but with a code or other
-    field that the compiled rule's match doesn't cover identically
-  - compiled rule guards on `meta nfproto ipv4` evaluating False
-    for some reason (probe is IPv4 but the meta-detection edge
-    case)
-- Tracked separately; not blocking the loop.  Investigate by
-  comparing nft trace probe-by-probe against the rule's match
-  predicate.
+Resolved by ``oracle.py``'s ``--ctorigdst`` evaluator (commit
+``eb31d51``).  The fail_drops were oracle false-positives:
+classic ``-A net2X -m conntrack --ctorigdst 192.168.0.0/16
+-g ~log75`` rules drop RFC1918 anti-spoof traffic; the oracle
+previously skipped these and over-predicted ACCEPT.  Now treats
+``--ctorigdst <CIDR>`` as a dst constraint and sees the drop.
+14 fail_drops eliminated (iter 5 → iter 6).
+
+## tun0 / point-to-point peer routes (open, 1 case)
+
+- ``voice→vpn 192.168.192.254→10.8.1.42 udp:5060`` fails because
+  simlab's NS_FW installs ``10.8.1.1/32`` on ``tun0`` but the
+  kernel's auto-installed peer route (``10.8.1.2 dev tun0`` from
+  the PtP semantics of ``inet X peer Y/PLEN``) is missing in the
+  simulated namespace.  Result: routes ``10.8.1.0/24 via 10.8.1.2
+  dev tun0`` fail to install (next-hop unreachable), the kernel
+  falls through to the default route via ``bond1``, and the
+  forward dispatcher matches ``voice-net`` instead of
+  ``voice-vpn`` — ``voice-net`` chain has no rule for
+  ``10.8.1.42:5060`` and rejects.
+- The ``inet X peer Y/PLEN`` parsing already lands in
+  ``state.interfaces['tun0'].addrs4`` (commit pending — extends
+  ``_INET_RE``); the missing piece is ``topology.py`` installing
+  the address with explicit ``peer=Y`` so the kernel synthesises
+  the peer route as it would in production.
+- Tracked as ``simlab/topology.py`` open follow-up; not blocking
+  the loop.
