@@ -419,9 +419,24 @@ def _process_notrack(ir: FirewallIR, notrack_lines: list[ConfigLine],
 
 
 def _process_conntrack(ir: FirewallIR, conntrack_lines: list[ConfigLine]) -> None:
-    """Process conntrack helper rules.
+    """Process the modern Shorewall ``conntrack`` config file.
 
-    Format: CT:helper:NAME:POLICY SOURCE DESTINATION PROTO DEST_PORT
+    Two row shapes share this file:
+
+    * ``CT:helper:NAME:POLICY SOURCE DESTINATION PROTO DEST_PORT`` —
+      conntrack-helper assignment, lands in the ``ct-helpers`` chain
+      at priority -200.
+    * ``NOTRACK SOURCE DESTINATION PROTO DEST_PORT [SOURCE_PORT]`` —
+      raw-table NOTRACK, lands in ``raw-prerouting`` (priority -300).
+      Critical on BGP-transit configs to keep the conntrack table
+      from filling under transit load.  Earlier revisions silently
+      skipped these rows; portalfw-n1 surfaced 43 IPv4 NOTRACK rules
+      missing from the IR until this branch landed.
+
+    SOURCE column accepts ``iface[:host]`` syntax (interface name as
+    primary key; classic shorewall accepts both interface names and
+    zone names here, but for the raw table the iif is what the
+    kernel actually sees pre-routing).
     """
     # Create ct helper chain if needed
     if "ct-helpers" not in ir.chains:
@@ -438,43 +453,129 @@ def _process_conntrack(ir: FirewallIR, conntrack_lines: list[ConfigLine]) -> Non
             continue
 
         action = cols[0]
-        if not action.startswith("CT:helper:"):
+
+        if action.startswith("CT:helper:"):
+            # nfset/dns/dnsr token pre-pass on SOURCE(col 1) + DEST(col 2).
+            found, expanded = expand_line_for_tokens(line, 1, 2, ir)
+            if found:
+                _process_conntrack(ir, expanded)
+                continue
+
+            parts = action.split(":")
+            helper_name = parts[2] if len(parts) > 2 else ""
+            # policy = parts[3] if len(parts) > 3 else ""
+
+            proto = cols[3] if len(cols) > 3 else None
+            dport = cols[4] if len(cols) > 4 else None
+            if proto == "-":
+                proto = None
+            if dport == "-":
+                dport = None
+
+            chain = ir.chains["ct-helpers"]
+            rule = Rule(
+                verdict=Verdict.ACCEPT,
+                verdict_args=CtHelperVerdict(name=helper_name),
+                source_file=line.file,
+                source_line=line.lineno,
+                source_raw=line.raw,
+            )
+            if proto:
+                rule.matches.append(Match(field="meta l4proto", value=proto))
+                if dport:
+                    rule.matches.append(Match(field=f"{proto} dport", value=dport))
+            chain.rules.append(rule)
             continue
 
-        # nfset/dns/dnsr token pre-pass on SOURCE(col 1) + DEST(col 2).
-        found, expanded = expand_line_for_tokens(line, 1, 2, ir)
-        if found:
-            _process_conntrack(ir, expanded)
+        if action == "NOTRACK":
+            _emit_conntrack_notrack(ir, line)
             continue
 
-        # Parse CT:helper:NAME:POLICY
-        parts = action.split(":")
-        helper_name = parts[2] if len(parts) > 2 else ""
-        # policy = parts[3] if len(parts) > 3 else ""
+        # Other row types (e.g. ``CT:notrack:...``, ``CT:zone:...``)
+        # are not yet handled — silent skip preserves the historical
+        # behaviour for shapes we haven't audited.
 
-        proto = cols[3] if len(cols) > 3 else None
-        dport = cols[4] if len(cols) > 4 else None
 
-        if proto == "-":
-            proto = None
-        if dport == "-":
-            dport = None
+def _emit_conntrack_notrack(ir: FirewallIR, line) -> None:
+    """Emit a NOTRACK rule from a ``conntrack`` file row.
 
-        chain = ir.chains["ct-helpers"]
-        rule = Rule(
-            verdict=Verdict.ACCEPT,
-            verdict_args=CtHelperVerdict(name=helper_name),
-            source_file=line.file,
-            source_line=line.lineno,
+    Row layout: ``NOTRACK SOURCE DEST PROTO DPORT [SPORT]`` where
+    ``SOURCE`` is ``iface[:host]`` and ``DEST`` is a bare host /
+    CIDR (``0.0.0.0/0`` ≡ unrestricted).
+    """
+    cols = line.columns
+    if len(cols) < 2:
+        return
+
+    source = cols[1]
+    dest = cols[2] if len(cols) > 2 else "-"
+    proto = cols[3] if len(cols) > 3 else None
+    dport = cols[4] if len(cols) > 4 else None
+    sport = cols[5] if len(cols) > 5 else None
+    if dest == "-":
+        dest = ""
+    if proto == "-":
+        proto = None
+    if dport == "-":
+        dport = None
+    if sport == "-":
+        sport = None
+
+    # SOURCE = ``iface[:host]``.  The interface part lands as iifname
+    # in raw-prerouting; the optional ``:host`` becomes the saddr
+    # match.  Negation (``!host``) and ``+ipset`` references fall
+    # through unchanged — the emitter handles them downstream.
+    iface = source
+    saddr: str | None = None
+    if ":" in source:
+        iface, saddr = source.split(":", 1)
+    iface = iface.strip()
+    saddr = saddr.strip() if saddr else None
+
+    # raw-prerouting chain — created lazily by ``_process_notrack`` if
+    # it ran earlier; otherwise add it here so this branch works
+    # standalone for configs that use only the modern ``conntrack``
+    # file.
+    if "raw-prerouting" not in ir.chains:
+        ir.add_chain(Chain(
+            name="raw-prerouting",
+            chain_type=ChainType.FILTER,
+            hook=Hook.PREROUTING,
+            priority=-300,
+        ))
+
+    rule = Rule(
+        verdict=Verdict.ACCEPT,
+        verdict_args=NotrackVerdict(),
+        source_file=line.file,
+        source_line=line.lineno,
         source_raw=line.raw,
-        )
+    )
 
-        if proto:
-            rule.matches.append(Match(field="meta l4proto", value=proto))
-            if dport:
-                rule.matches.append(Match(field=f"{proto} dport", value=dport))
+    if iface and iface not in ("-", "all", "any"):
+        rule.matches.append(Match(field="iifname", value=iface))
+    if saddr:
+        # Negated ``!host`` form preserved in the value; downstream
+        # emitter handles the ``negate=`` flag for the bracket form.
+        if saddr.startswith("!"):
+            rule.matches.append(Match(field="ip saddr",
+                                      value=saddr[1:], negate=True))
+        else:
+            rule.matches.append(Match(field="ip saddr", value=saddr))
+    if dest:
+        if dest.startswith("!"):
+            rule.matches.append(Match(field="ip daddr",
+                                      value=dest[1:], negate=True))
+        else:
+            rule.matches.append(Match(field="ip daddr", value=dest))
+    if proto:
+        rule.matches.append(Match(field="meta l4proto", value=proto))
+        if dport:
+            rule.matches.append(Match(field=f"{proto} dport", value=dport))
+        if sport:
+            rule.matches.append(Match(field=f"{proto} sport", value=sport))
 
-        chain.rules.append(rule)  # conntrack helper
+    ir.chains["raw-prerouting"].rules.append(rule)
 
 
 def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
