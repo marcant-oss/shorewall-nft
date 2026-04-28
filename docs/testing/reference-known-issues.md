@@ -226,11 +226,17 @@ bug.
   coverage). Neither rossini nor portalfw snapshots have SECMARK
   rules today.
 
-* **Flowtable / fastpath: validation gap**. ``FLOWTABLE_FLAGS=offload``
-  setting in ``shorewall.conf`` is live (since 1.1) but neither
-  static nor dynamic simlab validation exists. Needs either an
-  offload-capable test NIC or a software-fastpath check via
-  conntrack counters.
+* **Flowtable / fastpath: dynamic check landed, static check still
+  open**. ``FLOWTABLE_FLAGS=offload`` is exercised by the complex
+  golden config and the dynamic side now reports per-flowtable
+  ``flows`` count via ``smoketest._flowtable_state`` —
+  ``validation_warnings`` carries a ``flowtable: 0 flows offloaded
+  — fastpath inactive`` message when the kernel saw zero entries
+  after a probe sweep.  The static side (compare emitted nft
+  ``flowtable ft { … }`` declaration against a captured
+  ``nft list ruleset`` reference) is still open; needs a snapshot
+  with ``FLOWTABLE_FLAGS`` set + an ``nft-ruleset.txt`` collector
+  in ``simlab-collect.sh``.
 
 * **CT-helper: per-snapshot capabilities override**. The snapshot
   loader parses ``__*_HELPER=1`` defaults globally across all

@@ -182,6 +182,14 @@ table inet shorewall {
 		l3proto inet;
 	}
 
+
+	# HW offload active — enable on each device: ethtool -K <dev> hw-tc-offload on  (devices: bond0, bond0.10, bond0.20, bond0.30, bond0.40, br0, eth0, eth1, eth2, tun0)
+	# Kernel silently falls back to SW flowtable if the driver does not support it.
+	flowtable ft {
+		hook ingress priority 0;
+		devices = { "bond0", "bond0.10", "bond0.20", "bond0.30", "bond0.40", "br0", "eth0", "eth1", "eth2", "tun0" };
+		flags offload;
+	}
 	chain prerouting {
 		type nat hook prerouting priority -100;
 
@@ -269,6 +277,9 @@ table inet shorewall {
 
 	chain forward {
 		type filter hook forward priority 0; policy drop;
+
+		# Flowtable fastpath — offload established flows
+		meta l4proto { tcp, udp } flow add @ft
 
 		ct state { established, related } accept
 
