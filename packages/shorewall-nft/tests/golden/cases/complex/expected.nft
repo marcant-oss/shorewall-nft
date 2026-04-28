@@ -423,6 +423,14 @@ table inet shorewall {
 		jump fw-tunneled
 	}
 
+	chain ct-helpers-output {
+		type filter hook output priority -200;
+
+		meta l4proto tcp tcp dport 21 ct helper set "ftp"
+		meta l4proto udp udp dport 69 ct helper set "tftp"
+
+	}
+
 	chain postrouting {
 		type nat hook postrouting priority 100;
 

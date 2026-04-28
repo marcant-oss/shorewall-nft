@@ -89,9 +89,36 @@ def _canon_addr(spec: str) -> str:
 # ── parsing iptables.txt ────────────────────────────────────────────
 
 
+_HELPER_RE = __import__("re").compile(r"--helper\s+(\S+)")
+
+
+def _classify_raw_target(rule) -> str | None:
+    """Return canonical target string for raw-table rules we diff:
+    ``"notrack"`` for NOTRACK / CT --notrack; ``"helper:<name>"`` for
+    CT --helper assignments; ``None`` to skip everything else (LOG,
+    TRACE, MARK in raw, etc.).
+    """
+    target = (rule.target or "").upper()
+    raw = rule.raw or ""
+    if target == "NOTRACK":
+        return "notrack"
+    if target == "CT":
+        if "--notrack" in raw:
+            return "notrack"
+        m = _HELPER_RE.search(raw)
+        if m:
+            return f"helper:{m.group(1).lower()}"
+    return None
+
+
 def parse_raw_from_dump(path: Path, family: int) -> set[CanonRule]:
     """Parse the ``*raw`` block of an iptables-save dump and return
-    a set of ``CanonRule`` keys for NOTRACK rules only.
+    canonical keys for both NOTRACK and CT-helper assignments.
+
+    ``-j CT --helper ftp`` lands in classic Shorewall as a raw-table
+    rule that pre-binds the ftp helper to matching new flows.
+    shorewall-nft compiles the same intent into the ``ct-helpers``
+    chain at priority -200; the diff catches gaps in either direction.
     """
     from shorewall_nft.verify.iptables_parser import parse_iptables_save
 
@@ -103,12 +130,8 @@ def parse_raw_from_dump(path: Path, family: int) -> set[CanonRule]:
     out: set[CanonRule] = set()
     for chain_name in ("PREROUTING", "OUTPUT"):
         for rule in raw.rules.get(chain_name, []):
-            target = (rule.target or "").upper()
-            is_notrack = (
-                target == "NOTRACK"
-                or (target == "CT" and "--notrack" in (rule.raw or ""))
-            )
-            if not is_notrack:
+            target = _classify_raw_target(rule)
+            if target is None:
                 continue
             # iptables_parser strips the leading ``!`` from saddr /
             # daddr — but keeps the verbatim line in ``rule.raw``,
@@ -131,7 +154,7 @@ def parse_raw_from_dump(path: Path, family: int) -> set[CanonRule]:
                 daddr=_canon_addr(daddr_v),
                 proto=(rule.proto or "").lower(),
                 dport=(rule.dport or "").strip(),
-                target="notrack",
+                target=target,
             ))
     return out
 
@@ -152,12 +175,10 @@ def _ir_match_value(rule, field: str) -> str:
 
 
 def parse_raw_from_ir(ir, family: int) -> set[CanonRule]:
-    """Walk the IR's ``raw-prerouting`` + ``raw-output`` chains and
-    return canonical NOTRACK rule keys.
-
-    The compiler tags the verdict with ``NotrackVerdict()`` — that's
-    how we distinguish notrack from helper assignment without
-    re-parsing the emit text.
+    """Walk the IR's raw-table-equivalent chains and return canonical
+    keys for both NOTRACK rules (``raw-prerouting`` / ``raw-output``,
+    priority -300, ``NotrackVerdict``) and CT-helper assignments
+    (``ct-helpers``, priority -200, ``CtHelperVerdict``).
 
     Comma-separated address values are fanned out into individual
     keys: an IR rule ``ip daddr { A, B, C }`` (anonymous nft set)
@@ -165,7 +186,10 @@ def parse_raw_from_ir(ir, family: int) -> set[CanonRule]:
     ``-d B``, ``-d C`` — the static check needs the same shape on
     both sides for set-equality to work.
     """
-    from shorewall_nft.compiler.verdicts import NotrackVerdict
+    from shorewall_nft.compiler.verdicts import (
+        CtHelperVerdict,
+        NotrackVerdict,
+    )
 
     def _split_cidrs(value: str) -> list[str]:
         if not value:
@@ -176,13 +200,24 @@ def parse_raw_from_ir(ir, family: int) -> set[CanonRule]:
     chain_map = {
         "raw-prerouting": "PREROUTING",
         "raw-output": "OUTPUT",
+        # ct-helpers (priority -200) attaches at PREROUTING;
+        # ct-helpers-output mirrors it for the OUTPUT hook so
+        # ``CT:helper:<name>:PO`` (the classic-Shorewall default
+        # policy) lands a rule on both sides.
+        "ct-helpers": "PREROUTING",
+        "ct-helpers-output": "OUTPUT",
     }
     for ir_name, ipt_name in chain_map.items():
         chain = ir.chains.get(ir_name)
         if chain is None:
             continue
         for rule in chain.rules:
-            if not isinstance(rule.verdict_args, NotrackVerdict):
+            target_label: str | None = None
+            if isinstance(rule.verdict_args, NotrackVerdict):
+                target_label = "notrack"
+            elif isinstance(rule.verdict_args, CtHelperVerdict):
+                target_label = f"helper:{rule.verdict_args.name.lower()}"
+            if target_label is None:
                 continue
             # Family disambiguation: the IR is dual-stack (inet
             # family) so each rule may carry a v4 OR v6 saddr/daddr
@@ -215,7 +250,7 @@ def parse_raw_from_ir(ir, family: int) -> set[CanonRule]:
                         dport=(_ir_match_value(rule, "tcp dport")
                                or _ir_match_value(rule, "udp dport")
                                or _ir_match_value(rule, "dccp dport")),
-                        target="notrack",
+                        target=target_label,
                     ))
     return out
 

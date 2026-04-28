@@ -438,13 +438,24 @@ def _process_conntrack(ir: FirewallIR, conntrack_lines: list[ConfigLine]) -> Non
     zone names here, but for the raw table the iif is what the
     kernel actually sees pre-routing).
     """
-    # Create ct helper chain if needed
+    # Create ct helper chains if needed.  Classic Shorewall's
+    # ``CT:helper:<name>:POLICY`` entry takes a ``POLICY`` suffix
+    # of ``P`` (PREROUTING), ``O`` (OUTPUT), or ``PO`` (both).  The
+    # default — empty policy — is ``PO``.  Each direction needs its
+    # own base chain so the helper attaches at the right hook.
     if "ct-helpers" not in ir.chains:
         ir.add_chain(Chain(
             name="ct-helpers",
             chain_type=ChainType.FILTER,
             hook=Hook.PREROUTING,
             priority=-200,  # Between raw and conntrack
+        ))
+    if "ct-helpers-output" not in ir.chains:
+        ir.add_chain(Chain(
+            name="ct-helpers-output",
+            chain_type=ChainType.FILTER,
+            hook=Hook.OUTPUT,
+            priority=-200,
         ))
 
     for line in conntrack_lines:
@@ -463,7 +474,14 @@ def _process_conntrack(ir: FirewallIR, conntrack_lines: list[ConfigLine]) -> Non
 
             parts = action.split(":")
             helper_name = parts[2] if len(parts) > 2 else ""
-            # policy = parts[3] if len(parts) > 3 else ""
+            # POLICY is the 4th segment: ``P`` (prerouting only),
+            # ``O`` (output only), ``PO`` / empty (both).  Maps to
+            # which base chain(s) the helper rule lands in.
+            policy = (parts[3] if len(parts) > 3 else "PO").upper()
+            if not policy:
+                policy = "PO"
+            emit_pre = "P" in policy
+            emit_out = "O" in policy
 
             proto = cols[3] if len(cols) > 3 else None
             dport = cols[4] if len(cols) > 4 else None
@@ -472,19 +490,25 @@ def _process_conntrack(ir: FirewallIR, conntrack_lines: list[ConfigLine]) -> Non
             if dport == "-":
                 dport = None
 
-            chain = ir.chains["ct-helpers"]
-            rule = Rule(
-                verdict=Verdict.ACCEPT,
-                verdict_args=CtHelperVerdict(name=helper_name),
-                source_file=line.file,
-                source_line=line.lineno,
-                source_raw=line.raw,
-            )
-            if proto:
-                rule.matches.append(Match(field="meta l4proto", value=proto))
-                if dport:
-                    rule.matches.append(Match(field=f"{proto} dport", value=dport))
-            chain.rules.append(rule)
+            def _build_rule() -> Rule:
+                r = Rule(
+                    verdict=Verdict.ACCEPT,
+                    verdict_args=CtHelperVerdict(name=helper_name),
+                    source_file=line.file,
+                    source_line=line.lineno,
+                    source_raw=line.raw,
+                )
+                if proto:
+                    r.matches.append(Match(field="meta l4proto", value=proto))
+                    if dport:
+                        r.matches.append(
+                            Match(field=f"{proto} dport", value=dport))
+                return r
+
+            if emit_pre:
+                ir.chains["ct-helpers"].rules.append(_build_rule())
+            if emit_out:
+                ir.chains["ct-helpers-output"].rules.append(_build_rule())
             continue
 
         if action == "NOTRACK":

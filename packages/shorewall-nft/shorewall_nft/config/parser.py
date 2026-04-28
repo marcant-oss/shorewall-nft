@@ -137,6 +137,13 @@ class ConfigParser:
     """Parser for Shorewall configuration files."""
 
     # Internal Shorewall variables that are always defined
+    # __*_HELPER flags mirror classic Shorewall's kernel capability
+    # probe (``shorewall capabilities`` runs ``iptables -m helper``
+    # against the runtime).  shorewall-nft compiles offline without
+    # runtime access, so we default them to ``1`` — every modern
+    # kernel ships these conntrack helpers as standard modules.
+    # Operators who genuinely lack a helper can override via
+    # ``params`` (``__FTP_HELPER=0``).
     _BUILTIN_VARS: dict[str, str] = {
         "__CT_TARGET": "1",
         "__CONNTRACK": "1",
@@ -144,6 +151,16 @@ class ConfigParser:
         "__ADDRTYPE": "1",
         "__AUDIT_TARGET": "1",
         "__IPV6": "1",
+        "__FTP_HELPER": "1",
+        "__TFTP_HELPER": "1",
+        "__SIP_HELPER": "1",
+        "__H323_HELPER": "1",
+        "__IRC_HELPER": "1",
+        "__PPTP_HELPER": "1",
+        "__SNMP_HELPER": "1",
+        "__AMANDA_HELPER": "1",
+        "__SANE_HELPER": "1",
+        "__NETBIOS_NS_HELPER": "1",
     }
 
     def __init__(self, config_dir: Path):

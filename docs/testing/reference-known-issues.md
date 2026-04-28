@@ -18,6 +18,31 @@ suppression filter when it shows up in three consecutive iterations.
 - Mitigation: add stub routes in `topology.py` once the loop runs
   green on everything else.
 
+## Mangle table not validated (deferred)
+
+simlab + the static checks in ``tools/`` cover ``*filter``,
+``*nat``, and ``*raw`` (NOTRACK + CT helpers).  ``*mangle`` is
+not validated today.  On the rossini and portalfw snapshots the
+mangle table content is trivial:
+
+* rossini: 1 rule (``-A FORWARD -j MARK --set-xmark 0x0/0xff``,
+  the standard mark-reset).
+* portalfw: 6 rules — same mark-reset plus 5 jump-to-tc-stub
+  shells (``tcpre``/``tcin``/``tcfor``/``tcout``/``tcpost``)
+  used as TC priority anchors.
+
+Mangle validation is deferred until a snapshot exercises a
+non-trivial use case (TPROXY, marker-driven policy routing,
+MSS clamping).  The simlab oracle currently classifies probes
+purely by FILTER + NAT + raw verdicts — a packet whose mark
+diverges from the captured value would be missed.
+
+## ``*security`` table
+
+Unused on every captured snapshot.  Skipped by the oracle and
+both static checks; revisit if a future snapshot lands rules
+there.
+
 ## Worker post-egress stub-classification (4 fail_drop stragglers)
 
 After the DNAT FILTER ACCEPT companion fix + saddr-aware DNAT
