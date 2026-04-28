@@ -870,7 +870,7 @@ class Daemon:
 
         Called from :meth:`run` when ``KEEPALIVED_SNMP_UNIX`` is set.
         Every sub-component has an *Unavailable* soft-degrade path so a
-        missing python3-netsnmp, pysnmp, or dbus-next never aborts startup
+        missing puresnmp, pysnmp, or dbus-next never aborts startup
         — it just drops that capability with a warning log.
         """
         assert self._config.keepalived_snmp_unix is not None
@@ -890,7 +890,7 @@ class Daemon:
             )
         except KeepalivedSnmpClientUnavailable as e:
             log.warning(
-                "keepalived SNMP disabled (python3-netsnmp not installed): %s", e)
+                "keepalived SNMP disabled (puresnmp not installed): %s", e)
             return
 
         self._keepalived_dispatcher = KeepalivedDispatcher(

@@ -1,36 +1,124 @@
-"""python-netsnmp wrapper around ``unix:/run/snmpd/snmpd.sock``.
+"""puresnmp-backed SNMPv2c client for ``agentaddress unix:/run/snmpd/snmpd.sock``.
 
-Thin async adapter — the actual transport, retries, and BER handling
-all live in ``libnetsnmp`` (via the ``netsnmp`` Python bindings).
-We sit on top and:
+Pure-Python — kein C-Build, kein ``net-snmp-devel``. Funktioniert auf
+AlmaLinux 10 / RHEL 10 wo ``python3-netsnmp`` nicht paketiert ist.
 
-1. Present an ``asyncio``-friendly surface (``asyncio.to_thread`` bridge
-   so walks don't block the event loop).
-2. Accept the net-snmp ``unix:<path>`` Peername convention transparently,
-   with a UDP ``host:port`` back-compat path when the Unix socket is
-   absent (covers pip-only installs lacking ``python3-netsnmp``).
-3. Yield (OID, index, value, syntax) tuples instead of net-snmp's
-   ``Varbind`` objects — decouples consumers from the net-snmp Python
-   binding's quirks (``.tag`` / ``.iid`` / ``.val`` / ``.type`` with
-   ``bytes``-vs-``str`` unpredictability).
+Aufbau:
 
-The MIB-driven :meth:`KeepalivedSnmpClient.walk_all` collects every
-scalar and table defined in :mod:`shorewalld.keepalived.mib` in one
-pass and returns a :class:`KeepalivedSnapshot`.
+1. ``puresnmp.api.raw.Client`` als asyncio-natives BER-Frontend (kein
+   ``asyncio.to_thread``-Wrapper nötig — die Lib ist async by design).
+2. ``send_unix_dgram`` als ``sender=``-Parameter ersetzt den Default
+   ``send_udp`` und routet die SNMP-Pakete über einen ``AF_UNIX``-
+   ``SOCK_DGRAM``-Socket. Endpoint.ip wird als Pfad interpretiert.
+3. Fallback-Pfad: fehlt der Unix-Socket-Pfad bzw. existiert er nicht,
+   wird automatisch UDP ``host:port`` benutzt — analog zum Verhalten
+   der alten netsnmp-basierten Implementation.
+
+Output bleibt :class:`SnmpVarbind` (oid + index + value + syntax) —
+:meth:`walk_all` und alle Konsumenten sind library-agnostisch.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
+import socket
 import time
 from dataclasses import dataclass
 
 try:
-    import netsnmp  # type: ignore[import-untyped]
-    _NETSNMP_AVAILABLE = True
+    import puresnmp  # noqa: F401  (module-level availability check)
+    from puresnmp.api.raw import Client as _PuresnmpClient
+    from puresnmp.credentials import V2C
+    from x690.types import ObjectIdentifier
+    _PURESNMP_AVAILABLE = True
 except ImportError:
-    netsnmp = None  # type: ignore[assignment]
-    _NETSNMP_AVAILABLE = False
+    _PuresnmpClient = None  # type: ignore[assignment]
+    V2C = None  # type: ignore[assignment]
+    ObjectIdentifier = None  # type: ignore[assignment]
+    _PURESNMP_AVAILABLE = False
+
+
+def _make_unix_stream_sender(socket_path: str):
+    """Build a puresnmp sender bound to ``socket_path`` (Unix STREAM).
+
+    net-snmp's ``agentaddress unix:<path>`` creates a ``SOCK_STREAM``
+    listener (verified via ``ss -lx``). For each request we connect,
+    send the BER-encoded SNMP message in a single ``sendall``, then
+    read the reply until we've consumed a complete BER SEQUENCE
+    (``0x30 + length + body``). One PDU per connection — snmpd does
+    not pipeline replies on AF_UNIX/STREAM.
+
+    puresnmp's :class:`Client` validates ``ip`` as IPv4/IPv6 — we
+    can't smuggle a Unix path through ``Endpoint``. The path lives in
+    this closure; ``endpoint.ip`` is ignored. Blocking socket I/O is
+    hopped to :func:`asyncio.to_thread` so the event loop stays
+    responsive.
+    """
+    async def send_unix_stream(
+        endpoint,  # noqa: ARG001  (signature compat with send_udp)
+        packet: bytes,
+        timeout: int = 1,
+        loop=None,  # noqa: ARG001
+        retries: int = 3,
+    ) -> bytes:
+        def _blocking_round_trip(left: int) -> bytes:
+            last_exc: Exception | None = None
+            while left > 0:
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                try:
+                    sock.settimeout(timeout)
+                    sock.connect(socket_path)
+                    sock.sendall(packet)
+                    return _read_ber_sequence(sock)
+                except (TimeoutError, OSError, ValueError) as exc:
+                    last_exc = exc
+                    left -= 1
+                finally:
+                    sock.close()
+            raise last_exc or TimeoutError(
+                "unix stream round-trip exhausted retries")
+
+        return await asyncio.to_thread(_blocking_round_trip, retries)
+
+    return send_unix_stream
+
+
+def _read_ber_sequence(sock) -> bytes:
+    """Read exactly one BER SEQUENCE (0x30) from a connected stream socket.
+
+    BER tag-length-value: first byte is the tag, next is the length
+    (short form < 0x80 → that byte is the length; long form ≥ 0x80 →
+    low 7 bits give the count of length-bytes that follow). Once the
+    length is decoded, read the body in one or more ``recv`` calls.
+    """
+    head = _recv_exactly(sock, 2)
+    if head[0] != 0x30:
+        raise ValueError(f"unexpected BER tag 0x{head[0]:02x}, expected 0x30")
+    length = head[1]
+    if length & 0x80:
+        nbytes = length & 0x7F
+        if nbytes == 0 or nbytes > 4:
+            raise ValueError(f"invalid BER long-form length: {nbytes} bytes")
+        ext = _recv_exactly(sock, nbytes)
+        length = int.from_bytes(ext, "big")
+        head = head + ext
+    body = _recv_exactly(sock, length)
+    return head + body
+
+
+def _recv_exactly(sock, n: int) -> bytes:
+    """Read exactly *n* bytes from *sock*; raise on short close."""
+    chunks: list[bytes] = []
+    remaining = n
+    while remaining > 0:
+        chunk = sock.recv(remaining)
+        if not chunk:
+            raise ConnectionError(
+                f"unix stream peer closed after {n - remaining}/{n} bytes")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
 
 
 # ---------------------------------------------------------------------------
@@ -94,31 +182,29 @@ class SnmpVarbind:
 
 
 class KeepalivedSnmpClientUnavailable(RuntimeError):
-    """Raised when ``netsnmp`` (python3-netsnmp) isn't installed.
+    """Raised when ``puresnmp`` isn't installed.
 
-    We distinguish this from generic :class:`ImportError` so the
-    control path can emit an actionable ``apt install python3-netsnmp``
-    hint rather than a bare traceback. Declared unconditionally so
-    consumers can reference it even when netsnmp is absent.
+    Distinguished from generic :class:`ImportError` so the control path
+    can emit an actionable ``pip install puresnmp`` hint rather than a
+    bare traceback. Declared unconditionally so consumers can reference
+    it even when puresnmp is absent.
     """
 
 
 class KeepalivedSnmpClient:
-    """SNMPv2c client over a Unix socket (snmpd's ``agentAddress unix:...``).
+    """SNMPv2c client over a Unix socket (snmpd's ``agentaddress unix:...``).
 
     Transport selection:
 
-    * ``unix_path`` set **and** the socket exists → ``unix:<path>``
-      transport (net-snmp decodes the scheme itself).
+    * ``unix_path`` set **and** the socket exists → ``AF_UNIX/SOCK_DGRAM``
+      using :func:`send_unix_dgram` as the puresnmp sender.
     * ``unix_path`` set but the socket missing → fall back to UDP
-      (``udp_host``:``udp_port``) with a warning; keeps the daemon
-      running while the operator fixes their snmpd.conf.
+      (``udp_host``:``udp_port``); keeps the daemon running while the
+      operator fixes their snmpd.conf.
     * ``unix_path`` unset → UDP only.
 
-    All methods that hit the wire (``walk``, later ``get``) are ``async``
-    and wrap ``netsnmp.Session`` synchronous calls in
-    :func:`asyncio.to_thread`. The wrapper cost is ≈100 µs per call vs.
-    multi-millisecond SNMP round-trips — negligible.
+    All wire methods are ``async`` (puresnmp is async-native — no
+    :func:`asyncio.to_thread` bridge for SNMP round-trips).
     """
 
     def __init__(
@@ -130,43 +216,37 @@ class KeepalivedSnmpClient:
         community: str = "public",
         timeout_s: float = 1.0,
     ) -> None:
-        if not _NETSNMP_AVAILABLE:
+        if not _PURESNMP_AVAILABLE:
             raise KeepalivedSnmpClientUnavailable(
-                "python3-netsnmp is not installed. "
-                "Install with: apt install python3-netsnmp (Debian/Ubuntu) "
-                "or dnf install net-snmp-python3 (Alma/Fedora)."
+                "puresnmp is not installed. "
+                "Install with: pip install puresnmp"
             )
-        self._peername = self._choose_peername(
-            unix_path, udp_host, udp_port)
+        self._timeout_s = timeout_s
         self._community = community
-        # netsnmp.Session expects Timeout in microseconds.
-        self._session = netsnmp.Session(
-            Peername=self._peername,
-            Version=2,
-            Community=community,
-            Timeout=int(timeout_s * 1_000_000),
-            Retries=0,
-        )
 
-    @staticmethod
-    def _choose_peername(
-        unix_path: str | None, udp_host: str, udp_port: int,
-    ) -> str:
-        """Pick the transport prefix net-snmp will use.
-
-        Pre-checks socket existence so we can fall back cleanly to UDP
-        at construction time — avoids a confusing "Timeout" error
-        later when the socket actually isn't there.
-        """
-        if unix_path:
-            import os
-            if os.path.exists(unix_path):
-                return f"unix:{unix_path}"
-        return f"udp:{udp_host}:{udp_port}"
+        if unix_path and os.path.exists(unix_path):
+            # puresnmp's Client validates ip as IPv4/IPv6, so we can't
+            # smuggle the Unix path via Endpoint.ip — the path lives in
+            # the sender closure instead. ``ip``/``port`` here are dead
+            # weight passed only to satisfy the constructor.
+            self._client = _PuresnmpClient(
+                ip="127.0.0.1",
+                port=0,
+                credentials=V2C(community),
+                sender=_make_unix_stream_sender(unix_path),
+            )
+            self._peername = f"unix:{unix_path}"
+        else:
+            self._client = _PuresnmpClient(
+                ip=udp_host,
+                port=udp_port,
+                credentials=V2C(community),
+            )
+            self._peername = f"udp:{udp_host}:{udp_port}"
 
     @property
     def peername(self) -> str:
-        """Return the net-snmp-formatted peer (``unix:<path>`` or ``udp:host:port``)."""
+        """Return the formatted peer (``unix:<path>`` or ``udp:host:port``)."""
         return self._peername
 
     # ------------------------------------------------------------------
@@ -175,21 +255,18 @@ class KeepalivedSnmpClient:
     async def walk(self, root_oid: str) -> list[SnmpVarbind]:
         """Walk the subtree below *root_oid*, return decoded varbinds.
 
-        Blocking net-snmp call is hopped into a worker thread via
-        :func:`asyncio.to_thread` — net-snmp releases the GIL during
-        the syscall, so other event-loop tasks progress.
+        puresnmp's ``walk`` is an async generator yielding
+        :class:`puresnmp.varbind.VarBind`. We materialise into a list
+        and convert to library-neutral :class:`SnmpVarbind` records,
+        splitting the column-OID off the row-index suffix so consumers
+        keep the existing ``oid``/``index`` decomposition contract.
         """
-        return await asyncio.to_thread(self._sync_walk, root_oid)
-
-    def _sync_walk(self, root_oid: str) -> list[SnmpVarbind]:
-        """Synchronous walk implementation — extracted for testability.
-
-        Tests can monkey-patch ``_sync_walk`` directly instead of
-        having to stand up a full netsnmp session.
-        """
-        vars_ = netsnmp.VarList(netsnmp.Varbind(root_oid))
-        self._session.walk(vars_)
-        return [self._varbind_to_tuple(v, root_oid) for v in vars_]
+        oid = ObjectIdentifier(root_oid)
+        out: list[SnmpVarbind] = []
+        async with asyncio.timeout(self._timeout_s + 1.0):
+            async for vb in self._client.walk(oid):
+                out.append(_convert_varbind(vb, root_oid))
+        return out
 
     # ------------------------------------------------------------------
     # MIB-driven full walk
@@ -256,21 +333,27 @@ class KeepalivedSnmpClient:
                 errors.append(f"table {table_name} ({table_oid}): {exc}")
                 continue
 
-            # Group varbinds by index suffix into rows.
-            # vb.oid = column OID e.g. "...entry_oid.COL_NUM"
-            # vb.index = row index suffix e.g. "1" or "1.2"
+            # Group varbinds by index suffix into rows. puresnmp delivers
+            # vb.oid as the full OID (entry_oid + ".<col>.<row_index...>"),
+            # vb.index is empty. We derive (col_num, row_key) by stripping
+            # the entry_oid + "." prefix and splitting at the first dot —
+            # the column number is one component, the rest is the row
+            # index (which may itself contain dots, e.g. InetAddress).
             rows: dict[str, dict[str, str]] = {}
             for vb in varbinds:
-                # Identify column number from the varbind OID.
-                # net-snmp returns tag as the column OID (without the index).
-                col_num = _resolve_col_num(vb.oid, col_oid_to_num, entry_oid)
-                if col_num is None:
+                if not vb.oid.startswith(entry_oid + "."):
+                    continue
+                suffix = vb.oid[len(entry_oid) + 1:]
+                parts = suffix.split(".", 1)
+                try:
+                    col_num = int(parts[0])
+                except ValueError:
                     continue
                 col_info = columns.get(col_num)
                 if col_info is None:
                     continue
                 col_name, _col_syntax, _col_access = col_info
-                row_key = vb.index
+                row_key = parts[1] if len(parts) > 1 else ""
                 if row_key not in rows:
                     rows[row_key] = {
                         "__index_raw__": row_key,
@@ -287,40 +370,46 @@ class KeepalivedSnmpClient:
             walk_errors=tuple(errors),
         )
 
-    @staticmethod
-    def _varbind_to_tuple(vb: "object", walked_root: str) -> SnmpVarbind:
-        """Coerce a netsnmp.Varbind into our stable SnmpVarbind shape.
 
-        net-snmp's ``.tag`` for a column varbind is the column OID
-        *without* the row index — e.g. walking the instance table
-        gives ``tag='.1.3.6.1.4.1.9586.100.5.2.3.1.2'`` (the
-        vrrpInstanceName column) and ``iid='1'`` (the row index
-        ``1``). Some versions return ``tag`` in name form
-        (``'vrrpInstanceName'``) instead of numeric OID — we
-        normalise by stripping the leading dot and keeping whatever
-        net-snmp gave us; the walker can resolve names→OIDs via
-        :mod:`shorewalld.keepalived.mib` if needed.
 
-        ``.val`` can be ``bytes`` (OCTET STRING, IpAddress) or a
-        string repr of a number depending on SYNTAX. We always emit a
-        ``str`` (UTF-8 replace on invalid bytes) — the caller uses
-        the ``syntax`` field to decide how to parse.
-        """
-        tag = getattr(vb, "tag", "") or ""
-        if tag.startswith("."):
-            tag = tag[1:]
-        iid = getattr(vb, "iid", "") or ""
-        raw_val = getattr(vb, "val", None)
-        if isinstance(raw_val, (bytes, bytearray)):
-            value = raw_val.decode("utf-8", "replace")
-        elif raw_val is None:
-            value = ""
-        else:
-            value = str(raw_val)
-        syntax = getattr(vb, "type", "") or ""
-        return SnmpVarbind(
-            oid=tag, index=iid, value=value, syntax=syntax,
-        )
+# ---------------------------------------------------------------------------
+# puresnmp VarBind → library-neutral SnmpVarbind conversion
+# ---------------------------------------------------------------------------
+
+
+def _convert_varbind(vb, walked_root: str) -> SnmpVarbind:
+    """Coerce a :class:`puresnmp.varbind.VarBind` into our :class:`SnmpVarbind`.
+
+    puresnmp delivers ``vb.oid`` as a **full** OID (table-entry column
+    + row index suffix) and ``vb.value`` as a typed X690 object
+    (``OctetString``, ``Integer``, ``Counter``, ``Gauge``, …). We do
+    *no* OID-splitting here — :meth:`walk_all` knows the entry-OID
+    of the table being walked and handles col/row decomposition there
+    via :func:`_resolve_col_num` plus a one-line suffix split. Keeping
+    this converter MIB-agnostic means scalar walks (where there is no
+    column/row split to do) work identically.
+
+    Value stringification: bytes → UTF-8 (replace on invalid), ints →
+    ``str()``. The caller uses the ``syntax`` field (puresnmp class
+    name) to decide how to parse.
+    """
+    full_oid = str(vb.oid)
+    if full_oid.startswith("."):
+        full_oid = full_oid[1:]
+
+    raw = vb.value
+    raw_pyval = getattr(raw, "pythonize", lambda: raw)()
+    if isinstance(raw_pyval, (bytes, bytearray)):
+        value = raw_pyval.decode("utf-8", "replace")
+    elif raw_pyval is None:
+        value = ""
+    else:
+        value = str(raw_pyval)
+    syntax = type(raw).__name__
+
+    return SnmpVarbind(
+        oid=full_oid, index="", value=value, syntax=syntax,
+    )
 
 
 # ---------------------------------------------------------------------------
