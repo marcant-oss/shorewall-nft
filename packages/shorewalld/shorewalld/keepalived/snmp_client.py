@@ -39,6 +39,47 @@ except ImportError:
     _PURESNMP_AVAILABLE = False
 
 
+def _make_udp_sender(host: str, port: int):
+    """Build a puresnmp-compatible UDP sender that bypasses the
+    library's broken ``SNMPClientProtocol.datagram_received`` (puresnmp
+    2.0.1 calls ``future.set_result`` without checking ``future.done()``,
+    so a late-arriving datagram after a timeout raises
+    ``asyncio.InvalidStateError`` — which kills the shorewalld asyncio
+    loop on every retry/timeout interaction).
+
+    Our replacement uses a blocking ``AF_INET/SOCK_DGRAM`` socket in a
+    worker thread (``asyncio.to_thread``). One round-trip per call,
+    no future state to mismanage.
+    """
+    async def send_udp_safe(
+        endpoint,  # noqa: ARG001 (signature compat with send_udp)
+        packet: bytes,
+        timeout: int = 1,
+        loop=None,  # noqa: ARG001
+        retries: int = 3,
+    ) -> bytes:
+        def _blocking_round_trip(left: int) -> bytes:
+            last_exc: Exception | None = None
+            while left > 0:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    sock.settimeout(timeout)
+                    sock.sendto(packet, (host, port))
+                    data, _ = sock.recvfrom(65535)
+                    return data
+                except (TimeoutError, OSError) as exc:
+                    last_exc = exc
+                    left -= 1
+                finally:
+                    sock.close()
+            raise last_exc or TimeoutError(
+                "udp round-trip exhausted retries")
+
+        return await asyncio.to_thread(_blocking_round_trip, retries)
+
+    return send_udp_safe
+
+
 def _make_unix_stream_sender(socket_path: str):
     """Build a puresnmp sender bound to ``socket_path`` (Unix STREAM).
 
@@ -237,10 +278,18 @@ class KeepalivedSnmpClient:
             )
             self._peername = f"unix:{unix_path}"
         else:
+            # Avoid puresnmp 2.0.1's default UDP transport — its
+            # SNMPClientProtocol.datagram_received does not guard
+            # ``future.set_result`` with a ``future.done()`` check, so a
+            # late datagram after a timeout raises asyncio.InvalidStateError
+            # which propagates out of the event loop and crashes the daemon.
+            # Our own sender uses a blocking socket in to_thread; same
+            # effect as upstream but no future-state mismanagement.
             self._client = _PuresnmpClient(
                 ip=udp_host,
                 port=udp_port,
                 credentials=V2C(community),
+                sender=_make_udp_sender(udp_host, udp_port),
             )
             self._peername = f"udp:{udp_host}:{udp_port}"
 
