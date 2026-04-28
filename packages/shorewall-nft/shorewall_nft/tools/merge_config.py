@@ -212,6 +212,84 @@ def _parse_comment_blocks(path: Path) -> tuple[list[str], dict[str, list[str]]]:
     return header, ordered
 
 
+def _parse_rules_segments(path: Path) -> list[tuple]:
+    """Parse a rules/masq/conntrack file into an ordered segment stream.
+
+    Returns a list of segments preserving source-line order:
+
+      ``("untagged", [lines])``       — content outside any ?COMMENT block
+      ``("tagged", tag, [lines])``    — content inside a ``?COMMENT TAG`` block
+                                         (the ?COMMENT directives themselves
+                                         are kept inside the segment lines)
+
+    Adjacent untagged lines collapse into a single segment.  Untagged
+    segments may be empty placeholders if the file opens with a
+    tagged block — caller can drop them.
+
+    Why this exists: the legacy ``_parse_comment_blocks`` returned
+    ``(header, blocks)`` which loses source-line order between
+    untagged and tagged regions.  Classic shorewall's chain-complete
+    short-circuit (``Chains.pm:1832``) is order-sensitive: a
+    ``DROP:$LOG <zone> any`` catch-all in untagged context closes
+    the per-pair chain for every later rule in source order, including
+    ``all → <X>:host`` ACCEPTs in subsequent ?COMMENT blocks.  The
+    legacy parser put all untagged at the top of the merged file and
+    all tagged blocks after, inverting the order classic shorewall
+    saw — surfaced as 53 fail_drops on the rossini reference where
+    ``rules:884 Web(ACCEPT) all cdn:$CDN_WWW_DREAMROBOT_DE`` should
+    have landed in ``agfeo2cdn`` *before* the ``rules:2322 DROP:$LOG
+    agfeo any`` could close the chain.
+    """
+    segments: list[tuple] = []
+    current_tag: str | None = None
+    untagged_buf: list[str] = []
+    tagged_buf: list[str] = []
+
+    if not path.exists():
+        return segments
+
+    def _flush_untagged() -> None:
+        nonlocal untagged_buf
+        if untagged_buf:
+            segments.append(("untagged", untagged_buf))
+            untagged_buf = []
+
+    def _flush_tagged() -> None:
+        nonlocal tagged_buf, current_tag
+        if current_tag is not None and tagged_buf:
+            segments.append(("tagged", current_tag, tagged_buf))
+        tagged_buf = []
+
+    for line in path.read_text(errors="replace").splitlines():
+        m = re.match(r'^\?COMMENT\s*(.*)', line, re.IGNORECASE)
+        if m:
+            tag = m.group(1).strip()
+            if tag:
+                # Opening ``?COMMENT TAG``: flush any untagged buffer,
+                # then start a new tagged segment.
+                _flush_untagged()
+                _flush_tagged()
+                current_tag = tag
+                tagged_buf.append(line)
+            else:
+                # Closing bare ``?COMMENT`` ends the current tagged
+                # segment; append the closer to it for round-trip.
+                if current_tag is not None:
+                    tagged_buf.append(line)
+                _flush_tagged()
+                current_tag = None
+            continue
+
+        if current_tag is None:
+            untagged_buf.append(line)
+        else:
+            tagged_buf.append(line)
+
+    _flush_untagged()
+    _flush_tagged()
+    return segments
+
+
 def _parse_conf_settings(path: Path) -> dict[str, str]:
     """Parse shorewall.conf → {KEY: full_line}."""
     settings: dict[str, str] = {}
@@ -348,76 +426,93 @@ def _merge_rules(v4_path: Path, v6_path: Path, out_path: Path,
                  guided: bool = False,
                  plugin_manager: "PluginManager | None" = None,
                  v6_var_rewrites: set[str] | None = None) -> None:
-    """Merge rules files: same ?COMMENT blocks get combined.
+    """Merge rules files preserving v4 source-line order.
 
-    If plugin_manager is provided, each block is passed through
-    enrich_comment_block hooks to add customer/host annotations.
+    Walks the v4 file as an ordered segment stream (untagged regions
+    interleaved with ``?COMMENT TAG`` blocks).  Each tagged segment
+    looks for a matching tag in v6 and folds the v6 content inline
+    (wrapped in ``?FAMILY ipv6``).  Untagged segments are emitted
+    verbatim in their source position.  v6 untagged rules and
+    v6-only tagged blocks are appended at the end.
 
-    If v6_var_rewrites is provided, v6-originated rules get $VAR → $VAR_V6
-    rewriting for colliding variable names.
+    Source-line order matters because classic shorewall's
+    chain-complete short-circuit (``Chains.pm:1832``) closes a
+    per-pair chain when a terminating catch-all rule lands in it;
+    every later rule in source order is then unreachable.  An
+    earlier merge implementation reordered all untagged content
+    ahead of all tagged blocks, inverting the order classic
+    shorewall saw in the v4 source — surfaced as 53 fail_drops
+    on the rossini reference where ``rules:884 Web(ACCEPT) all
+    cdn:$CDN_WWW_DREAMROBOT_DE`` should run *before*
+    ``rules:2322 DROP:$LOG agfeo any`` could close the chain.
+
+    If plugin_manager is provided, each tagged block is passed
+    through enrich_comment_block hooks to add customer/host
+    annotations.
+
+    If v6_var_rewrites is provided, v6-originated rules get
+    ``$VAR → $VAR_V6`` rewriting for colliding variable names.
     """
-    v4_header, v4_blocks = _parse_comment_blocks(v4_path)
-    v6_header, v6_blocks = _parse_comment_blocks(v6_path)
+    v4_segments = _parse_rules_segments(v4_path)
+    v6_segments = _parse_rules_segments(v6_path)
+
+    # Collect v6 untagged content + tagged blocks for inline lookup
+    # and end-of-file appending.
+    v6_untagged: list[str] = []
+    v6_blocks: dict[str, list[str]] = {}
+    v6_block_order: list[str] = []
+    for seg in v6_segments:
+        if seg[0] == "untagged":
+            v6_untagged.extend(seg[1])
+        else:  # tagged
+            tag, body = seg[1], seg[2]
+            if tag not in v6_blocks:
+                v6_blocks[tag] = []
+                v6_block_order.append(tag)
+            v6_blocks[tag].extend(body)
 
     rewrites = v6_var_rewrites or set()
 
     def _rw(lines: list[str]) -> list[str]:
-        """Apply v6 variable rewrites to a list of lines."""
         if not rewrites:
             return lines
         return [_rewrite_v6_vars(l, rewrites) for l in lines]
 
-    lines: list[str] = []
-
-    # Write v4 header (contains ?SECTION, ?FORMAT, column headers, untagged rules)
-    lines.extend(v4_header)
-
-    # Merge v6 header lines that are actual rules (not comments/section directives)
-    v6_header_rules = []
-    for line in v6_header:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("?"):
-            continue
-        v6_header_rules.append(line)
-
-    if v6_header_rules:
-        lines.append("")
-        lines.append("# === IPv6 untagged rules (from shorewall6) ===")
-        lines.append("?FAMILY ipv6")
-        lines.extend(_rw(v6_header_rules))
-        lines.append("?FAMILY any")
-
-    # Merge ?COMMENT blocks
-    merged_tags: set[str] = set()
-
     def _content_only(block_lines: list[str]) -> list[str]:
-        """Strip ?COMMENT directives to get pure rule lines for plugin inspection."""
         return [l for l in block_lines
                 if not re.match(r'^\?COMMENT', l.strip(), re.IGNORECASE)]
 
-    for tag, v4_lines in v4_blocks.items():
-        if tag in v6_blocks:
-            merged_tags.add(tag)
-            v6_lines = v6_blocks[tag]
+    lines: list[str] = []
+    merged_tags: set[str] = set()
 
-            # Collect v6 content (without ?COMMENT directives), apply var rewrites
-            v6_content_only = [l for l in v6_lines
-                               if not re.match(r'^\?COMMENT', l.strip(),
-                                               re.IGNORECASE)]
-            v6_content_only = _rw(v6_content_only)
-            # Wrap v6 content with ?FAMILY directives so the compiler knows
-            # these rules are v6-origin and should emit meta nfproto ipv6
+    for seg in v4_segments:
+        if seg[0] == "untagged":
+            # Emit untagged region verbatim in its source position.
+            # Suppress a leading blank line if the output already
+            # ends with one (avoid double blanks at the seam).
+            untagged = seg[1]
+            if untagged:
+                if (lines and lines[-1] == ""
+                        and untagged and untagged[0] == ""):
+                    untagged = untagged[1:]
+                lines.extend(untagged)
+            continue
+
+        # tagged segment
+        tag, v4_lines = seg[1], seg[2]
+        merged_tags.add(tag)
+
+        if tag in v6_blocks:
+            v6_lines = v6_blocks[tag]
+            v6_content_only = _rw(_content_only(v6_lines))
             v6_content = (["?FAMILY ipv6"] + v6_content_only
                           + ["?FAMILY any"]) if v6_content_only else []
 
-            # Build auto-merged block: INSERT v6 content INSIDE the v4 block,
-            # right before the closing ?COMMENT. If there is no closing tag,
-            # append at the end. Critical: v6 rules must stay within the tag
-            # scope so they inherit the ?COMMENT annotation on compile.
+            # Insert v6 content INSIDE the v4 block, right before the
+            # closing ?COMMENT (bare).  If there is no closing tag,
+            # append at the end of the block so v6 rules still
+            # inherit the ?COMMENT annotation on compile.
             auto_merged = list(v4_lines)
-            # Locate the closing ?COMMENT (bare, no tag)
             close_idx = -1
             for i in range(len(auto_merged) - 1, -1, -1):
                 if auto_merged[i].strip().lower() == "?comment":
@@ -430,28 +525,37 @@ def _merge_rules(v4_path: Path, v6_path: Path, out_path: Path,
 
             block = _ask_block_collision(
                 f"?COMMENT {tag}", v4_lines, v6_lines, auto_merged, guided)
-
-            # Apply plugin enrichment
-            if plugin_manager is not None:
-                enrich = plugin_manager.enrich_comment_block(
-                    tag, _content_only(v4_lines), _content_only(v6_lines))
-                block = _apply_enrich_to_block(block, tag, enrich)
-
-            lines.append("")
-            lines.extend(block)
         else:
             block = list(v4_lines)
-            if plugin_manager is not None:
-                enrich = plugin_manager.enrich_comment_block(
-                    tag, _content_only(v4_lines), [])
-                block = _apply_enrich_to_block(block, tag, enrich)
+
+        if plugin_manager is not None:
+            v6_lines_for_enrich = v6_blocks.get(tag, [])
+            enrich = plugin_manager.enrich_comment_block(
+                tag, _content_only(v4_lines), _content_only(v6_lines_for_enrich))
+            block = _apply_enrich_to_block(block, tag, enrich)
+
+        # Separate consecutive blocks with a blank line (matches the
+        # legacy formatting users grepping for ?COMMENT TAG expect).
+        if lines and lines[-1] != "":
             lines.append("")
-            lines.extend(block)
+        lines.extend(block)
 
-        merged_tags.add(tag)
+    # Append v6 untagged rules (filter out comments/section directives;
+    # those aren't compile-relevant in a "v6-only tail" position).
+    v6_header_rules = [
+        l for l in v6_untagged
+        if l.strip() and not l.strip().startswith("#")
+        and not l.strip().startswith("?")
+    ]
+    if v6_header_rules:
+        lines.append("")
+        lines.append("# === IPv6 untagged rules (from shorewall6) ===")
+        lines.append("?FAMILY ipv6")
+        lines.extend(_rw(v6_header_rules))
+        lines.append("?FAMILY any")
 
-    # Append v6-only blocks (with variable rewriting)
-    v6_only_tags = [tag for tag in v6_blocks if tag not in merged_tags]
+    # Append v6-only tagged blocks (rewrite vars).
+    v6_only_tags = [t for t in v6_block_order if t not in merged_tags]
     if v6_only_tags:
         lines.append("")
         lines.append("# === IPv6-only mandants (from shorewall6) ===")

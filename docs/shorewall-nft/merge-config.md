@@ -42,8 +42,23 @@ shorewall-nft merge-config /etc/shorewall /etc/shorewall6 --no-plugins
 
 ## `?COMMENT` block merging
 
-The `rules` file is merged **block by block**. Blocks with the same
-`?COMMENT` tag (e.g. `?COMMENT mandant-b`) are combined — v4 rules
+The `rules` file is merged **segment by segment**, preserving v4
+source-line order between untagged regions and `?COMMENT`-tagged
+blocks. Each tagged segment looks for a matching tag in the v6
+file and folds the v6 content inline; untagged regions are emitted
+verbatim in their original source position. v6 untagged rules and
+v6-only tagged blocks are appended at the end.
+
+This source-line order matters because classic Shorewall's
+**chain-complete short-circuit** closes a per-pair chain when a
+terminating catch-all rule lands in it. Every later rule in source
+order is then unreachable — which is exactly what the user wants
+for `?SHELL include rules.d/` overrides placed after a
+`DROP:$LOG <zone> any` catch-all, but breaks if `Web(ACCEPT) all
+<zone>:host` blocks earlier in the v4 source get reordered to come
+*after* the catch-all in the merged output.
+
+Blocks with the same tag in v4 and v6 are **merged**: v4 rules
 first, then v6 rules inserted before the closing `?COMMENT`:
 
 Before (`/etc/shorewall/rules`):
