@@ -39,6 +39,7 @@ _run_small_conntrack_probe = connstate.run_small_conntrack_probe
 # Canonical patch target — functions live in netkit now.
 _NS_PATCH = "shorewall_nft_netkit.validators.connstate._ns_shell"
 _NFCT_PATCH = "shorewall_nft_netkit.validators.connstate.NFCTSocket"
+_PYNETNS_PATCH = "shorewall_nft_netkit.validators.connstate._pyroute2_netns"
 
 
 # ---------------------------------------------------------------------------
@@ -319,9 +320,21 @@ class TestRunSmallConntrackProbe:
         sock.getprotobyname.side_effect = lambda p: {"tcp": 6, "udp": 17, "icmp": 1}[p]
         return sock
 
+    def _make_pynetns_mock(self):
+        """No-op pushns/popns so the netns hop in
+        ``run_small_conntrack_probe`` doesn't try to mount the rundir
+        (it does on a real netns; in the test env the mount fails and
+        the function bails out with 0 entries, masking the
+        NFCTSocket-mocked counts)."""
+        m = MagicMock()
+        m.pushns = MagicMock()
+        m.popns = MagicMock()
+        return m
+
     def test_returns_four_results(self):
         """Probe must produce exactly 4 ConnStateResult objects."""
         with patch(self._socket_patch, self._make_socket_mock()), \
+             patch(_PYNETNS_PATCH, self._make_pynetns_mock()), \
              patch(_NFCT_PATCH, _make_nfct_mock(1)):
             results = _run_small_conntrack_probe("10.0.0.1", port=80)
         assert len(results) == 4
@@ -329,6 +342,7 @@ class TestRunSmallConntrackProbe:
     def test_all_pass_when_counts_positive(self):
         """When conntrack count >= 1 all results should pass."""
         with patch(self._socket_patch, self._make_socket_mock()), \
+             patch(_PYNETNS_PATCH, self._make_pynetns_mock()), \
              patch(_NFCT_PATCH, _make_nfct_mock(1)):
             results = _run_small_conntrack_probe()
         assert all(r.passed for r in results)
@@ -336,6 +350,7 @@ class TestRunSmallConntrackProbe:
     def test_fails_when_zero_entries(self):
         """When conntrack count = 0 the tracked-flow checks should fail."""
         with patch(self._socket_patch, self._make_socket_mock()), \
+             patch(_PYNETNS_PATCH, self._make_pynetns_mock()), \
              patch(_NFCT_PATCH, _make_nfct_mock(0)):
             results = _run_small_conntrack_probe()
         # The 4th result (ct:table_nonempty) and the per-proto checks all fail
