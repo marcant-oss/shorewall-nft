@@ -30,13 +30,53 @@ are comments.
 l l l.
 Column	Required	Description
 _
-SOURCE	yes	Source zone:address or CIDR (or - for any)
-DEST	yes	Destination zone:address or CIDR (or - for any)
+SOURCE	yes	Source zone, zone:address, bare CIDR, or - for any
+DEST	yes	Destination zone, zone:address, bare CIDR, or - for any
 PROTO	no	Protocol filter
 DPORT	no	Destination port filter
 SPORT	no	Source port filter
 USER	no	User/group match
 .TE
+.PP
+The SOURCE and DEST columns accept three shapes:
+.IP \(bu 2
+.B zone
+\- the zone's interfaces become an
+.B iifname
+filter on emit; no address predicate
+.IP \(bu 2
+.B zone:addr
+\- both
+.B iifname
+and
+.B "ip [d]addr"
+predicates are emitted
+.IP \(bu 2
+bare
+.B addr
+or
+.B addr/cidr
+\- only the
+.B "ip [d]addr"
+predicate is emitted; no iifname filter (any interface)
+.PP
+A
+.B zone
+in the SOURCE column always produces an
+.B iifname
+match against the zone's bound interfaces, mirroring classic
+Shorewall's per-zone
+.B <zone>_ctrk
+chain dispatched from
+.B PREROUTING
+via
+.BR "-i <iface> -j <zone>_ctrk" .
+A bare IP / CIDR in either column lands as the corresponding
+.B "ip [s/d]addr"
+predicate; without this the
+.B notrack
+verdict would fire for traffic to / from any address on the
+matching protocol+port.
 
 .SH EXAMPLES
 .PP
@@ -59,6 +99,16 @@ Bypass tracking for all traffic on a monitoring interface:
 .RS
 .nf
 mon              all
+.fi
+.RE
+.PP
+Bypass tracking for inbound DNS to two named-server hosts (bare-IP
+destination, source zone gates the iifname filter on emit):
+.RS
+.nf
+#SOURCE          DEST             PROTO  DPORT
+net              10.0.0.53        udp    53
+net              10.0.0.54        udp    53
 .fi
 .RE
 
