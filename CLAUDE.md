@@ -241,6 +241,19 @@ architecture. Deviations cause IPv6 breakage. Key invariants:
 - **Dual-stack zone type**: When merging shorewall + shorewall6, zones
   in both configs must be type `ip` (not `ipv4`). Otherwise dispatch
   rules get `meta nfproto ipv4` and IPv6 is never dispatched.
+- **Chain-complete short-circuit** (rules.py:1149/1503-1509, mirrors
+  classic ``Chains.pm:1832``): an unconditional terminating verdict
+  (ACCEPT/DROP/REJECT/GOTO) that lands in a per-pair chain renders
+  every later rule in source-line order unreachable. Redundant
+  catch-all DROP/REJECT (``DROP:$LOG <zone> any`` against a
+  drop-class policy) is omitted from the chain body but still
+  closes it for that family. Rule order is therefore
+  **load-bearing** — ``Web(ACCEPT) all cdn:host`` placed *before* a
+  ``DROP:$LOG <zone> any`` lands in ``<zone>-cdn``; placed *after*
+  it does not. The merge-config tool preserves v4 source-line order
+  between untagged and ``?COMMENT``-tagged segments specifically
+  to keep this invariant intact (``_parse_rules_segments`` in
+  ``tools/merge_config.py``).
 
 ## Key rules (all packages)
 

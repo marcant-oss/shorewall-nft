@@ -1220,18 +1220,33 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             if (is_all_expansion and rule_is_drop_like and chain_drops
                     and unconditional):
                 # Catch-all DROP/REJECT redundant with chain policy —
-                # don't emit (the policy tail covers it).  The chain
-                # is *not* marked complete here: classic shorewall
-                # iptables-save keeps later ``all → <zone>`` ACCEPT
-                # expansions in the same per-pair chain even when a
-                # ``<zone> any`` catch-all preceded them in source-
-                # file order.  Reference firewall surfaced this as
-                # 53 fail_drops where a wildcard ``DROP:$LOG agfeo
-                # any`` was incorrectly closing every ``agfeo→X``
-                # chain before the later ``Web(ACCEPT) all
-                # cdn:46.231.239.x`` block could append.  The genuine
-                # close-the-chain mirror lives below where a
-                # terminating verdict actually lands in the chain.
+                # don't emit, but do close the chain for this family.
+                # Classic shorewall (``Chains.pm:1832``) marks
+                # ``$chainref->{complete} = 1`` here too: an
+                # unconditional terminating verdict that lands in (or
+                # is folded into) the chain renders every later rule
+                # in source-line order unreachable.  Without this set,
+                # downstream ``?SHELL include rules.d/`` files would
+                # keep appending to a chain the user has already
+                # terminated — surfaced on the rossini reference as
+                # 114 fail_accepts where ``ACCEPT all:$MARCANT_PFX
+                # siem:host`` rules.d entries were landing in
+                # ``agfeo-siem`` despite the wildcard ``DROP:$LOG
+                # agfeo any`` having already closed the chain.
+                #
+                # Note: this depends on the merge-config tool
+                # preserving v4 source-line order between untagged
+                # and ``?COMMENT``-tagged segments.  An earlier
+                # implementation reordered untagged content ahead of
+                # tagged blocks, which inverted classic's order
+                # assumption — ``_merge_rules`` in
+                # ``tools/merge_config.py`` now uses
+                # ``_parse_rules_segments`` to keep v4 segments in
+                # source order.
+                if rule_is_v4:
+                    chain.complete_v4 = True
+                if rule_is_v6:
+                    chain.complete_v6 = True
                 continue
 
             rule = Rule(

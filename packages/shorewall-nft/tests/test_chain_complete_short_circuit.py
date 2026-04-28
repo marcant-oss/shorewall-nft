@@ -1,23 +1,30 @@
-"""Regression tests for the chain-complete short-circuit (rules.py:1149).
+"""Regression tests for the chain-complete short-circuit.
 
-The short-circuit closes a per-pair chain after a redundant catch-all
-``<zone> any`` DROP/REJECT lands on a chain whose policy is already
-drop-class.  That mirrors classic shorewall when the wildcard rule
-*precedes* later includes — but it must not swallow ``all → <zone>``
-expansions emitted in the same rules file.
+Mirrors classic shorewall (``Chains.pm:1832``): an unconditional
+terminating verdict that lands in (or is folded into) a per-pair
+chain renders every later rule in source-line order unreachable.
+A wildcard ``DROP:$LOG <zone> any`` on a chain whose policy is
+already drop-class is omitted as redundant — but it still closes
+the chain, so subsequent ``all → <zone>`` ACCEPTs in
+``?SHELL include`` files don't sneak past the user's intent.
 
-Concrete user-visible breakage that prompted these tests: the rossini
-reference rules carry
+Concrete user-visible breakage that prompted these tests:
+the rossini reference rules carry, in *v4 source order*,
 
-    DROP:$LOG  agfeo  any                         # rules:1042
-    Web(ACCEPT) all  cdn:46.231.239.{9,10,14}     # rules:1478
+    rules:884   Web(ACCEPT) all      cdn:$CDN_WWW_DREAMROBOT_DE
+    rules:2322  DROP:$LOG   agfeo    any
+    rules:2340  ?SHELL include /etc/shorewall/rules.d/*.rules
+                  ACCEPT  all:$MARCANT_PFX  siem:217.14.160.101  tcp 514,1514,1515,55000
 
-with policy ``agfeo all REJECT $LOG``.  Classic shorewall emits all
-13+ DreamRobot daddr ACCEPTs into ``agfeo2cdn`` in iptables-save —
-the IR drops them because line 1042 marked the chain complete before
-line 1478 was processed.  Surfaced as 53 fail_drops in the simlab
-reference replay (every probe with src=213.149.66.254 → cdn/devop/
-host/mccp/mccpx/dbm2m got REJECTed).
+Classic shorewall emits the line-884 ACCEPTs into ``agfeo2cdn``
+(line 884 runs before line 2322 closes the chain) and *omits* the
+rules.d ACCEPTs from ``agfeo2siem`` (line 2340 runs after line 2322).
+Both behaviours fall out of the same chain-complete invariant.
+
+These tests pin the after-the-catch-all branch.  The before-the-
+catch-all branch is the inverse and lives in
+``test_chain_complete_pre_catch_all.py``-style locations
+(currently exercised end-to-end by the simlab reference replay).
 """
 
 from __future__ import annotations
@@ -52,46 +59,51 @@ def _has_daddr(rule, value):
                for m in rule.matches)
 
 
-class TestCatchAllDoesNotShadowAllExpansion:
-    """A redundant ``<zone> any`` DROP/REJECT must not block a later
-    ``all → <zone>`` ACCEPT from landing in the same per-pair chain.
-
-    Classic shorewall iptables-save retains both verdicts (the
-    catch-all is omitted as redundant with policy, but does not close
-    the chain) — anything else diverges from the point of truth.
+class TestCatchAllShortCircuitsLaterRules:
+    """A redundant ``<zone> any`` DROP/REJECT closes the per-pair
+    chain for every rule that follows it in source order.
     """
 
-    def test_all_dest_accept_lands_after_catch_all_reject_with_reject_policy(self):
-        # Minimal config has policy ``net all DROP $LOG`` and
-        # ``all all REJECT $LOG`` — both drop-class.  net→loc is
-        # therefore drop-class, which is the precondition for the
-        # chain-complete short-circuit to fire.
+    def test_all_dest_accept_blocked_after_catch_all_reject_class(self):
+        # Minimal config has policy ``net all DROP $LOG`` (drop-class)
+        # — the precondition for the short-circuit to fire on a
+        # catch-all DROP / REJECT from net.
         ir = _ir_with_rules([
             ["DROP:$LOG", "net", "any"],
             ["ACCEPT", "all", "loc:10.0.0.5", "tcp", "80"],
         ])
         net_loc = ir.chains["net-loc"]
-        accepts = _accept_rules(net_loc)
-        target_accepts = [r for r in accepts if _has_daddr(r, "10.0.0.5")]
-        assert target_accepts, (
-            "expected the all→loc:10.0.0.5 ACCEPT to land in net-loc "
-            "even after the redundant DROP:$LOG net any catch-all; "
-            f"got {len(accepts)} ACCEPT rules, none with daddr=10.0.0.5"
+        target_accepts = [r for r in _accept_rules(net_loc)
+                          if _has_daddr(r, "10.0.0.5")]
+        assert not target_accepts, (
+            "all→loc:10.0.0.5 ACCEPT must NOT land in net-loc when a "
+            "preceding DROP:$LOG net any has already closed the chain "
+            "(classic shorewall semantics: chain-complete blocks later "
+            "all-expansion siblings)"
+        )
+
+    def test_catch_all_reject_also_short_circuits(self):
+        ir = _ir_with_rules([
+            ["REJECT", "net", "any"],
+            ["ACCEPT", "all", "loc:10.0.0.6", "tcp", "443"],
+        ])
+        net_loc = ir.chains["net-loc"]
+        target = [r for r in _accept_rules(net_loc)
+                  if _has_daddr(r, "10.0.0.6")]
+        assert not target, (
+            "REJECT-class catch-all must close the chain just like DROP "
+            "(both are drop-class verdicts)"
         )
 
     def test_catch_all_drop_itself_is_omitted(self):
-        # Counter-pin: the catch-all DROP that *is* redundant with the
-        # drop-class policy must NOT appear as a separate rule in the
-        # chain — that's the half of the short-circuit that mirrors
-        # classic shorewall correctly.  Only the chain-completing
-        # half is wrong; this assertion guards the fix from over-
-        # reaching and re-introducing the redundant DROP.
+        # Counter-pin: the catch-all DROP itself is omitted from the
+        # chain body (the policy tail covers it) — only the
+        # chain-complete flag persists.  Without this counter-check
+        # an over-eager fix could re-emit the redundant DROP.
         ir = _ir_with_rules([
             ["DROP:$LOG", "net", "any"],
         ])
         net_loc = ir.chains["net-loc"]
-        # No unconditional drop/reject rule in the body — the policy
-        # tail handles it.
         unconditional_drops = [
             r for r in net_loc.rules
             if r.verdict.name in ("DROP", "REJECT") and not r.matches
@@ -101,18 +113,19 @@ class TestCatchAllDoesNotShadowAllExpansion:
             f"found {len(unconditional_drops)} unconditional drop rules"
         )
 
-    def test_catch_all_reject_does_not_block_all_expansion(self):
-        # Same scenario as the headline test but with REJECT instead
-        # of DROP — the short-circuit treats both as drop-class and
-        # the rossini reference uses REJECT in the policy column.
+    def test_explicit_pair_rule_before_catch_all_lands(self):
+        # Sanity: a rule that runs *before* the catch-all in source
+        # order must still land in the chain.  This is the other half
+        # of the classic-shorewall semantic — chain-complete is
+        # source-order-sensitive, not blanket-blocking.
         ir = _ir_with_rules([
-            ["REJECT", "net", "any"],
-            ["ACCEPT", "all", "loc:10.0.0.6", "tcp", "443"],
+            ["ACCEPT", "all", "loc:10.0.0.7", "tcp", "8080"],
+            ["DROP:$LOG", "net", "any"],
         ])
         net_loc = ir.chains["net-loc"]
         target = [r for r in _accept_rules(net_loc)
-                  if _has_daddr(r, "10.0.0.6")]
+                  if _has_daddr(r, "10.0.0.7")]
         assert target, (
-            "all→loc:10.0.0.6 ACCEPT must land even after a catch-all "
-            "REJECT for net→any (mirrors agfeo→cdn in rossini reference)"
+            "all→loc:10.0.0.7 ACCEPT placed *before* the catch-all "
+            "must land — chain-complete only short-circuits later rules"
         )
