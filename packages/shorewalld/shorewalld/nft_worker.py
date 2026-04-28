@@ -555,8 +555,38 @@ def _worker_main_loop_with_nflog(
     import selectors
 
     from .log_codec import LOG_ENCODE_BUF_SIZE, LogWireError, encode_log_event_into
-    from .log_prefix import parse_log_prefix
-    from .nflog_netlink import NflogWireError, NFULogSocket, parse_frame
+    from .log_prefix import LogEvent, parse_log_prefix
+    from .nflog_netlink import (
+        NflogWireError, NFULogSocket, parse_frame, parse_packet_5tuple,
+    )
+
+    # ifindex → name cache (worker-local, refreshed on miss). Resolves
+    # NFULA_IFINDEX_INDEV/OUTDEV to a human ifname; cache invalidations
+    # happen on cache miss with a sysfs read fallback so device add/del
+    # is eventually consistent without subscribing to RTM_NEWLINK.
+    _ifname_cache: dict[int, str] = {}
+
+    def _ifname(idx: int) -> str:
+        if idx == 0:
+            return ""
+        cached = _ifname_cache.get(idx)
+        if cached is not None:
+            return cached
+        # Scan /sys/class/net for a matching ifindex. O(n_devices) per
+        # miss but fully cached afterwards. Errors → "" so the encoder
+        # still works on netns teardown races.
+        try:
+            for name in os.listdir("/sys/class/net"):
+                try:
+                    with open(f"/sys/class/net/{name}/ifindex") as f:
+                        if int(f.read().strip()) == idx:
+                            _ifname_cache[idx] = name
+                            return name
+                except (OSError, ValueError):
+                    continue
+        except OSError:
+            pass
+        return ""
 
     nflog_sock: NFULogSocket | None = NFULogSocket(group=nflog_group)
     try:
@@ -654,6 +684,26 @@ def _worker_main_loop_with_nflog(
                         # sharing this NFLOG group, or a user rule
                         # picked a custom prefix. Silently drop.
                         continue
+                    # Enrich with packet 5-tuple + interface names.
+                    pkt = parse_packet_5tuple(
+                        frame.payload_mv, frame.hw_protocol)
+                    if pkt is not None or frame.indev or frame.outdev:
+                        ev = LogEvent(
+                            chain=ev.chain,
+                            disposition=ev.disposition,
+                            rule_num=ev.rule_num,
+                            timestamp_ns=ev.timestamp_ns,
+                            netns=ev.netns,
+                            packet_family=pkt.family if pkt else 0,
+                            packet_proto=pkt.proto if pkt else 0,
+                            packet_saddr=pkt.saddr if pkt else "",
+                            packet_daddr=pkt.daddr if pkt else "",
+                            packet_sport=pkt.sport if pkt else 0,
+                            packet_dport=pkt.dport if pkt else 0,
+                            packet_len=pkt.pkt_len if pkt else 0,
+                            indev=_ifname(frame.indev),
+                            outdev=_ifname(frame.outdev),
+                        )
                     try:
                         encoded = encode_log_event_into(log_enc_buf, ev)
                     except LogWireError as e:

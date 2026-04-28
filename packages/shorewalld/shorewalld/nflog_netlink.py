@@ -254,6 +254,108 @@ def parse_frame(msg_mv: memoryview) -> NflogFrame:
 
 
 # ---------------------------------------------------------------------------
+# Light-weight L3/L4 parser for the NFULA_PAYLOAD slice
+# ---------------------------------------------------------------------------
+
+
+_HW_IPV4 = 0x0800
+_HW_IPV6 = 0x86DD
+_PROTO_ICMP = 1
+_PROTO_TCP = 6
+_PROTO_UDP = 17
+_PROTO_ICMP6 = 58
+
+
+@dataclass(frozen=True, slots=True)
+class PacketInfo:
+    """5-tuple + length extracted from the NFULA_PAYLOAD slice.
+
+    Strings are pre-formatted to keep the log-dispatcher hot path
+    allocation-light. ``saddr``/``daddr`` are dotted-quad / colon-hex
+    forms; ``sport``/``dport`` are 0 for protos without ports
+    (ICMP[v6]). ``pkt_len`` is the L3 total length the kernel observed
+    (not the captured slice length).
+    """
+    family: int          # 4 or 6, 0 if unknown
+    proto: int           # IANA L4 proto number, 0 if unknown
+    saddr: str           # "" if no L3 parse
+    daddr: str
+    sport: int           # 0 if no L4 ports
+    dport: int
+    pkt_len: int         # L3 total length, 0 if unknown
+
+
+def parse_packet_5tuple(
+    payload_mv: memoryview | None,
+    hw_protocol: int,
+) -> PacketInfo | None:
+    """Decode the L3 + (best-effort) L4 header from a payload slice.
+
+    Returns ``None`` if no payload was attached (e.g. NFLOG configured
+    with ``copy_meta`` only) or the slice is too short for an L3 header.
+    Truncated L4 → fields fall back to 0 rather than raising; sinks
+    decide what to display.
+    """
+    if payload_mv is None or len(payload_mv) < 20:
+        return None
+    # NFULA_PAYLOAD starts at the L3 header. hw_protocol is the L2
+    # ethertype the kernel observed.
+    if hw_protocol == _HW_IPV4 or (hw_protocol == 0 and (payload_mv[0] >> 4) == 4):
+        return _parse_ipv4(payload_mv)
+    if hw_protocol == _HW_IPV6 or (hw_protocol == 0 and (payload_mv[0] >> 4) == 6):
+        if len(payload_mv) < 40:
+            return None
+        return _parse_ipv6(payload_mv)
+    return None
+
+
+def _ipv4_addr_str(buf: memoryview, off: int) -> str:
+    return f"{buf[off]}.{buf[off + 1]}.{buf[off + 2]}.{buf[off + 3]}"
+
+
+def _ipv6_addr_str(buf: memoryview, off: int) -> str:
+    # Compact ipv6 representation via stdlib — costs one bytes() copy
+    # but avoids a hand-rolled :: collapser.
+    import ipaddress
+    return str(ipaddress.IPv6Address(bytes(buf[off:off + 16])))
+
+
+def _parse_ipv4(p: memoryview) -> PacketInfo:
+    ihl = (p[0] & 0x0F) * 4
+    proto = p[9]
+    pkt_len = (p[2] << 8) | p[3]
+    saddr = _ipv4_addr_str(p, 12)
+    daddr = _ipv4_addr_str(p, 16)
+    sport = dport = 0
+    if proto in (_PROTO_TCP, _PROTO_UDP) and len(p) >= ihl + 4:
+        sport = (p[ihl] << 8) | p[ihl + 1]
+        dport = (p[ihl + 2] << 8) | p[ihl + 3]
+    return PacketInfo(
+        family=4, proto=proto,
+        saddr=saddr, daddr=daddr,
+        sport=sport, dport=dport,
+        pkt_len=pkt_len,
+    )
+
+
+def _parse_ipv6(p: memoryview) -> PacketInfo:
+    proto = p[6]                              # next-header (no ext-hdr walking)
+    pkt_len = ((p[4] << 8) | p[5]) + 40       # payload-len + fixed header
+    saddr = _ipv6_addr_str(p, 8)
+    daddr = _ipv6_addr_str(p, 24)
+    sport = dport = 0
+    if proto in (_PROTO_TCP, _PROTO_UDP) and len(p) >= 40 + 4:
+        sport = (p[40] << 8) | p[41]
+        dport = (p[42] << 8) | p[43]
+    return PacketInfo(
+        family=6, proto=proto,
+        saddr=saddr, daddr=daddr,
+        sport=sport, dport=dport,
+        pkt_len=pkt_len,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Socket
 # ---------------------------------------------------------------------------
 

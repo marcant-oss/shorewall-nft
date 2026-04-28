@@ -138,13 +138,42 @@ def _rfc3339(ns: int) -> str:
 # ---------------------------------------------------------------------------
 
 
+_PROTO_NAME = {1: "icmp", 6: "tcp", 17: "udp", 58: "icmp6"}
+
+
+def _format_packet_suffix(ev: LogEvent) -> str:
+    """Render the optional 5-tuple + iface suffix for plain-text sinks."""
+    if not ev.packet_family:
+        return ""
+    proto = _PROTO_NAME.get(ev.packet_proto, str(ev.packet_proto) if ev.packet_proto else "?")
+    parts: list[str] = []
+    if ev.indev:
+        parts.append(f"in={ev.indev}")
+    if ev.outdev:
+        parts.append(f"out={ev.outdev}")
+    parts.append(f"proto={proto}")
+    if ev.packet_saddr:
+        if ev.packet_sport:
+            parts.append(f"src={ev.packet_saddr}:{ev.packet_sport}")
+        else:
+            parts.append(f"src={ev.packet_saddr}")
+    if ev.packet_daddr:
+        if ev.packet_dport:
+            parts.append(f"dst={ev.packet_daddr}:{ev.packet_dport}")
+        else:
+            parts.append(f"dst={ev.packet_daddr}")
+    if ev.packet_len:
+        parts.append(f"len={ev.packet_len}")
+    return " " + " ".join(parts)
+
+
 def _format_plain_line(ev: LogEvent) -> bytes:
     """Build the file-sink line. ASCII, newline-terminated."""
     ts = _rfc3339(ev.timestamp_ns)
     rule_part = f" rule={ev.rule_num}" if ev.rule_num is not None else ""
     return (
         f"{ts} netns={ev.netns or '-'} chain={ev.chain} "
-        f"disposition={ev.disposition}{rule_part}\n"
+        f"disposition={ev.disposition}{rule_part}{_format_packet_suffix(ev)}\n"
     ).encode("ascii", "replace")
 
 
@@ -182,10 +211,14 @@ def _format_journal_datagram(ev: LogEvent) -> bytes:
     fields or mixed-case uppercase text fields; we use the standard
     ``MESSAGE=``, ``PRIORITY=``, ``SYSLOG_IDENTIFIER=`` plus custom
     ``SHOREWALL_*`` fields.
+
+    The MESSAGE line embeds the 5-tuple inline so ``journalctl`` users
+    see context without needing to enable verbose-output mode; the
+    structured ``SHOREWALL_*`` fields stay separate for filtering.
     """
     lines = [
         f"MESSAGE=shorewall {ev.chain} {ev.disposition} "
-        f"netns={ev.netns or '-'}",
+        f"netns={ev.netns or '-'}{_format_packet_suffix(ev)}",
         f"PRIORITY={_journal_priority_for(ev.disposition)}",
         "SYSLOG_IDENTIFIER=shorewalld",
         f"SHOREWALL_CHAIN={ev.chain}",
@@ -196,6 +229,22 @@ def _format_journal_datagram(ev: LogEvent) -> bytes:
         lines.append(f"SHOREWALL_RULE_NUM={ev.rule_num}")
     if ev.timestamp_ns:
         lines.append(f"SHOREWALL_NFLOG_TS={ev.timestamp_ns}")
+    if ev.packet_family:
+        lines.append(f"SHOREWALL_PROTO={_PROTO_NAME.get(ev.packet_proto, str(ev.packet_proto))}")
+        if ev.packet_saddr:
+            lines.append(f"SHOREWALL_SADDR={ev.packet_saddr}")
+        if ev.packet_daddr:
+            lines.append(f"SHOREWALL_DADDR={ev.packet_daddr}")
+        if ev.packet_sport:
+            lines.append(f"SHOREWALL_SPORT={ev.packet_sport}")
+        if ev.packet_dport:
+            lines.append(f"SHOREWALL_DPORT={ev.packet_dport}")
+        if ev.packet_len:
+            lines.append(f"SHOREWALL_PKT_LEN={ev.packet_len}")
+    if ev.indev:
+        lines.append(f"SHOREWALL_INDEV={ev.indev}")
+    if ev.outdev:
+        lines.append(f"SHOREWALL_OUTDEV={ev.outdev}")
     # Trailing newline required by journald.
     return ("\n".join(lines) + "\n").encode("utf-8")
 

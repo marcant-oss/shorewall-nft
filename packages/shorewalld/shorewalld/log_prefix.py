@@ -39,12 +39,30 @@ class LogEvent:
     memoryviews would be the wrong shape here. The zero-copy budget is
     spent upstream (nfnetlink_log parse); the one decode of the prefix
     bytes happens here, exactly once per surviving event.
+
+    The ``packet_*`` and ``indev``/``outdev`` fields are populated when
+    the worker calls :func:`shorewalld.nflog_netlink.parse_packet_5tuple`
+    on the NFULA_PAYLOAD slice and forwards the resolved ifindex names
+    over the wire. ``packet_family == 0`` means "no L3 parse" — sinks
+    should fall back to the chain/disp-only line. Defaults keep the
+    older test fixtures (which build LogEvent directly without packet
+    info) working.
     """
     chain: str
     disposition: str
     rule_num: int | None
     timestamp_ns: int
     netns: str
+    # Packet metadata (NFULA_PAYLOAD parse) — 0/"" when absent.
+    packet_family: int = 0   # 4, 6, or 0
+    packet_proto: int = 0    # IANA proto number, 0 if unknown
+    packet_saddr: str = ""
+    packet_daddr: str = ""
+    packet_sport: int = 0
+    packet_dport: int = 0
+    packet_len: int = 0
+    indev: str = ""          # interface name (resolved from ifindex)
+    outdev: str = ""
 
 
 def parse_log_prefix(
