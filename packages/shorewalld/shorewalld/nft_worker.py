@@ -684,26 +684,31 @@ def _worker_main_loop_with_nflog(
                         # sharing this NFLOG group, or a user rule
                         # picked a custom prefix. Silently drop.
                         continue
-                    # Enrich with packet 5-tuple + interface names.
+                    # Enrich with packet 5-tuple + interface names + NFLOG metadata.
                     pkt = parse_packet_5tuple(
                         frame.payload_mv, frame.hw_protocol)
-                    if pkt is not None or frame.indev or frame.outdev:
-                        ev = LogEvent(
-                            chain=ev.chain,
-                            disposition=ev.disposition,
-                            rule_num=ev.rule_num,
-                            timestamp_ns=ev.timestamp_ns,
-                            netns=ev.netns,
-                            packet_family=pkt.family if pkt else 0,
-                            packet_proto=pkt.proto if pkt else 0,
-                            packet_saddr=pkt.saddr if pkt else "",
-                            packet_daddr=pkt.daddr if pkt else "",
-                            packet_sport=pkt.sport if pkt else 0,
-                            packet_dport=pkt.dport if pkt else 0,
-                            packet_len=pkt.pkt_len if pkt else 0,
-                            indev=_ifname(frame.indev),
-                            outdev=_ifname(frame.outdev),
-                        )
+                    ev = LogEvent(
+                        chain=ev.chain,
+                        disposition=ev.disposition,
+                        rule_num=ev.rule_num,
+                        timestamp_ns=ev.timestamp_ns,
+                        netns=ev.netns,
+                        packet_family=pkt.family if pkt else 0,
+                        packet_proto=pkt.proto if pkt else 0,
+                        packet_saddr=pkt.saddr if pkt else "",
+                        packet_daddr=pkt.daddr if pkt else "",
+                        packet_sport=pkt.sport if pkt else 0,
+                        packet_dport=pkt.dport if pkt else 0,
+                        packet_len=pkt.pkt_len if pkt else 0,
+                        packet_ttl=pkt.ttl if pkt else 0,
+                        packet_tcp_flags=pkt.tcp_flags if pkt else 0,
+                        indev=_ifname(frame.indev),
+                        outdev=_ifname(frame.outdev),
+                        nf_hook=frame.hook,
+                        nf_mark=frame.mark,
+                        nf_uid=frame.uid,
+                        nf_gid=frame.gid,
+                    )
                     try:
                         encoded = encode_log_event_into(log_enc_buf, ev)
                     except LogWireError as e:

@@ -139,32 +139,68 @@ def _rfc3339(ns: int) -> str:
 
 
 _PROTO_NAME = {1: "icmp", 6: "tcp", 17: "udp", 58: "icmp6"}
+_NF_HOOK_NAME = {
+    0: "prerouting", 1: "input", 2: "forward", 3: "output", 4: "postrouting",
+}
+
+
+def _format_tcp_flags(flags: int) -> str:
+    """Render TCP flags byte as compact string (e.g. ``SYN,ACK``)."""
+    if not flags:
+        return ""
+    names = []
+    for bit, name in (
+        (0x01, "FIN"), (0x02, "SYN"), (0x04, "RST"), (0x08, "PSH"),
+        (0x10, "ACK"), (0x20, "URG"), (0x40, "ECE"), (0x80, "CWR"),
+    ):
+        if flags & bit:
+            names.append(name)
+    return ",".join(names)
 
 
 def _format_packet_suffix(ev: LogEvent) -> str:
-    """Render the optional 5-tuple + iface suffix for plain-text sinks."""
-    if not ev.packet_family:
+    """Render the optional 5-tuple + iface + meta suffix for plain-text sinks."""
+    if not ev.packet_family and not (ev.indev or ev.outdev or ev.nf_mark):
         return ""
-    proto = _PROTO_NAME.get(ev.packet_proto, str(ev.packet_proto) if ev.packet_proto else "?")
     parts: list[str] = []
+    hook_name = _NF_HOOK_NAME.get(ev.nf_hook, "")
+    if hook_name:
+        parts.append(f"hook={hook_name}")
     if ev.indev:
         parts.append(f"in={ev.indev}")
     if ev.outdev:
         parts.append(f"out={ev.outdev}")
-    parts.append(f"proto={proto}")
-    if ev.packet_saddr:
-        if ev.packet_sport:
-            parts.append(f"src={ev.packet_saddr}:{ev.packet_sport}")
+    if ev.packet_family:
+        proto = _PROTO_NAME.get(ev.packet_proto,
+                                str(ev.packet_proto) if ev.packet_proto else "?")
+        parts.append(f"proto={proto}")
+        if ev.packet_proto in (1, 58):  # ICMP / ICMPv6
+            # sport/dport carry icmp type+code per nflog_netlink._parse_l4
+            parts.append(f"icmp_type={ev.packet_sport} icmp_code={ev.packet_dport}")
+            if ev.packet_saddr:
+                parts.append(f"src={ev.packet_saddr}")
+            if ev.packet_daddr:
+                parts.append(f"dst={ev.packet_daddr}")
         else:
-            parts.append(f"src={ev.packet_saddr}")
-    if ev.packet_daddr:
-        if ev.packet_dport:
-            parts.append(f"dst={ev.packet_daddr}:{ev.packet_dport}")
-        else:
-            parts.append(f"dst={ev.packet_daddr}")
-    if ev.packet_len:
-        parts.append(f"len={ev.packet_len}")
-    return " " + " ".join(parts)
+            if ev.packet_saddr:
+                parts.append(f"src={ev.packet_saddr}:{ev.packet_sport}"
+                             if ev.packet_sport else f"src={ev.packet_saddr}")
+            if ev.packet_daddr:
+                parts.append(f"dst={ev.packet_daddr}:{ev.packet_dport}"
+                             if ev.packet_dport else f"dst={ev.packet_daddr}")
+        if ev.packet_proto == 6 and ev.packet_tcp_flags:
+            parts.append(f"flags={_format_tcp_flags(ev.packet_tcp_flags)}")
+        if ev.packet_ttl:
+            parts.append(f"ttl={ev.packet_ttl}")
+        if ev.packet_len:
+            parts.append(f"len={ev.packet_len}")
+    if ev.nf_mark:
+        parts.append(f"mark=0x{ev.nf_mark:08x}")
+    # uid/gid only meaningful on OUTPUT hook (locally-generated traffic);
+    # NFLOG omits NFULA_UID elsewhere → fields stay 0 / sentinel.
+    if ev.nf_hook == 3 and ev.nf_uid not in (0, 0xFFFFFFFF):
+        parts.append(f"uid={ev.nf_uid}")
+    return " " + " ".join(parts) if parts else ""
 
 
 def _format_plain_line(ev: LogEvent) -> bytes:
@@ -230,21 +266,40 @@ def _format_journal_datagram(ev: LogEvent) -> bytes:
     if ev.timestamp_ns:
         lines.append(f"SHOREWALL_NFLOG_TS={ev.timestamp_ns}")
     if ev.packet_family:
+        lines.append(f"SHOREWALL_FAMILY={ev.packet_family}")
         lines.append(f"SHOREWALL_PROTO={_PROTO_NAME.get(ev.packet_proto, str(ev.packet_proto))}")
         if ev.packet_saddr:
             lines.append(f"SHOREWALL_SADDR={ev.packet_saddr}")
         if ev.packet_daddr:
             lines.append(f"SHOREWALL_DADDR={ev.packet_daddr}")
-        if ev.packet_sport:
-            lines.append(f"SHOREWALL_SPORT={ev.packet_sport}")
-        if ev.packet_dport:
-            lines.append(f"SHOREWALL_DPORT={ev.packet_dport}")
+        if ev.packet_proto in (1, 58):
+            lines.append(f"SHOREWALL_ICMP_TYPE={ev.packet_sport}")
+            lines.append(f"SHOREWALL_ICMP_CODE={ev.packet_dport}")
+        else:
+            if ev.packet_sport:
+                lines.append(f"SHOREWALL_SPORT={ev.packet_sport}")
+            if ev.packet_dport:
+                lines.append(f"SHOREWALL_DPORT={ev.packet_dport}")
+        if ev.packet_proto == 6 and ev.packet_tcp_flags:
+            lines.append(f"SHOREWALL_TCP_FLAGS={_format_tcp_flags(ev.packet_tcp_flags)}")
+            lines.append(f"SHOREWALL_TCP_FLAGS_RAW={ev.packet_tcp_flags}")
+        if ev.packet_ttl:
+            lines.append(f"SHOREWALL_TTL={ev.packet_ttl}")
         if ev.packet_len:
             lines.append(f"SHOREWALL_PKT_LEN={ev.packet_len}")
     if ev.indev:
         lines.append(f"SHOREWALL_INDEV={ev.indev}")
     if ev.outdev:
         lines.append(f"SHOREWALL_OUTDEV={ev.outdev}")
+    hook_name = _NF_HOOK_NAME.get(ev.nf_hook, "")
+    if hook_name:
+        lines.append(f"SHOREWALL_HOOK={hook_name}")
+    if ev.nf_mark:
+        lines.append(f"SHOREWALL_MARK=0x{ev.nf_mark:08x}")
+    if ev.nf_hook == 3 and ev.nf_uid not in (0, 0xFFFFFFFF):
+        lines.append(f"SHOREWALL_UID={ev.nf_uid}")
+        if ev.nf_gid not in (0, 0xFFFFFFFF):
+            lines.append(f"SHOREWALL_GID={ev.nf_gid}")
     # Trailing newline required by journald.
     return ("\n".join(lines) + "\n").encode("utf-8")
 

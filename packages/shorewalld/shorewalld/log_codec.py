@@ -69,10 +69,12 @@ MAGIC_NFLOG = 0x53574C47          # b"SWLG"
 
 #: Independent of batch_codec.WIRE_VERSION — only this codec needs a bump.
 LOG_WIRE_VERSION_V1 = 1
-LOG_WIRE_VERSION = 2
+LOG_WIRE_VERSION_V2 = 2
+LOG_WIRE_VERSION = 3
 
 LOG_HEADER_LEN_V1 = 21
-LOG_HEADER_LEN = 35
+LOG_HEADER_LEN_V2 = 35
+LOG_HEADER_LEN = 48          # v3 header (8-byte aligned)
 
 #: bit-flag layout in the ``flags`` byte at offset 6
 _FLAG_HAS_RULENUM = 0x01
@@ -80,7 +82,18 @@ _FLAG_HAS_PACKET = 0x02
 
 # Header structs.
 _STRUCT_LOG_HEADER_V1 = struct.Struct(">I H B B B Q I")  # 21 bytes
-_STRUCT_LOG_HEADER = struct.Struct(">I H B B B Q I B B H H I B B H")  # 35 bytes
+_STRUCT_LOG_HEADER_V2 = struct.Struct(">I H B B B Q I B B H H I B B H")  # 35 bytes
+# v3 = v2 fields + ttl + tcp_flags + nf_hook + nf_mark + nf_uid + nf_gid
+# Layout (48 bytes):
+#   0-20   v1 base (magic..rule_num)        21 bytes
+#   21     family                            22 proto
+#   23-24  sport                             25-26 dport
+#   27-30  pkt_len                           31 ttl
+#   32     tcp_flags                         33 nf_hook
+#   34     indev_len                         35 outdev_len
+#   36-39  nf_mark                           40-43 nf_uid
+#   44-47  nf_gid
+_STRUCT_LOG_HEADER = struct.Struct(">I H B B B Q I B B H H I B B B B B I I I")
 
 # Safety cap: chain_len + disp_len are u8 each → max body = 510 bytes.
 # v6 addresses 32 bytes + 2 ifnames 64 bytes → ≤96. Header 35 + body 606
@@ -133,6 +146,7 @@ def encode_log_event_into(buf: bytearray, ev: LogEvent) -> memoryview:
             f"encode buffer too small: need {total}, have {len(buf)}")
 
     rule_num = ev.rule_num if ev.rule_num is not None else 0
+    has_packet = bool(flags & _FLAG_HAS_PACKET)
     _STRUCT_LOG_HEADER.pack_into(
         buf, 0,
         MAGIC_NFLOG,
@@ -142,14 +156,19 @@ def encode_log_event_into(buf: bytearray, ev: LogEvent) -> memoryview:
         len(disp_b),
         ev.timestamp_ns,
         rule_num,
-        ev.packet_family if (flags & _FLAG_HAS_PACKET) else 0,
-        ev.packet_proto if (flags & _FLAG_HAS_PACKET) else 0,
-        ev.packet_sport if (flags & _FLAG_HAS_PACKET) else 0,
-        ev.packet_dport if (flags & _FLAG_HAS_PACKET) else 0,
-        ev.packet_len if (flags & _FLAG_HAS_PACKET) else 0,
+        ev.packet_family if has_packet else 0,
+        ev.packet_proto if has_packet else 0,
+        ev.packet_sport if has_packet else 0,
+        ev.packet_dport if has_packet else 0,
+        ev.packet_len if has_packet else 0,
+        ev.packet_ttl if has_packet else 0,
+        ev.packet_tcp_flags if has_packet else 0,
+        ev.nf_hook & 0xFF,
         len(indev_b),
         len(outdev_b),
-        0,  # reserved
+        ev.nf_mark & 0xFFFFFFFF,
+        ev.nf_uid & 0xFFFFFFFF,
+        ev.nf_gid & 0xFFFFFFFF,
     )
     off = LOG_HEADER_LEN
     mv = memoryview(buf)
@@ -210,8 +229,10 @@ def decode_log_event(view: memoryview | bytes, *, netns: str = "") -> LogEvent:
 
     if version == LOG_WIRE_VERSION_V1:
         return _decode_v1(view, netns=netns)
-    if version == LOG_WIRE_VERSION:
+    if version == LOG_WIRE_VERSION_V2:
         return _decode_v2(view, netns=netns)
+    if version == LOG_WIRE_VERSION:
+        return _decode_v3(view, netns=netns)
     raise LogWireError(f"unsupported log-event version {version}")
 
 
@@ -238,12 +259,12 @@ def _decode_v1(view, *, netns: str) -> LogEvent:
 
 
 def _decode_v2(view, *, netns: str) -> LogEvent:
-    if len(view) < LOG_HEADER_LEN:
+    if len(view) < LOG_HEADER_LEN_V2:
         raise LogWireError(f"log-event v2 shorter than header: {len(view)}")
     (
         _magic, _ver, flags, chain_len, disp_len, timestamp_ns, rule_num,
         family, proto, sport, dport, pkt_len, indev_len, outdev_len, _resv,
-    ) = _STRUCT_LOG_HEADER.unpack_from(view, 0)
+    ) = _STRUCT_LOG_HEADER_V2.unpack_from(view, 0)
 
     has_packet = bool(flags & _FLAG_HAS_PACKET)
     addr_len = 4 if family == 4 else 16 if family == 6 else 0
@@ -251,11 +272,11 @@ def _decode_v2(view, *, netns: str) -> LogEvent:
         addr_len = 0
 
     body_len = (2 * addr_len) + indev_len + outdev_len + chain_len + disp_len
-    total = LOG_HEADER_LEN + body_len
+    total = LOG_HEADER_LEN_V2 + body_len
     if total > len(view):
         raise LogWireError(f"log-event v2 truncated: need {total}, have {len(view)}")
 
-    off = LOG_HEADER_LEN
+    off = LOG_HEADER_LEN_V2
     saddr = daddr = ""
     if has_packet and addr_len:
         try:
@@ -289,4 +310,67 @@ def _decode_v2(view, *, netns: str) -> LogEvent:
         packet_len=pkt_len if has_packet else 0,
         indev=indev,
         outdev=outdev,
+    )
+
+
+def _decode_v3(view, *, netns: str) -> LogEvent:
+    if len(view) < LOG_HEADER_LEN:
+        raise LogWireError(f"log-event v3 shorter than header: {len(view)}")
+    (
+        _magic, _ver, flags, chain_len, disp_len, timestamp_ns, rule_num,
+        family, proto, sport, dport, pkt_len,
+        ttl, tcp_flags, nf_hook, indev_len, outdev_len,
+        nf_mark, nf_uid, nf_gid,
+    ) = _STRUCT_LOG_HEADER.unpack_from(view, 0)
+
+    has_packet = bool(flags & _FLAG_HAS_PACKET)
+    addr_len = 4 if family == 4 else 16 if family == 6 else 0
+    if not has_packet:
+        addr_len = 0
+
+    body_len = (2 * addr_len) + indev_len + outdev_len + chain_len + disp_len
+    total = LOG_HEADER_LEN + body_len
+    if total > len(view):
+        raise LogWireError(f"log-event v3 truncated: need {total}, have {len(view)}")
+
+    off = LOG_HEADER_LEN
+    saddr = daddr = ""
+    if has_packet and addr_len:
+        try:
+            saddr = _addr_bytes_to_str(bytes(view[off:off + addr_len]), family)
+            off += addr_len
+            daddr = _addr_bytes_to_str(bytes(view[off:off + addr_len]), family)
+            off += addr_len
+        except (ValueError, OSError):
+            saddr = daddr = ""
+            off += 2 * addr_len
+    indev = bytes(view[off:off + indev_len]).decode("ascii", "replace")
+    off += indev_len
+    outdev = bytes(view[off:off + outdev_len]).decode("ascii", "replace")
+    off += outdev_len
+    chain = bytes(view[off:off + chain_len]).decode("ascii", "replace")
+    off += chain_len
+    disposition = bytes(view[off:off + disp_len]).decode("ascii", "replace")
+
+    return LogEvent(
+        chain=chain,
+        disposition=disposition,
+        rule_num=rule_num if (flags & _FLAG_HAS_RULENUM) else None,
+        timestamp_ns=timestamp_ns,
+        netns=netns,
+        packet_family=family if has_packet else 0,
+        packet_proto=proto if has_packet else 0,
+        packet_saddr=saddr,
+        packet_daddr=daddr,
+        packet_sport=sport if has_packet else 0,
+        packet_dport=dport if has_packet else 0,
+        packet_len=pkt_len if has_packet else 0,
+        packet_ttl=ttl if has_packet else 0,
+        packet_tcp_flags=tcp_flags if has_packet else 0,
+        indev=indev,
+        outdev=outdev,
+        nf_hook=nf_hook,
+        nf_mark=nf_mark,
+        nf_uid=nf_uid,
+        nf_gid=nf_gid,
     )

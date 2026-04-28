@@ -268,21 +268,29 @@ _PROTO_ICMP6 = 58
 
 @dataclass(frozen=True, slots=True)
 class PacketInfo:
-    """5-tuple + length extracted from the NFULA_PAYLOAD slice.
+    """L3+L4 header fields extracted from the NFULA_PAYLOAD slice.
 
     Strings are pre-formatted to keep the log-dispatcher hot path
     allocation-light. ``saddr``/``daddr`` are dotted-quad / colon-hex
     forms; ``sport``/``dport`` are 0 for protos without ports
     (ICMP[v6]). ``pkt_len`` is the L3 total length the kernel observed
     (not the captured slice length).
+
+    ``ttl`` is the IPv4 TTL or IPv6 Hop Limit (1..255). ``tcp_flags`` is
+    the raw 8-bit flags byte (CWR/ECE/URG/ACK/PSH/RST/SYN/FIN); 0 for
+    non-TCP. ICMP[v6] type is folded into ``proto``+``sport`` reuse:
+    for ICMP we put the ICMP type into ``sport`` and code into
+    ``dport`` so existing emitters can render them without a new field.
     """
     family: int          # 4 or 6, 0 if unknown
     proto: int           # IANA L4 proto number, 0 if unknown
     saddr: str           # "" if no L3 parse
     daddr: str
-    sport: int           # 0 if no L4 ports
-    dport: int
+    sport: int           # 0 if no L4 ports; ICMP type for proto=1/58
+    dport: int           # 0 if no L4 ports; ICMP code for proto=1/58
     pkt_len: int         # L3 total length, 0 if unknown
+    ttl: int = 0         # IPv4 TTL / IPv6 Hop Limit
+    tcp_flags: int = 0   # raw TCP flags byte; 0 for non-TCP
 
 
 def parse_packet_5tuple(
@@ -320,38 +328,52 @@ def _ipv6_addr_str(buf: memoryview, off: int) -> str:
     return str(ipaddress.IPv6Address(bytes(buf[off:off + 16])))
 
 
+def _parse_l4(p: memoryview, proto: int, l4_off: int) -> tuple[int, int, int]:
+    """Return (sport_or_icmptype, dport_or_icmpcode, tcp_flags)."""
+    if proto in (_PROTO_TCP, _PROTO_UDP) and len(p) >= l4_off + 4:
+        sport = (p[l4_off] << 8) | p[l4_off + 1]
+        dport = (p[l4_off + 2] << 8) | p[l4_off + 3]
+        # TCP flags live at byte 13 of the TCP header (offset 13 in
+        # current TCP RFC 9293; bits 0..7 = FIN/SYN/RST/PSH/ACK/URG/ECE/CWR).
+        tcp_flags = 0
+        if proto == _PROTO_TCP and len(p) >= l4_off + 14:
+            tcp_flags = p[l4_off + 13]
+        return sport, dport, tcp_flags
+    if proto in (_PROTO_ICMP, _PROTO_ICMP6) and len(p) >= l4_off + 2:
+        # Fold ICMP type+code into sport+dport so existing emitters
+        # render them without a separate field.
+        return p[l4_off], p[l4_off + 1], 0
+    return 0, 0, 0
+
+
 def _parse_ipv4(p: memoryview) -> PacketInfo:
     ihl = (p[0] & 0x0F) * 4
+    ttl = p[8]
     proto = p[9]
     pkt_len = (p[2] << 8) | p[3]
     saddr = _ipv4_addr_str(p, 12)
     daddr = _ipv4_addr_str(p, 16)
-    sport = dport = 0
-    if proto in (_PROTO_TCP, _PROTO_UDP) and len(p) >= ihl + 4:
-        sport = (p[ihl] << 8) | p[ihl + 1]
-        dport = (p[ihl + 2] << 8) | p[ihl + 3]
+    sport, dport, tcp_flags = _parse_l4(p, proto, ihl)
     return PacketInfo(
         family=4, proto=proto,
         saddr=saddr, daddr=daddr,
         sport=sport, dport=dport,
-        pkt_len=pkt_len,
+        pkt_len=pkt_len, ttl=ttl, tcp_flags=tcp_flags,
     )
 
 
 def _parse_ipv6(p: memoryview) -> PacketInfo:
     proto = p[6]                              # next-header (no ext-hdr walking)
+    ttl = p[7]                                # hop limit
     pkt_len = ((p[4] << 8) | p[5]) + 40       # payload-len + fixed header
     saddr = _ipv6_addr_str(p, 8)
     daddr = _ipv6_addr_str(p, 24)
-    sport = dport = 0
-    if proto in (_PROTO_TCP, _PROTO_UDP) and len(p) >= 40 + 4:
-        sport = (p[40] << 8) | p[41]
-        dport = (p[42] << 8) | p[43]
+    sport, dport, tcp_flags = _parse_l4(p, proto, 40)
     return PacketInfo(
         family=6, proto=proto,
         saddr=saddr, daddr=daddr,
         sport=sport, dport=dport,
-        pkt_len=pkt_len,
+        pkt_len=pkt_len, ttl=ttl, tcp_flags=tcp_flags,
     )
 
 
