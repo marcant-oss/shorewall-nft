@@ -749,6 +749,65 @@ def test_wait_invalid_value_dropped():
                for rec in w)
 
 
+# ── nets= zone-dispatch scoping ─────────────────────────────────────────────
+
+def test_nets_split_classifies_v4_and_v6():
+    """``Interface._nets_split`` puts each CIDR into the right family bucket."""
+    from shorewall_nft.config.zones import Interface
+    iface = Interface(name="x", zone="z",
+                      option_values={"nets": "10.0.0.0/8,fd00::/8,192.168.0.0/16"})
+    v4, v6 = iface._nets_split()
+    assert "10.0.0.0/8" in v4
+    assert "192.168.0.0/16" in v4
+    assert "fd00::/8" in v6 or "fc00::/7" in v6  # strict=False normalises
+    assert iface.has_nets
+
+
+def test_has_nets_false_when_unset_or_garbage():
+    from shorewall_nft.config.zones import Interface
+    assert not Interface(name="x", zone="z").has_nets
+    assert not Interface(name="x", zone="z",
+                         option_values={"nets": "not-a-cidr"}).has_nets
+
+
+def test_nets_emits_ip_saddr_in_zone_dispatch():
+    """nets= on src iface adds ``ip saddr {nets}`` to its zone-jump rule."""
+    config = _make_config("nets=(10.0.0.0/8,192.168.0.0/16)")
+    ir = build_ir(config)
+    nft = emit_nft(ir)
+    # The dispatch rule for net→loc / net→fw must scope eth0's ingress
+    # to the configured nets.
+    assert "ip saddr { 10.0.0.0/8, 192.168.0.0/16 }" in nft, (
+        f"Expected scoped ip saddr in dispatch; got:\n{nft}"
+    )
+
+
+def test_nets_emits_ip_daddr_when_dst_zone_has_nets():
+    """nets= on dst iface adds ``ip daddr {nets}`` to dispatch rules."""
+    config = _make_config("-")
+    config.interfaces = [
+        _row(["net", "eth0", "detect", "-"], "interfaces"),
+        _row(["loc", "eth1", "detect", "nets=192.168.10.0/24"], "interfaces"),
+    ]
+    ir = build_ir(config)
+    nft = emit_nft(ir)
+    assert "ip daddr { 192.168.10.0/24 }" in nft
+
+
+def test_nets_skips_vmap_dispatch():
+    """Configs with nets= must fall back to per-iface cascade dispatch
+    (the vmap shorthand can't express saddr-scoping)."""
+    config = _make_config("nets=10.0.0.0/8")
+    ir = build_ir(config)
+    nft = emit_nft(ir)
+    # The forward base chain must NOT use vmap when nets= is in play.
+    forward_section = nft.split("chain forward {", 1)[-1].split("}", 1)[0]
+    assert "iifname vmap" not in forward_section, (
+        "vmap dispatch found in forward chain — nets= should force cascade"
+    )
+    assert "iifname . oifname vmap" not in forward_section
+
+
 # ── WP-D1: sysctl uses /proc/sys writes, not 'sysctl' binary ────────────────
 
 def test_sysctl_output_uses_proc_writes():

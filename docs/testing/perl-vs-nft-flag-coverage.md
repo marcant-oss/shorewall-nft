@@ -50,6 +50,7 @@ hits for `wait`, `subnets`/`interfaces` for `nets`.
 | `nomark` | none | **F (NEW)** | `zones.py` | `emitter.py:_compute_zone_marks` | iface excluded from zone-mark allocation map; ct-mark-set rules don't emit for it (mirrors Perl `find_interfaces_by_option('nomark')` skip) |
 | `dbl=src\|dst\|src-dst\|none` / `nodbl` | none | **F (NEW)** | `zones.py` (validated) | `_build.py:_prepend_ct_state_to_zone_pair_chains` + `_ensure_dbl_dst_chain` | per-source-zone iifname-gate on `sw_dynamic-blacklist` (src) jump; per-destination-zone oifname-gate on `sw_dynamic-blacklist-dst` (dst) jump.  All four Perl variants now mapped: `none`/`nodbl` → no jumps; `src` → src jump only; `dst` → dst jump only; `src-dst` → both. |
 | `wait=N` | none | **F (parser-only)** (NEW) | `zones.py` (validated numeric, warns) | n/a | Runtime concern — Perl uses this in init scripts to retry iface-presence checks at start.  shorewall-nft has no equivalent init phase; the option is parsed (so existing configs load) and a `UserWarning` flags the missing runtime hook. |
+| `nets=(CIDR,...)` | none | **F (NEW)** | `option_values["nets"]` (paren-grouped) | `nft/emitter.py:_emit_zone_jump_per_iface` | Per-iface zone-dispatch scoping: emits `iifname X ip saddr {nets} ...` (and analogous `ip daddr` on the dst side).  Forces cascade-dispatch (skips the vmap shorthand which can't express saddr-scoping).  v4/v6 CIDRs split per `Interface._nets_split`.  Honours Perl `imatch_source_net` semantics — traffic is only routed to the zone-pair chain when src/dst is within the iface's declared nets. |
 | `dynamic_shared` | none | **F (parser)** (NEW) | `zones.py` IN/OUT_OPTIONS | n/a — current emit is shared-set by default | Perl makes the dynamic-blacklist set shared across zone ifaces when set; shorewall-nft's existing emit uses one shared `@dynamic_blacklist` set globally, so this option is effectively the default and stored as a no-op annotation. |
 | `upnp` | none | **DEPRECATED** | `zones.py` (UserWarning) | n/a | Runtime-coupled: requires miniupnpd integration that has no shorewall-nft equivalent.  Parse accepted with deprecation warning so existing configs load; no NAT rules emitted. |
 | `upnpclient` | none | **DEPRECATED** | `zones.py` (UserWarning) | n/a | Runtime-coupled: requires gateway-IP shell-var resolution.  Parse accepted with deprecation warning; no input-accept rule emitted. |
@@ -62,7 +63,6 @@ hits for `wait`, `subnets`/`interfaces` for `nets`.
 
 | Flag | State | Effort | Why deferred |
 |------|-------|--------|--------------|
-| `nets=SUBNET` | **N** | Large (zone-dispatch redesign) | Inline subnet list per iface; affects `imatch_source_net()` and zone dispatch. Touches rule-dispatch architecture.  Paren-group parser is already in place. |
 | `destonly` / `sourceonly` | **N** | Large (host-direction redesign) | Excludes rules in one direction. Touches every zone-pair dispatch. |
 | `wait=N` runtime hook | **F-parser** | Medium (init phase) | Compile-time parsing complete; runtime iface-presence-retry phase needs adding to ``shorewall_nft.runtime`` startup pipeline. |
 | `detectnets` | **N** | n/a (OBSOLETE) | Deprecated in Perl. Don't implement. |

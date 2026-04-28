@@ -1064,6 +1064,16 @@ def _emit_vmap_dispatch(lines: list[str], base_chain: Chain,
         else:
             return False
 
+        # Force cascade-dispatch (= return False from this fn) when any
+        # iface in either zone declares ``nets=`` — vmap keys can't
+        # express "iifname=X AND ip saddr in {nets}" without a concat
+        # match that nft doesn't support cleanly.  Per-iface dispatch
+        # in ``_emit_zone_jump`` handles the nets= scoping correctly.
+        for zone_name in (src_zone, dst_zone):
+            if zone_name in ir.zones.zones:
+                if any(i.has_nets for i in ir.zones.zones[zone_name].interfaces):
+                    return False
+
         def _ifaces_for(zone_name: str) -> list[str]:
             nonlocal has_hosts_only
             if zone_name == fw_zone or zone_name not in ir.zones.zones:
@@ -1165,29 +1175,87 @@ def _emit_zone_jump(lines: list[str], chain_name: str,
     if families:
         matches.append(f"meta nfproto {next(iter(families))}")
 
-    if src_zone and src_zone in ir.zones.zones:
-        zone = ir.zones.zones[src_zone]
-        if zone.interfaces:
-            if len(zone.interfaces) == 1:
-                matches.append(f'iifname "{zone.interfaces[0].emit_name}"')
-            else:
-                names = ", ".join(f'"{i.emit_name}"' for i in zone.interfaces)
-                matches.append(f"iifname {{ {names} }}")
+    src_zone_obj = ir.zones.zones.get(src_zone) if src_zone else None
+    dst_zone_obj = ir.zones.zones.get(dst_zone) if dst_zone else None
+    src_ifaces = src_zone_obj.interfaces if src_zone_obj else []
+    dst_ifaces = dst_zone_obj.interfaces if dst_zone_obj else []
+    needs_per_iface = (
+        any(i.has_nets for i in src_ifaces)
+        or any(i.has_nets for i in dst_ifaces)
+    )
 
-    if dst_zone and dst_zone in ir.zones.zones:
-        zone = ir.zones.zones[dst_zone]
-        if zone.interfaces:
-            if len(zone.interfaces) == 1:
-                matches.append(f'oifname "{zone.interfaces[0].emit_name}"')
-            else:
-                names = ", ".join(f'"{i.emit_name}"' for i in zone.interfaces)
-                matches.append(f"oifname {{ {names} }}")
+    if needs_per_iface:
+        # Per-iface scoping: emit one rule per (src, dst) iface pair so
+        # ``nets=`` (saddr/daddr CIDR scoping) lands cleanly per iface
+        # rather than aggregating ifaces with disjoint nets into a
+        # single iifname/oifname set.  Honours Perl ``imatch_source_net``
+        # semantics: traffic on iface X is only routed to this zone-pair
+        # chain when saddr ∈ X.nets (and analogously for daddr on dst).
+        _emit_zone_jump_per_iface(
+            lines, chain_name, list(matches),
+            src_ifaces, dst_ifaces, indent,
+        )
+        return
+
+    if src_ifaces:
+        if len(src_ifaces) == 1:
+            matches.append(f'iifname "{src_ifaces[0].emit_name}"')
+        else:
+            names = ", ".join(f'"{i.emit_name}"' for i in src_ifaces)
+            matches.append(f"iifname {{ {names} }}")
+
+    if dst_ifaces:
+        if len(dst_ifaces) == 1:
+            matches.append(f'oifname "{dst_ifaces[0].emit_name}"')
+        else:
+            names = ", ".join(f'"{i.emit_name}"' for i in dst_ifaces)
+            matches.append(f"oifname {{ {names} }}")
 
     match_str = " ".join(matches)
     if match_str:
         lines.append(f"{indent}{match_str} jump {chain_name}")
     else:
         lines.append(f"{indent}jump {chain_name}")
+
+
+def _emit_zone_jump_per_iface(
+    lines: list[str], chain_name: str, base_matches: list[str],
+    src_ifaces: list, dst_ifaces: list, indent: str,
+) -> None:
+    """Emit one ``jump`` rule per (src-iface × dst-iface) combination.
+
+    Used when at least one iface in either zone declares ``nets=`` so
+    the saddr/daddr CIDR matchers must be scoped to that specific iface.
+    Empty src or dst-iface lists collapse to a single-axis dispatch
+    (e.g. forward-out-only or input-only zones).
+
+    *base_matches* carries family qualifiers / earlier matchers that
+    must apply unconditionally (e.g. ``meta nfproto ipv4``).
+    """
+    src_axis = src_ifaces or [None]
+    dst_axis = dst_ifaces or [None]
+    for s in src_axis:
+        for d in dst_axis:
+            parts = list(base_matches)
+            if s is not None:
+                parts.append(f'iifname "{s.emit_name}"')
+                v4, v6 = s._nets_split()
+                if v4:
+                    parts.append("ip saddr { " + ", ".join(v4) + " }")
+                if v6:
+                    parts.append("ip6 saddr { " + ", ".join(v6) + " }")
+            if d is not None:
+                parts.append(f'oifname "{d.emit_name}"')
+                v4, v6 = d._nets_split()
+                if v4:
+                    parts.append("ip daddr { " + ", ".join(v4) + " }")
+                if v6:
+                    parts.append("ip6 daddr { " + ", ".join(v6) + " }")
+            match_str = " ".join(parts)
+            if match_str:
+                lines.append(f"{indent}{match_str} jump {chain_name}")
+            else:
+                lines.append(f"{indent}jump {chain_name}")
 
 
 # Inline-match passthrough: Match.field values that don't use the default

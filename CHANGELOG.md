@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-28 — nets= zone-dispatch scoping)
+
+* ``nets=(CIDR1,CIDR2,...)`` interface option now emits real
+  saddr/daddr scoping in zone dispatch.  Mirrors Perl
+  ``imatch_source_net`` semantics: traffic on iface X is only routed
+  to the zone-pair chain when src (on ingress) or dst (on egress) is
+  within the iface's declared nets.  Single-CIDR shorthand
+  (``nets=10.0.0.0/8``) and the official paren-group form both
+  accepted (the paren-group parser added in the sfilter= commit
+  handles list values).
+* ``Interface._nets_split`` returns ``(v4_cidrs, v6_cidrs)``;
+  ``Interface.has_nets`` is the boolean used by dispatch to switch
+  between aggregate and per-iface emit.
+* Emitter changes (``shorewall_nft/nft/emitter.py``):
+  * ``_emit_dispatch_vmap`` now early-returns ``False`` whenever any
+    iface in the dispatched zones has ``nets=`` — vmap keys can't
+    represent the saddr-/daddr-scoped match cleanly, so the cascade
+    path takes over.
+  * ``_emit_zone_jump_per_iface`` (new helper) emits one rule per
+    src-iface × dst-iface pair, threading per-iface ``ip saddr {…}``
+    / ``ip daddr {…}`` matchers from the iface's nets= value.
+* Tests: ``tests/test_interface_options_extras.py`` (+5 functions —
+  ``_nets_split`` v4/v6 classification, ``has_nets`` false on
+  unset/garbage, src-side ``ip saddr`` scoping in dispatch, dst-side
+  ``ip daddr`` scoping, vmap-skip when nets= is in play).
+* Validated end-to-end on Linux 6.11.7 / nft 1.1.1.
+
 ### Added (2026-04-28 — dbl=dst dst-emit + wait=N parser)
 
 * ``dbl=dst`` and ``dbl=src-dst`` now emit real dst-side dynamic-

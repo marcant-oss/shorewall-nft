@@ -63,6 +63,36 @@ class Interface:
             return False
         return self.option_values.get("dbl") in ("dst", "src-dst")
 
+    def _nets_split(self) -> tuple[list[str], list[str]]:
+        """Parse ``nets=`` into IPv4 and IPv6 CIDR lists.
+
+        Returns ``(v4_cidrs, v6_cidrs)``.  Empty lists when ``nets=`` is
+        unset or the value contains only invalid tokens.  Garbage tokens
+        are silently dropped (matches the parser's tolerance for sfilter).
+        """
+        raw = self.option_values.get("nets")
+        if not raw:
+            return [], []
+        import ipaddress as _ip
+        v4: list[str] = []
+        v6: list[str] = []
+        for tok in raw.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            try:
+                net = _ip.ip_network(tok, strict=False)
+            except ValueError:
+                continue
+            (v4 if isinstance(net, _ip.IPv4Network) else v6).append(str(net))
+        return v4, v6
+
+    @property
+    def has_nets(self) -> bool:
+        """Whether this iface declares any ``nets=`` scoping."""
+        v4, v6 = self._nets_split()
+        return bool(v4 or v6)
+
 
 @dataclass
 class Host:
