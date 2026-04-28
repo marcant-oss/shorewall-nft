@@ -96,8 +96,7 @@ fi
 
 for f in \
     packages/shorewall-nft/pyproject.toml \
-    packages/shorewalld/pyproject.toml \
-    packages/shorewall-nft-simlab/pyproject.toml
+    packages/shorewalld/pyproject.toml
 do
     sed -i "s/^version = \"[0-9]*\.[0-9]*\.[0-9]*\"/version = \"$BARE\"/" "$f"
 done
@@ -161,7 +160,6 @@ mv /tmp/deb-changelog.tmp packaging/debian/changelog
 git add \
     packages/shorewall-nft/pyproject.toml \
     packages/shorewalld/pyproject.toml \
-    packages/shorewall-nft-simlab/pyproject.toml \
     packages/shorewall-nft/shorewall_nft/__init__.py \
     packaging/debian/changelog \
     CHANGELOG.md
