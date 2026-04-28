@@ -559,6 +559,7 @@ def _worker_main_loop_with_nflog(
     from .nflog_netlink import (
         NflogWireError, NFULogSocket, parse_frame, parse_packet_5tuple,
     )
+    from . import ct_nat_listener as _ctnat
 
     # ifindex → name cache (worker-local, refreshed on miss). Resolves
     # NFULA_IFINDEX_INDEV/OUTDEV to a human ifname; cache invalidations
@@ -632,8 +633,18 @@ def _worker_main_loop_with_nflog(
     sel = selectors.DefaultSelector()
     sel.register(transport.fileno, selectors.EVENT_READ, "transport")
     sel.register(nflog_sock.fileno(), selectors.EVENT_READ, "nflog")
-    log.info("nft-worker ready: pid=%d nflog=group %d",
-             os.getpid(), nflog_group)
+
+    # Conntrack NAT events — piggyback on the same worker, same SEQPACKET
+    # back-channel. Subscribes to NFNLGRP_CONNTRACK_NEW; degrades silently
+    # if pyroute2 is unavailable or the netns lacks the netlink capability.
+    ctnat_sock = _ctnat.open_socket()
+    if ctnat_sock is not None:
+        sel.register(ctnat_sock.fileno(), selectors.EVENT_READ, "ctnat")
+        log.info("nft-worker ready: pid=%d nflog=group %d ctnat=on",
+                 os.getpid(), nflog_group)
+    else:
+        log.info("nft-worker ready: pid=%d nflog=group %d ctnat=off",
+                 os.getpid(), nflog_group)
 
     try:
         while True:
@@ -730,6 +741,31 @@ def _worker_main_loop_with_nflog(
                             log.warning(
                                 "nflog: parent SEQPACKET full — %d events "
                                 "dropped since worker start", drop_local)
+                elif key.data == "ctnat":
+                    # Conntrack NAT events: drain queued messages, encode
+                    # each as a synthetic LogEvent (chain=ct-nat), send via
+                    # the SAME SEQPACKET / MAGIC_NFLOG path that NFLOG uses.
+                    # The dispatcher renders them through the standard
+                    # plain/journal/syslog formatters — operators see them
+                    # alongside firewall-rule logs without separate sinks.
+                    for ev in _ctnat.drain_events(ctnat_sock, netns=""):
+                        try:
+                            encoded = encode_log_event_into(log_enc_buf, ev)
+                        except LogWireError as e:
+                            log.debug("ctnat encode failed: %s", e)
+                            continue
+                        try:
+                            sent = transport.send_nowait(encoded)
+                        except OSError as e:
+                            log.warning(
+                                "ctnat push-to-parent transport error: %s", e)
+                            return 1
+                        if not sent:
+                            drop_local += 1
+                            if drop_local % drop_log_every == 0:
+                                log.warning(
+                                    "ctnat: parent SEQPACKET full — %d events "
+                                    "dropped since worker start", drop_local)
     finally:
         try:
             sel.close()
@@ -737,6 +773,11 @@ def _worker_main_loop_with_nflog(
             pass
         if nflog_sock is not None:
             nflog_sock.close()
+        if ctnat_sock is not None:
+            try:
+                ctnat_sock.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def nft_worker_entrypoint(
