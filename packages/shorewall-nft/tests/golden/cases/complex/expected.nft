@@ -1105,6 +1105,9 @@ table inet shorewall {
 		ct state invalid drop
 		meta l4proto tcp jump sw_TCPFlags
 		ct state { invalid, new, untracked } jump sw_DropSmurfs
+		meta nfproto ipv4 meta l4proto tcp tcp dport 25 log level info prefix "Shorewall:iot-net:REJECT: "
+		meta nfproto ipv4 meta l4proto tcp tcp dport 25 reject
+		ip daddr @dns_dns1_example_com_v4 meta l4proto udp udp dport 53 accept
 		ip6 daddr @dns_dns1_example_com_v6 meta l4proto udp udp dport 53 accept
 		meter lograte_iot_net { ip daddr limit rate 5/second burst 10 packets } log level info prefix "Shorewall:iot-net:DROP: "
 		jump sw_Reject

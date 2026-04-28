@@ -1220,18 +1220,18 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             if (is_all_expansion and rule_is_drop_like and chain_drops
                     and unconditional):
                 # Catch-all DROP/REJECT redundant with chain policy —
-                # don't emit, but do close the chain for this family.
-                # Classic shorewall marks ``$chainref->{complete} = 1``
-                # here too; without this set, downstream ``?SHELL
-                # include`` rules.d files would still append rules to
-                # a chain the user has already terminated.  Verified
-                # against live reference fixture iptables.txt where the voip→mon
-                # rules.d entries are absent because of a wildcard
-                # ``DROP:$LOG voip any`` rule processed first.
-                if rule_is_v4:
-                    chain.complete_v4 = True
-                if rule_is_v6:
-                    chain.complete_v6 = True
+                # don't emit (the policy tail covers it).  The chain
+                # is *not* marked complete here: classic shorewall
+                # iptables-save keeps later ``all → <zone>`` ACCEPT
+                # expansions in the same per-pair chain even when a
+                # ``<zone> any`` catch-all preceded them in source-
+                # file order.  Reference firewall surfaced this as
+                # 53 fail_drops where a wildcard ``DROP:$LOG agfeo
+                # any`` was incorrectly closing every ``agfeo→X``
+                # chain before the later ``Web(ACCEPT) all
+                # cdn:46.231.239.x`` block could append.  The genuine
+                # close-the-chain mirror lives below where a
+                # terminating verdict actually lands in the chain.
                 continue
 
             rule = Rule(
