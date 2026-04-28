@@ -1,3 +1,11 @@
+shorewall-nft (1.12.0-1) unstable; urgency=medium
+
+  * Release 1.12.0: merge-config order preservation + chain-complete revert + NOTRACK predicates.
+  * See CHANGELOG.md for full details.
+
+ -- André Valentin <avalentin@marcant.net>  Di, 28 Apr 2026 05:36:39 +0000
+
+
 shorewall-nft (1.11.0-1) unstable; urgency=medium
 
   * Release 1.11.0: libnftnl-integration phases 0-7 closed.

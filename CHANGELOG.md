@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-04-28 — merge-config order preservation + chain-complete revert + NOTRACK predicates
+
+### Changes
+
+- chore(tools): release.sh — drop stale simlab path from version-bump list
+- fix(tests): patch _pyroute2_netns in run_small_conntrack_probe tests
+- chore(lint): ruff auto-fix import sort in compiler/ir/__init__.py
+- docs(notrack.5): SOURCE/DEST column shapes (zone, zone:addr, bare addr)
+- revert: chain-complete short-circuit no longer skips redundant catch-all close
+- feat(merge-config): _merge_rules preserves v4 source-line order
+- fix(compiler): _process_notrack preserves bare-IP daddr + emits iifname from source zone
+- fix(compiler): chain-complete short-circuit keeps per-pair chain open after redundant catch-all
+- docs(testing): audit-completeness — add loopback + ignore as parser-tolerant rows
+- feat(compiler): nets= zone-dispatch scoping (per-iface saddr/daddr CIDR matchers)
+- feat(compiler): dbl=dst dst-emit + wait=N parser-only
+- feat(compiler): dbl/nodbl per-iface dynamic-blacklist gate + dynamic_shared parser + upnp deprecation
+- feat(compiler): sfilter= + nomark interface flags + paren-group option parser
+- feat(compiler): rpfilter interface-flag — RPF mangle drop with v4 DHCP exception
+- feat(compiler): physical=, unmanaged, required interface flags + audit-doc refresh
+- hygiene: extend deployment-name scrub to docs + source comments + tests
+- docs(testing): flowtable validation end-to-end resolved
+- docs(testing): record flowtable warmup empirical finding
+- feat(simlab-raw-check): cover flowtable declarations (--table flowtable)
+- test(golden): exercise FLOWTABLE_FLAGS=offload in the complex case
+- feat(simlab-raw-check): cover mangle + security tables; expand complex golden
+- fix(compiler): CT-helper :PO policy emits both PREROUTING and OUTPUT chains
+- fix(loop): PrivateMounts=false so NFCTSocket pushns sees the simlab-fw netns
+- fix(compiler): emit NOTRACK rows from the modern conntrack file (43 IPv4 rules on the reference HA fixture)
+- docs(testing): broaden worker-classification edge-case to 4 stragglers
+- docs(testing): record UDP-reverse-DNAT egress-out-of-netns edge-case
+- fix(compiler): emit FILTER ACCEPT companion for DNAT rules (v4 + v6)
+- docs(testing): record IPv4 ctorigdst-FILTER compiler-emit gap
+- chore(lint): ruff auto-fix unused imports + import sort
+- docs(testing): remove stale duplicate PtP entry
+- docs(testing): mark NDP/ARP cold-start race as largely resolved
+- feat(tools): wire snat_mismatch into report-diff + rerun-failed; scrub IPs
+- fix(tools): loop driver — fresh sweep after clean iter, document trace dependency
+- docs(testing): mark net→<internal> ICMP cluster resolved, document tun PtP edge case
+- feat(tools): simlab reference-replay loop + supporting tooling
+- fix(compiler): family heuristic, per-family policy, DHCP auto-emit
+- docs: chain-complete + simlab config-must-match-oracle pitfall
+- fix(compiler): chain-complete short-circuit mirrors classic shorewall semantics
+- feat(zones): ipsec ``reqid=any`` / bare ``reqid`` for any-reqid match
+- chore(zones): drop ipsec mode= UserWarning — mode is implicit in reqid
+- fix(compiler): drop FASTACCEPT gate on redundant-ACCEPT optimisation
+- feat(shorewalld): native sd_notify + Type=notify + watchdog
+
+
 ### Added (2026-04-28 — nets= zone-dispatch scoping)
 
 * ``nets=(CIDR1,CIDR2,...)`` interface option now emits real
