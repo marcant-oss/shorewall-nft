@@ -226,17 +226,31 @@ bug.
   coverage). Neither rossini nor portalfw snapshots have SECMARK
   rules today.
 
-* **Flowtable / fastpath: dynamic check landed, static check still
-  open**. ``FLOWTABLE_FLAGS=offload`` is exercised by the complex
-  golden config and the dynamic side now reports per-flowtable
-  ``flows`` count via ``smoketest._flowtable_state`` —
-  ``validation_warnings`` carries a ``flowtable: 0 flows offloaded
-  — fastpath inactive`` message when the kernel saw zero entries
-  after a probe sweep.  The static side (compare emitted nft
-  ``flowtable ft { … }`` declaration against a captured
-  ``nft list ruleset`` reference) is still open; needs a snapshot
-  with ``FLOWTABLE_FLAGS`` set + an ``nft-ruleset.txt`` collector
-  in ``simlab-collect.sh``.
+* **Flowtable / fastpath: pipeline complete, kernel-side flow
+  population still open on TAP topology**. Three pieces landed:
+  the static check (``simlab-raw-check.py --table flowtable``)
+  diffs IR-emitted flowtable declarations against the snapshot's
+  ``nft-ruleset.txt`` (collector still TODO in
+  ``simlab-collect.sh``); the dynamic check
+  (``smoketest._flowtable_state``) reads per-flowtable flow counts
+  via libnftables and warns when zero; and the warmup driver
+  (``smoketest --flowtable-warmup N``) follows the bidi SYN+ACK
+  return with a 3rd-handshake ACK injection so conntrack reaches
+  ESTABLISHED.  Empirical observation on the rossini-patched
+  snapshot (``FLOWTABLE=bond0,br1,bond1``, no offload flag): ct
+  events confirm 371 NEW + 253 UPDATE TCP transitions but the
+  flowtable stays at 0 flows.  The kernel's
+  ``nft_flow_offload_eval`` doesn't seem to register sw-fastpath
+  entries on TAP-only netdevs even when ESTABLISHED is reached.
+  Likely-needed follow-ups for a green flow count:
+    - real veth peers in the warmup topology (the simlab's
+      ``iface_needs_tap`` matrix would need an opt-out for the
+      flowtable-test interfaces), AND/OR
+    - inject a follow-up data packet after the 3rd-handshake ACK
+      so the kernel sees forward+reverse data and marks the ct
+      assured beyond the bare handshake.
+  The static + dynamic infrastructure is all in place; what
+  remains is a kernel-cooperative test topology.
 
 * **CT-helper: per-snapshot capabilities override**. The snapshot
   loader parses ``__*_HELPER=1`` defaults globally across all
