@@ -56,7 +56,7 @@ def _make_udp_sender(host: str, port: int):
         packet: bytes,
         timeout: int = 1,
         loop=None,  # noqa: ARG001
-        retries: int = 3,
+        retries: int = 1,
     ) -> bytes:
         def _blocking_round_trip(left: int) -> bytes:
             last_exc: Exception | None = None
@@ -101,7 +101,7 @@ def _make_unix_stream_sender(socket_path: str):
         packet: bytes,
         timeout: int = 1,
         loop=None,  # noqa: ARG001
-        retries: int = 3,
+        retries: int = 1,
     ) -> bytes:
         def _blocking_round_trip(left: int) -> bytes:
             last_exc: Exception | None = None
