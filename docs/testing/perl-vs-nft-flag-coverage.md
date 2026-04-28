@@ -48,6 +48,10 @@ hits for `wait`, `subnets`/`interfaces` for `nets`.
 | `rpfilter` | none | **F (NEW)** | `zones.py` | `_build.py:_process_rpfilter_interfaces` | mangle-prerouting `fib saddr . iif oif 0` per family + IPv4-only DHCP-RETURN exception; verdict from `RPFILTER_DISPOSITION` |
 | `sfilter=` | none | **F (NEW)** | `option_values["sfilter"]` (paren-grouped CIDR list) | `_build.py:_process_sfilter_interfaces` | mangle-prerouting `iifname X meta nfproto v4/v6 ip[6] saddr { CIDR,... } <verdict>`; verdict from `SFILTER_DISPOSITION`; v4/v6 CIDRs split into separate rules |
 | `nomark` | none | **F (NEW)** | `zones.py` | `emitter.py:_compute_zone_marks` | iface excluded from zone-mark allocation map; ct-mark-set rules don't emit for it (mirrors Perl `find_interfaces_by_option('nomark')` skip) |
+| `dbl=src\|dst\|src-dst\|none` / `nodbl` | none | **F (partial)** (NEW) | `zones.py` (validated) | `_build.py:_prepend_ct_state_to_zone_pair_chains` | per-source-zone iifname-gate on `sw_dynamic-blacklist` jump; opt-out path (`nodbl`/`dbl=none`/`dbl=dst`) skips the jump.  `dbl=src`/`src-dst` honoured as Perl default; `dbl=dst` dst-direction emit deferred (treated as src-skip pending output-chain dst-match work). |
+| `dynamic_shared` | none | **F (parser)** (NEW) | `zones.py` IN/OUT_OPTIONS | n/a — current emit is shared-set by default | Perl makes the dynamic-blacklist set shared across zone ifaces when set; shorewall-nft's existing emit uses one shared `@dynamic_blacklist` set globally, so this option is effectively the default and stored as a no-op annotation. |
+| `upnp` | none | **DEPRECATED** | `zones.py` (UserWarning) | n/a | Runtime-coupled: requires miniupnpd integration that has no shorewall-nft equivalent.  Parse accepted with deprecation warning so existing configs load; no NAT rules emitted. |
+| `upnpclient` | none | **DEPRECATED** | `zones.py` (UserWarning) | n/a | Runtime-coupled: requires gateway-IP shell-var resolution.  Parse accepted with deprecation warning; no input-accept rule emitted. |
 | `routefilter` | substantial | **F** | `option_values["routefilter"]` | `sysctl.py:84-91` | rp_filter sysctl, value 0/1/2 |
 | `sourceroute` | thin (3) | **F** | `option_values["sourceroute"]` | `sysctl.py:110-113` | accept_source_route sysctl |
 | `tcpflags` | thin (3) | **F** | `zones.py` | `_build.py:636-676` | SYN+FIN, SYN+RST drop in input |
@@ -57,14 +61,13 @@ hits for `wait`, `subnets`/`interfaces` for `nets`.
 
 | Flag | State | Effort | Why deferred |
 |------|-------|--------|--------------|
-| `nets=SUBNET` | **N** | Large (zone-dispatch redesign) | Inline subnet list per iface; affects `imatch_source_net()` and zone dispatch. Touches rule-dispatch architecture. |
-| `dbl` / `nodbl` | **N** | Large (architectural) | Per-iface dynamic-blacklist switch. Needs blacklist plumbing extension. |
-| `dynamic_shared` | **N** | Large (architectural) | Shared dynamic-blacklist set across zones. |
+| `nets=SUBNET` | **N** | Large (zone-dispatch redesign) | Inline subnet list per iface; affects `imatch_source_net()` and zone dispatch. Touches rule-dispatch architecture.  Paren-group parser is already in place. |
 | `destonly` / `sourceonly` | **N** | Large (host-direction redesign) | Excludes rules in one direction. Touches every zone-pair dispatch. |
-| `upnp` / `upnpclient` | **N** | Medium (NAT-chain plumbing) | UPnP forwarding helper / client accept. |
+| `dbl=dst` (dst-direction emit) | **F-partial** | Medium (output chain) | Currently treated as src-skip.  Full impl needs an output-chain dst-match rule per iface for `@dynamic_blacklist` lookup. |
 | `wait` | **N** | Small (runtime) | Init-time wait for iface availability. Runtime concern, not compiler. |
 | `detectnets` | **N** | n/a (OBSOLETE) | Deprecated in Perl. Don't implement. |
 | `norfc1918` | **N** | n/a (OBSOLETE) | Deprecated in Perl. Don't implement. |
+| `upnp` / `upnpclient` | **DEPRECATED** | n/a | Runtime-coupled; not supported by shorewall-nft.  Parser warns. |
 
 ## Zone flags / options
 

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-28 — dbl/nodbl + dynamic_shared + upnp deprecation)
+
+* ``dbl=src|dst|src-dst|none`` and ``nodbl`` interface options now
+  parsed and validated.  ``nodbl`` is the Perl alias for ``dbl=none``.
+  Invalid values warn and are dropped (Perl tolerance: parse-time
+  warning instead of fatal).
+* Per-iface opt-out from dynamic-blacklist now honoured:
+  ``_prepend_ct_state_to_zone_pair_chains`` gates the
+  ``sw_dynamic-blacklist`` jump in each zone-pair chain by the
+  source zone's iface set.  When all source-zone ifaces opt out
+  (``nodbl`` or ``dbl=none``/``dbl=dst``), the jump is skipped
+  entirely; when a subset opts out, the jump emits with an
+  ``iifname { included-emit-names }`` qualifier.  ``dbl=dst``
+  is currently treated as src-skip pending dst-direction
+  output-chain emit work (deferred, documented).
+* ``dynamic_shared`` zone option (IN/OUT-OPTIONS column) accepted
+  as parser-only annotation.  shorewall-nft's existing emit uses a
+  single shared ``@dynamic_blacklist`` set globally, so the option
+  is effectively the implicit default — stored without behavioral
+  change.
+* ``upnp`` and ``upnpclient`` interface options now formally
+  **deprecated**.  Both raise ``UserWarning`` at parse time
+  explaining that the runtime side (miniupnpd integration / gateway-
+  IP shell-var resolution) has no shorewall-nft equivalent.
+  Parsing remains permissive — existing configs still load — but
+  no NAT or input-accept rules are emitted.
+* Tests: ``tests/test_interface_options_extras.py`` (+8 functions —
+  upnp/upnpclient deprecation warnings; dbl invalid-value warning
+  + drop; ``Interface.dbl_skip_src`` property semantics; nodbl
+  blacklist-jump skip; default unconditional jump preservation;
+  ``dynamic_shared`` zone-option parsing).
+
 ### Added (2026-04-28 — sfilter= + nomark interface flags)
 
 * ``sfilter=(CIDR1,CIDR2,...)`` interface option now emits per-iface

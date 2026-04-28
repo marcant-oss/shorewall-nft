@@ -33,6 +33,25 @@ class Interface:
         """
         return self.option_values.get("physical") or self.name
 
+    @property
+    def dbl_skip_src(self) -> bool:
+        """Whether to skip this iface from dynamic-blacklist src-matching.
+
+        Honours Perl ``dbl`` / ``nodbl`` semantics:
+          * ``nodbl``         → skip (Perl: ``dbl=0:0``)
+          * ``dbl=none``      → skip
+          * ``dbl=dst``       → skip src-match (dst-direction emit is
+                                deferred work; for now treated as skip
+                                to avoid a wrong src-match on a dst-only
+                                spec)
+          * ``dbl=src``       → include (Perl default behaviour)
+          * ``dbl=src-dst``   → include (src part; dst part deferred)
+          * unspecified       → include (matches existing emit)
+        """
+        if "nodbl" in self.options:
+            return True
+        return self.option_values.get("dbl") in ("none", "dst")
+
 
 @dataclass
 class Host:
@@ -193,6 +212,39 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
         # use: bond slaves where the bond itself is the managed iface.
         if "unmanaged" in options:
             continue
+
+        # ``upnp`` / ``upnpclient`` are deprecated in shorewall-nft —
+        # the runtime side (miniupnpd integration, gateway-IP shell-var
+        # resolution) has no equivalent in this compiler.  Accept at
+        # parse time so existing configs still load, but warn so the
+        # operator knows the rules won't fire.
+        if "upnp" in options:
+            warnings.warn(
+                f"shorewall-nft: interface {iface_name!r}: ``upnp`` is "
+                f"deprecated and emits no NAT rules — miniupnpd "
+                f"integration is not supported.",
+                UserWarning, stacklevel=2,
+            )
+        if "upnpclient" in options:
+            warnings.warn(
+                f"shorewall-nft: interface {iface_name!r}: ``upnpclient`` "
+                f"is deprecated and emits no input-accept rule — "
+                f"runtime gateway-IP resolution is not supported.",
+                UserWarning, stacklevel=2,
+            )
+
+        # Validate ``dbl=VAL`` if present.  Perl Zones.pm:1383-1390
+        # accepts none / src / dst / src-dst.  Anything else is fatal
+        # in Perl — we warn + drop the value here (parser tolerance).
+        dbl_val = option_values.get("dbl")
+        if dbl_val is not None and dbl_val not in ("none", "src", "dst", "src-dst"):
+            warnings.warn(
+                f"shorewall-nft: interface {iface_name!r}: invalid "
+                f"dbl={dbl_val!r} (expected none|src|dst|src-dst) — "
+                f"option dropped.",
+                UserWarning, stacklevel=2,
+            )
+            option_values.pop("dbl", None)
 
         iface = Interface(
             name=iface_name,

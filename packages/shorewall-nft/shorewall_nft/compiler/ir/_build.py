@@ -245,14 +245,40 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
         # the input chain. Without it, dynamically blacklisted
         # addresses can still establish forwarded flows. Skip the
         # jump when DYNAMIC_BLACKLIST=No keeps the chain absent.
+        #
+        # Per-iface ``dbl=none``/``nodbl``/``dbl=dst`` opt-out: when
+        # only a subset of the source zone's ifaces want the
+        # blacklist, gate the jump with ``iifname { ... }``.  When no
+        # iface wants it, skip the jump entirely.  Source-zone
+        # firewall ($FW) has no ifaces — emit unconditionally as
+        # before.
         if ("sw_dynamic-blacklist" in ir.chains
                 and ir.chains["sw_dynamic-blacklist"].rules):
-            ct_rules.append(Rule(
-                matches=[Match(field="ct state",
-                               value="invalid,new,untracked")],
-                verdict=Verdict.JUMP,
-                verdict_args="sw_dynamic-blacklist",
-            ))
+            src_zone_obj = ir.zones.zones.get(src)
+            dbl_matches: list[Match] = [Match(
+                field="ct state", value="invalid,new,untracked")]
+            emit_dbl_jump = True
+            if src_zone_obj is not None and src_zone_obj.interfaces:
+                included = [
+                    i.emit_name for i in src_zone_obj.interfaces
+                    if not i.dbl_skip_src
+                ]
+                if not included:
+                    emit_dbl_jump = False
+                elif len(included) < len(src_zone_obj.interfaces):
+                    if len(included) == 1:
+                        dbl_matches.insert(0, Match(
+                            field="iifname", value=included[0]))
+                    else:
+                        names = "{ " + ", ".join(included) + " }"
+                        dbl_matches.insert(0, Match(
+                            field="iifname", value=names))
+            if emit_dbl_jump:
+                ct_rules.append(Rule(
+                    matches=dbl_matches,
+                    verdict=Verdict.JUMP,
+                    verdict_args="sw_dynamic-blacklist",
+                ))
         # Static-blacklist jump on zone→fw paths, prepended BEFORE the
         # ct prefix block (upstream's ``-A <chain> counter jump blacklst``
         # is the chain's very first rule). Only emit when the blacklist

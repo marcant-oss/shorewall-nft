@@ -521,6 +521,116 @@ def test_nomark_does_not_break_other_ifaces():
     assert marks.get("eth1") == 1 or marks.get("eth1") is not None
 
 
+# ── upnp / upnpclient deprecation ───────────────────────────────────────────
+
+def test_upnp_emits_deprecation_warning():
+    """``upnp`` is parsed but warned-on; no rule emitted."""
+    import warnings
+    config = _make_config("upnp")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        zones = build_zone_model(config)
+    assert any("upnp" in str(rec.message) and "deprecated" in str(rec.message)
+               for rec in w)
+    # iface still loaded — option is accepted (just no emit).
+    assert zones.zones["net"].interfaces
+
+
+def test_upnpclient_emits_deprecation_warning():
+    import warnings
+    config = _make_config("upnpclient")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        build_zone_model(config)
+    assert any("upnpclient" in str(rec.message) and "deprecated" in str(rec.message)
+               for rec in w)
+
+
+# ── dbl / nodbl per-iface dynamic-blacklist gating ──────────────────────────
+
+def test_dbl_invalid_value_warned_and_dropped():
+    """``dbl=garbage`` warns and is dropped from option_values."""
+    import warnings
+    config = _make_config("dbl=garbage")
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        zones = build_zone_model(config)
+    iface = zones.zones["net"].interfaces[0]
+    assert "dbl" not in iface.option_values
+    assert any("dbl" in str(rec.message) and "invalid" in str(rec.message).lower()
+               for rec in w)
+
+
+def test_dbl_skip_src_property_honours_nodbl_and_dbl_none():
+    """``Interface.dbl_skip_src`` returns True for opt-out variants."""
+    from shorewall_nft.config.zones import Interface
+    assert Interface(name="x", zone="z", options=["nodbl"]).dbl_skip_src
+    assert Interface(name="x", zone="z",
+                     option_values={"dbl": "none"}).dbl_skip_src
+    assert Interface(name="x", zone="z",
+                     option_values={"dbl": "dst"}).dbl_skip_src
+    # Inclusion (False)
+    assert not Interface(name="x", zone="z").dbl_skip_src
+    assert not Interface(name="x", zone="z",
+                         option_values={"dbl": "src"}).dbl_skip_src
+    assert not Interface(name="x", zone="z",
+                         option_values={"dbl": "src-dst"}).dbl_skip_src
+
+
+def _dbl_jump_rule_for(chain, src_zone: str):
+    """Return the dynamic-blacklist jump Rule object in a zone-pair chain."""
+    for r in chain.rules:
+        if r.verdict_args == "sw_dynamic-blacklist":
+            return r
+    return None
+
+
+def test_dbl_nodbl_skips_blacklist_jump_when_only_iface():
+    """When the sole iface in src zone has nodbl, no blacklist jump emitted."""
+    config = _make_config("nodbl")
+    config.settings["DYNAMIC_BLACKLIST"] = "yes"
+    ir = build_ir(config)
+    # net→loc chain: net's only iface (eth0) is nodbl → no blacklist jump
+    chain = ir.chains.get("net-fw")
+    assert chain is not None
+    rule = _dbl_jump_rule_for(chain, "net")
+    assert rule is None, (
+        "Expected no dynamic-blacklist jump when src zone's only iface is nodbl"
+    )
+
+
+def test_dbl_jump_unconditional_when_no_iface_opts_out():
+    """Default config: blacklist jump emitted without iifname gate."""
+    config = _make_config("-")
+    config.settings["DYNAMIC_BLACKLIST"] = "yes"
+    ir = build_ir(config)
+    chain = ir.chains.get("net-fw")
+    assert chain is not None
+    rule = _dbl_jump_rule_for(chain, "net")
+    assert rule is not None
+    iifname_match = next(
+        (m for m in rule.matches if m.field == "iifname"), None,
+    )
+    assert iifname_match is None, (
+        "Expected no iifname gate when no iface opts out"
+    )
+
+
+# ── dynamic_shared (zone option) ────────────────────────────────────────────
+
+def test_dynamic_shared_zone_option_parsed():
+    """``dynamic_shared`` lands in zone.in_options without parser error."""
+    config = _make_config("-")
+    # Inject a zone with dynamic_shared in IN_OPTIONS column.
+    config.zones = [
+        _row(["fw", "firewall"], "zones"),
+        _row(["net", "ipv4", "-", "dynamic_shared"], "zones"),
+        _row(["loc", "ipv4"], "zones"),
+    ]
+    zones = build_zone_model(config)
+    assert "dynamic_shared" in zones.zones["net"].in_options
+
+
 # ── WP-D1: sysctl uses /proc/sys writes, not 'sysctl' binary ────────────────
 
 def test_sysctl_output_uses_proc_writes():
