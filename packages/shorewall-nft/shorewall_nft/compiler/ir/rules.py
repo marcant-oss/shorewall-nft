@@ -1177,7 +1177,7 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
             # specific slot the redundant-ACCEPT skip below would drop
             # a legitimate v6 ACCEPT into a chain whose v6 policy is
             # actually REJECT — surfaced as 24 fail_drops on the
-            # rossini reference.  Falls back to the unified policy
+            # reference fixture.  Falls back to the unified policy
             # when the family-specific slot is None (single-policy
             # chain — current behaviour preserved).
             family_policy = (
@@ -1225,9 +1225,9 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                 # here too; without this set, downstream ``?SHELL
                 # include`` rules.d files would still append rules to
                 # a chain the user has already terminated.  Verified
-                # against live elgar iptables.txt where the agfeo→siem
+                # against live reference fixture iptables.txt where the voip→mon
                 # rules.d entries are absent because of a wildcard
-                # ``DROP:$LOG agfeo any`` rule processed first.
+                # ``DROP:$LOG voip any`` rule processed first.
                 if rule_is_v4:
                     chain.complete_v4 = True
                 if rule_is_v6:

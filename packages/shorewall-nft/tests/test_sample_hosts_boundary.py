@@ -23,14 +23,14 @@ def test_v4_28_full_enumeration_first_and_last_host():
     """Full-enumeration path (n_hosts ≤ cap) returns hosts only via
     ``net.hosts()`` — first and last host present, network/broadcast
     are NOT (RFC behaviour for ``hosts()``)."""
-    net = ipaddress.ip_network("217.14.160.32/28", strict=False)
+    net = ipaddress.ip_network("203.0.113.32/28", strict=False)
     rng = random.Random(0)
     samples = _sample_hosts(net, 16, rng)
-    assert "217.14.160.33" in samples   # first host
-    assert "217.14.160.46" in samples   # last host
+    assert "203.0.113.33" in samples   # first host
+    assert "203.0.113.46" in samples   # last host
     # Boundary addresses are deliberately excluded by net.hosts().
-    assert "217.14.160.32" not in samples
-    assert "217.14.160.47" not in samples
+    assert "203.0.113.32" not in samples
+    assert "203.0.113.47" not in samples
 
 
 def test_v4_24_first_slots_are_boundaries():
@@ -50,14 +50,14 @@ def test_v4_24_first_slots_are_boundaries():
 
 
 def test_v6_64_first_slots_are_boundaries():
-    net = ipaddress.ip_network("2a00:f88:0:5020::/64", strict=False)
+    net = ipaddress.ip_network("2001:db8:5020::/64", strict=False)
     rng = random.Random(7)
     samples = _sample_hosts(net, 8, rng)
     # /64 has 2^64 total → boundary path. First four are boundaries.
-    assert samples[0] == "2a00:f88:0:5020::1"
-    assert samples[1] == "2a00:f88:0:5020:ffff:ffff:ffff:fffe"
-    assert samples[2] == "2a00:f88:0:5020::"
-    assert samples[3] == "2a00:f88:0:5020:ffff:ffff:ffff:ffff"
+    assert samples[0] == "2001:db8:5020::1"
+    assert samples[1] == "2001:db8:5020:0:ffff:ffff:ffff:fffe"
+    assert samples[2] == "2001:db8:5020::"
+    assert samples[3] == "2001:db8:5020:0:ffff:ffff:ffff:ffff"
 
 
 def test_boundary_addresses_unique_in_output():

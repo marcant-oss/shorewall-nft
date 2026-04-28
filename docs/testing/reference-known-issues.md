@@ -1,6 +1,6 @@
 # reference-replay — known-issue ledger
 
-Mismatches against `shorewall-config/reference/` (rossini snapshot,
+Mismatches against `shorewall-config/reference/` (reference snapshot,
 2026-04-24) that the auto-loop should *not* page on. Each entry
 explains why the divergence is intentional / out-of-scope, so the
 loop's diff output can sticky-ignore it instead of looping forever.
@@ -22,12 +22,12 @@ suppression filter when it shows up in three consecutive iterations.
 
 simlab + the static checks in ``tools/`` cover ``*filter``,
 ``*nat``, and ``*raw`` (NOTRACK + CT helpers).  ``*mangle`` is
-not validated today.  On the rossini and portalfw snapshots the
+not validated today.  On the reference fixture and the reference HA primary snapshots the
 mangle table content is trivial:
 
-* rossini: 1 rule (``-A FORWARD -j MARK --set-xmark 0x0/0xff``,
+* reference fixture: 1 rule (``-A FORWARD -j MARK --set-xmark 0x0/0xff``,
   the standard mark-reset).
-* portalfw: 6 rules — same mark-reset plus 5 jump-to-tc-stub
+* the reference HA primary: 6 rules — same mark-reset plus 5 jump-to-tc-stub
   shells (``tcpre``/``tcin``/``tcfor``/``tcout``/``tcpost``)
   used as TC priority anchors.
 
@@ -46,7 +46,7 @@ there.
 ## Worker post-egress stub-classification (4 fail_drop stragglers)
 
 After the DNAT FILTER ACCEPT companion fix + saddr-aware DNAT
-walker land, the rossini reference replay converges to 4 stable
+walker land, the reference fixture replay converges to 4 stable
 ``fail_drop`` cases.  All four follow the same pattern:
 
 * Oracle classifies as ACCEPT (correctly).
@@ -60,7 +60,7 @@ Concrete cases on the snapshot:
 | ID    | Path                                    | Why classified REJECT                            |
 |-------|-----------------------------------------|--------------------------------------------------|
 | 3     | ``net→int``  tcp:22 → 192.168.191.8     | No listener at post-DNAT dst; stub TCP-RST       |
-| 96    | ``test→net`` udp:69 → 217.14.168.5      | UDP TFTP, post-DNAT dst public, no listener      |
+| 96    | ``test→net`` udp:69 → 198.51.100.5      | UDP TFTP, post-DNAT dst public, no listener      |
 | 10032 | ``cam→voice`` udp:33495 (Trcrt range)   | UDP traceroute probe, no listener at dst         |
 | 10209 | ``inst→voice`` udp:33468 (Trcrt range)  | dito                                             |
 
@@ -79,7 +79,7 @@ the FW's emit, not the upstream listener's response.  Either:
   vs. silently absorb.
 
 None of these need to land for compiler-correctness validation;
-the 4 stragglers are noise on the rossini snapshot.
+the 4 stragglers are noise on the reference snapshot.
 
 ## DNAT coverage gap — per-rule path
 
@@ -115,7 +115,7 @@ the 4 stragglers are noise on the rossini snapshot.
 
 ## v6 NAT empty in the reference
 
-- The rossini snapshot has 0 IPv6 DNAT rules.
+- The reference snapshot has 0 IPv6 DNAT rules.
   `oracle.classify_dnat(family=6)` returns `None` and the random
   builder never sets `expected_rewrite_*` on v6 probes.
 - v6 `dnat_mismatch == 0` is the *expected* steady state, not
@@ -145,7 +145,7 @@ the companion the rewritten packet hits the chain's default
 DROP/REJECT policy.  shorewall-nft was emitting only the NAT
 rewrite — every DNAT'd IPv4 service to a private internal IP
 was rejected post-PREROUTING.  The ~23 ``fail_drop`` probes seen
-on the rossini snapshot's ``net→voice``, ``net→int``,
+on the reference snapshot's ``net→voice``, ``net→int``,
 ``net→linux``, ``net→mgmt``, ``net→srv`` clusters all stemmed
 from this single missing emit.
 
@@ -186,7 +186,7 @@ shorewall-nft-simlab (commit ``003b2aa``):
   the kernel doesn't see the announcement as coming "from its
   own address" and discard it as a martian.
 
-Effect on the rossini snapshot:
+Effect on the reference snapshot:
 
 * Before any warmup:                  17 fail_drops (fresh full).
 * With ``--trace on`` only:           2 fail_drops.
@@ -217,13 +217,13 @@ bug.
 * **Mangle: missing chains**. shorewall-nft compiler currently
   emits mangle rules only to ``mangle-prerouting``, missing
   ``mangle-forward``, ``mangle-input``, ``mangle-output``,
-  ``mangle-postrouting``. The portalfw snapshot has 6 mangle
+  ``mangle-postrouting``. The the reference HA primary snapshot has 6 mangle
   rules across all 5 base chains, all reading 0 in the IR.
 
 * **Security: richer test coverage**. SECMARK rules need a
   snapshot with real usage beyond the newly-added
   ``complex/secmarks`` fixture (which is the first end-to-end
-  coverage). Neither rossini nor portalfw snapshots have SECMARK
+  coverage). Neither reference fixture nor the reference HA primary snapshots have SECMARK
   rules today.
 
 * **Flowtable / fastpath: end-to-end validated (RESOLVED 2026-04-28)**.
@@ -247,7 +247,7 @@ bug.
   Key empirical finding: ``nft list flowtable inet shorewall ft``
   returns an empty ``flow`` array even when offload IS active.
   Verified against a real veth-router-veth setup
-  (root@192.168.203.79, kernel 6.11): 64 KiB of bidirectional
+  (root@192.0.2.79, kernel 6.11): 64 KiB of bidirectional
   TCP between two endpoint netnses drove the kernel to flag the
   ct entry with ``[OFFLOAD]`` (visible in ``conntrack -L``)
   while ``nft list flowtable | jq '.. | .flow?'`` still showed
@@ -255,7 +255,7 @@ bug.
   Python-readable signal — exposed via the new
   ``shorewall_nft_netkit.validators.count_offloaded_ct`` helper.
 
-  Re-run on rossini-patched (``FLOWTABLE=bond0,br1,bond1``, no
+  Re-run on patched-snapshot (``FLOWTABLE=bond0,br1,bond1``, no
   offload flag, ``--flowtable-warmup 30``) reports
   ``inet/shorewall/ft (3 devs, 0 flows, 192 ct[OFFLOAD])`` —
   the simlab's TAP topology IS in fact populating the kernel's
@@ -276,5 +276,5 @@ bug.
   snapshots. A ``--capabilities`` flag pointing at an
   iptables-capabilities dump would let the diff filter
   known-loaded helpers without printing 12 spurious "extra in IR"
-  rows on every rossini run.
+  rows on every reference fixture run.
 

@@ -258,7 +258,7 @@ class TestRewriteAndMultiset:
         ]
 
     def test_all_members_negated(self):
-        """Tropheus-style: +[!DE-ipv4,!BA-ipv4] — every member negated."""
+        """All-negated style: +[!DE-ipv4,!BA-ipv4] — every member negated."""
         stripped, infos = _rewrite_bracket_spec(
             "net:+[!DE-ipv4,!BA-ipv4]", "src", "test:42")
         assert stripped == "net:+DE-ipv4"

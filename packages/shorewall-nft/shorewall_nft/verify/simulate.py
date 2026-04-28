@@ -1011,7 +1011,7 @@ def _sample_hosts(
     deterministic boundary addresses (first host, last host, network,
     broadcast for v4 / network-anycast for v6). The remaining entries
     are random samples. Boundary picks catch CIDR off-by-one bugs in
-    the compiler's address-set membership: a /28 like 217.14.160.32/28
+    the compiler's address-set membership: a /28 like 203.0.113.32/28
     has hosts .33-.46 with .32 as network and .47 as broadcast — a
     rule that accidentally includes .32 or .47 is benign here but in
     other emit paths (set membership, NAT-pool reservation) the same

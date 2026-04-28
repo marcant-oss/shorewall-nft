@@ -5,7 +5,7 @@ zone-pair chain involving a dhcp-enabled zone, even when neither
 endpoint carried the ``bridge`` flag.  Classic Shorewall (Misc.pm:
 1136-1166) emits the DHCP rule only on ``<zone>-fw`` / ``fw-<zone>``
 + ``<zone>-<zone>`` and on the cross-zone pair ONLY when the
-interface has ``bridge``.  The rossini reference replay caught the
+interface has ``bridge``.  The reference fixture replay caught the
 divergence as 6 fail_accepts (DHCP UDP 67/68 between zones whose
 chain in iptables.txt fell through to REJECT).
 """
@@ -88,7 +88,7 @@ def test_dhcp_emitted_in_zone_fw_pair(tmp_path: Path) -> None:
 
 def test_dhcp_NOT_emitted_in_cross_zone_without_bridge(tmp_path: Path) -> None:
     """Without ``bridge`` on either iface, ``zoneA-zoneB`` must NOT
-    carry an auto-DHCP-ACCEPT.  This is the actual rossini bug —
+    carry an auto-DHCP-ACCEPT.  This is the actual reference fixture bug —
     over-emitting here ACCEPTed UDP 67/68 between e.g. cust→tpoff
     when classic Shorewall correctly REJECTs."""
     cfg = _write(tmp_path, _baseline_files())

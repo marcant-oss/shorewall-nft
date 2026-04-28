@@ -239,7 +239,7 @@ When iterating against a live-firewall capture (see
 `shorewall-config/reference/`), use the dedicated loop driver:
 
 ```bash
-SHOREWALL_SIMLAB_HOST=rossini-test \
+SHOREWALL_SIMLAB_HOST=fw-test \
     tools/simlab-reference-loop.sh
 ```
 

@@ -15,8 +15,11 @@ docs/testing/simlab-reports/*/fail-pcaps/
 
 # Reference-replay loop run artefacts — per-iteration report.json,
 # diff-vs-prev.txt, failed-probes.json.  Reproducible from the loop
-# driver; not tracked in git history.
-docs/testing/simlab-reports/loop/
+# driver; not tracked in git history.  Patterns cover both the
+# canonical ``loop/`` dir and labelled variants (``loop-<run>/``)
+# plus timestamped one-off snapshots (``YYYYMMDDTHHMMSSZ-<host>/``).
+docs/testing/simlab-reports/loop*/
+docs/testing/simlab-reports/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T*/
 
 # ─────────────────────────────────────────────────────────────
 # Claude Code local state
