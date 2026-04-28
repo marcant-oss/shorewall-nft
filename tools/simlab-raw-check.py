@@ -27,7 +27,7 @@ Tables covered:
 Usage:
     simlab-raw-check.py --data DIR --config DIR
                         [--family 4|6|both]
-                        [--table raw|mangle|security|all]
+                        [--table raw|mangle|security|flowtable|all]
 
 * ``--data DIR``    snapshot dir from ``simlab-collect.sh``
                     (must contain ``iptables.txt`` and, for
@@ -308,6 +308,127 @@ def parse_security_from_dump(path: Path, family: int) -> set[CanonRule]:
     return out
 
 
+# ── parsing flowtable definitions ─────────────────────────────────
+
+
+@dataclass(frozen=True)
+class CanonFlowtable:
+    """Canonical key for a single flowtable declaration."""
+    family: str          # "inet" / "ip" / "ip6"
+    table: str
+    name: str
+    hook: str            # "ingress"
+    priority: str        # "filter" or numeric string
+    devices: tuple       # sorted tuple of device names
+    flags: tuple         # sorted tuple ("offload",) or ()
+
+
+def _parse_flowtables_text(text: str) -> set[CanonFlowtable]:
+    """Parse ``flowtable NAME { ... }`` blocks out of an nft text dump.
+
+    Tolerates both compile output (``table inet shorewall { flowtable
+    ft { ... } }``) and ``nft list ruleset`` output (which is the
+    same grammar).  Returns one ``CanonFlowtable`` per declaration.
+    """
+    out: set[CanonFlowtable] = set()
+    # Crude but reliable: iterate line by line, track the enclosing
+    # ``table`` family/name, then capture each flowtable block's
+    # devices / flags / hook / priority.
+    cur_family = ""
+    cur_table = ""
+    in_ft = False
+    ft_name = ""
+    ft_hook = ""
+    ft_prio = ""
+    ft_devs: list[str] = []
+    ft_flags: list[str] = []
+
+    table_re = _re.compile(r"^\s*table\s+(\w+)\s+(\S+)\s*\{")
+    ft_open = _re.compile(r"^\s*flowtable\s+(\S+)\s*\{")
+    hook_re = _re.compile(r"^\s*hook\s+(\S+)\s+priority\s+(\S+?);?\s*$")
+    devs_re = _re.compile(r"devices\s*=\s*\{([^}]*)\}")
+    flags_re = _re.compile(r"^\s*flags\s+(\S+?);?\s*$")
+
+    for raw in text.splitlines():
+        if not in_ft:
+            m = table_re.search(raw)
+            if m:
+                cur_family, cur_table = m.group(1), m.group(2)
+                continue
+            m = ft_open.search(raw)
+            if m:
+                in_ft = True
+                ft_name = m.group(1)
+                ft_hook = ""
+                ft_prio = ""
+                ft_devs = []
+                ft_flags = []
+                continue
+        else:
+            if "}" in raw and "devices" not in raw:
+                # End of flowtable block — emit
+                out.add(CanonFlowtable(
+                    family=cur_family,
+                    table=cur_table,
+                    name=ft_name,
+                    hook=ft_hook,
+                    priority=ft_prio,
+                    devices=tuple(sorted(ft_devs)),
+                    flags=tuple(sorted(ft_flags)),
+                ))
+                in_ft = False
+                continue
+            m = hook_re.match(raw)
+            if m:
+                ft_hook = m.group(1)
+                ft_prio = m.group(2)
+                continue
+            m = devs_re.search(raw)
+            if m:
+                items = m.group(1).replace('"', "").replace(",", " ").split()
+                ft_devs = [x for x in items if x]
+                continue
+            m = flags_re.match(raw)
+            if m:
+                ft_flags = [t.strip() for t in m.group(1).split(",") if t.strip()]
+                continue
+    return out
+
+
+def parse_flowtable_from_dump(data_dir: Path) -> set[CanonFlowtable]:
+    """Read ``<data>/nft-ruleset.txt`` (if present) and extract
+    flowtable declarations.
+
+    The current ``simlab-collect.sh`` doesn't capture this file
+    today — see the ``Static-check TODO`` entry in
+    ``reference-known-issues.md``.  When absent the function
+    returns an empty set and the caller treats the flowtable diff
+    as informational rather than authoritative.
+    """
+    path = data_dir / "nft-ruleset.txt"
+    if not path.is_file():
+        return set()
+    return _parse_flowtables_text(path.read_text(encoding="utf-8"))
+
+
+def parse_flowtable_from_ir(ir) -> set[CanonFlowtable]:
+    """Return canonical keys for every flowtable the compiler would
+    emit for this IR.
+
+    Flowtable construction is encapsulated inside ``nft/emitter.py``
+    (the ``Flowtable`` object is transient, not stored on the IR),
+    so the cleanest path is to call ``emit_nft`` and re-parse the
+    flowtable block out of the text — same parser the snapshot side
+    uses, guaranteeing identical canonicalisation.
+    """
+    from shorewall_nft.nft.emitter import emit_nft
+    try:
+        text = emit_nft(ir)
+    except Exception:  # noqa: BLE001  — bad IR shouldn't break the diff
+        return set()
+    return _parse_flowtables_text(text)
+
+
 # ── parsing the IR ─────────────────────────────────────────────────
 
 
@@ -543,7 +664,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", type=Path, required=True,
                     help="Merged shorewall-nft config dir to compile")
     ap.add_argument("--family", choices=("4", "6", "both"), default="both")
-    ap.add_argument("--table", choices=("raw", "mangle", "security", "all"),
+    ap.add_argument("--table",
+                    choices=("raw", "mangle", "security", "flowtable", "all"),
                     default="all",
                     help="Which iptables table(s) to diff (default: all)")
     args = ap.parse_args(argv)
@@ -611,6 +733,39 @@ def main(argv: list[str] | None = None) -> int:
                 print("--- - extra in IR ---")
                 for r in sorted(only_ir, key=_format_rule):
                     print(_format_rule(r))
+            total_diffs += len(only_snap) + len(only_ir)
+
+    # Flowtable diff is family-agnostic (the inet table covers both
+    # IPv4 and IPv6 in one declaration) and lives in nft-ruleset.txt
+    # rather than iptables.txt — run it once after the per-family
+    # table loop.
+    if args.table in ("flowtable", "all"):
+        snap_ft = parse_flowtable_from_dump(args.data)
+        ir_ft = parse_flowtable_from_ir(ir)
+        only_snap = snap_ft - ir_ft
+        only_ir = ir_ft - snap_ft
+        common = snap_ft & ir_ft
+        print("=== flowtable ===")
+        print(f"  snapshot decls: {len(snap_ft)}"
+              + ("" if (args.data / 'nft-ruleset.txt').is_file()
+                 else "  (no nft-ruleset.txt — informational only)"))
+        print(f"  IR decls:       {len(ir_ft)}")
+        print(f"  in both:        {len(common)}")
+        print(f"  only snapshot:  {len(only_snap)}")
+        print(f"  only IR:        {len(only_ir)}")
+        for ft in sorted(only_snap):
+            print(f"  + snap: {ft.family}/{ft.table}/{ft.name} "
+                  f"hook={ft.hook} prio={ft.priority} "
+                  f"devs={list(ft.devices)} flags={list(ft.flags)}")
+        for ft in sorted(only_ir):
+            print(f"  - ir:   {ft.family}/{ft.table}/{ft.name} "
+                  f"hook={ft.hook} prio={ft.priority} "
+                  f"devs={list(ft.devices)} flags={list(ft.flags)}")
+        # When the snapshot-side has no nft-ruleset.txt the diff is
+        # one-sided (IR-only) and not authoritative — skip the
+        # exit-code contribution so a missing collector doesn't fail
+        # the whole tool.
+        if (args.data / "nft-ruleset.txt").is_file():
             total_diffs += len(only_snap) + len(only_ir)
 
     return 0 if total_diffs == 0 else 1
