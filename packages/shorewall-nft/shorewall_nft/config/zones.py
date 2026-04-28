@@ -40,17 +40,28 @@ class Interface:
         Honours Perl ``dbl`` / ``nodbl`` semantics:
           * ``nodbl``         → skip (Perl: ``dbl=0:0``)
           * ``dbl=none``      → skip
-          * ``dbl=dst``       → skip src-match (dst-direction emit is
-                                deferred work; for now treated as skip
-                                to avoid a wrong src-match on a dst-only
-                                spec)
+          * ``dbl=dst``       → skip src-match (dst-only spec — the
+                                companion dst-emit lives in
+                                ``_process_dbl_dst_interfaces``)
           * ``dbl=src``       → include (Perl default behaviour)
-          * ``dbl=src-dst``   → include (src part; dst part deferred)
+          * ``dbl=src-dst``   → include (src part)
           * unspecified       → include (matches existing emit)
         """
         if "nodbl" in self.options:
             return True
         return self.option_values.get("dbl") in ("none", "dst")
+
+    @property
+    def dbl_dst_active(self) -> bool:
+        """Whether this iface needs dst-side dynamic-blacklist matching.
+
+        True for ``dbl=dst`` (out=2 only in Perl ``2:0``) and
+        ``dbl=src-dst`` (Perl ``1:2``).  The accompanying emit lives in
+        ``_process_dbl_dst_interfaces`` (``compiler/ir/_build.py``).
+        """
+        if "nodbl" in self.options:
+            return False
+        return self.option_values.get("dbl") in ("dst", "src-dst")
 
 
 @dataclass
@@ -245,6 +256,29 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
                 UserWarning, stacklevel=2,
             )
             option_values.pop("dbl", None)
+
+        # ``wait=N`` is parsed but the runtime side is not implemented.
+        # Perl uses this in init scripts to retry iface-presence checks
+        # at start time; shorewall-nft has no equivalent init phase
+        # today.  Accept + warn so existing configs load.
+        wait_val = option_values.get("wait")
+        if wait_val is not None:
+            try:
+                int(wait_val)
+            except ValueError:
+                warnings.warn(
+                    f"shorewall-nft: interface {iface_name!r}: "
+                    f"wait={wait_val!r} must be numeric — option dropped.",
+                    UserWarning, stacklevel=2,
+                )
+                option_values.pop("wait", None)
+            else:
+                warnings.warn(
+                    f"shorewall-nft: interface {iface_name!r}: "
+                    f"wait={wait_val} is parser-only — no runtime "
+                    f"iface-presence retry is performed at start.",
+                    UserWarning, stacklevel=2,
+                )
 
         iface = Interface(
             name=iface_name,

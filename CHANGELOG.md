@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-28 — dbl=dst dst-emit + wait=N parser)
+
+* ``dbl=dst`` and ``dbl=src-dst`` now emit real dst-side dynamic-
+  blacklist matching, completing the Perl ``%values`` table coverage
+  (``none`` → ``0:0`` → no jump; ``src`` → ``1:0`` → src jump; ``dst``
+  → ``2:0`` → dst jump; ``src-dst`` → ``1:2`` → both).  New chain
+  ``sw_dynamic-blacklist-dst`` mirrors ``sw_dynamic-blacklist`` with
+  ``ip[6] daddr @dynamic_blacklist[_v6] drop`` rules; lazy-created
+  by ``_ensure_dbl_dst_chain`` only when at least one iface needs it.
+  Per zone-pair chain, the dst jump is added with an oifname-gate
+  derived from the destination zone's dbl_dst_active iface set
+  (unconditional when all dst ifaces are active, ``oifname { ... }``
+  for a subset, omitted when none).
+* ``Interface.dbl_dst_active`` property — sister of
+  ``Interface.dbl_skip_src``.  True for ``dbl=dst`` / ``dbl=src-dst``;
+  False for ``nodbl`` / ``dbl=none`` / unspecified.
+* ``wait=N`` interface option now parsed (numeric validation; non-
+  numeric values warned and dropped) with an explicit ``UserWarning``
+  noting the runtime side is not implemented.  The compile-time
+  storage is sufficient for configs that declare it; the runtime
+  iface-presence-retry phase remains future work.
+* Tests: ``tests/test_interface_options_extras.py`` (+6 functions —
+  dbl_dst_active property table, dst chain + jump creation, dst
+  skip when no active iface, oifname-gate on partial dst-active set,
+  wait=N parses + warns, wait=garbage dropped).
+
 ### Added (2026-04-28 — dbl/nodbl + dynamic_shared + upnp deprecation)
 
 * ``dbl=src|dst|src-dst|none`` and ``nodbl`` interface options now

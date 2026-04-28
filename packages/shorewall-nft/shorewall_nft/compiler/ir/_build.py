@@ -115,6 +115,32 @@ def _create_base_chains(ir: FirewallIR) -> None:
         ir.add_chain(chain)
 
 
+def _ensure_dbl_dst_chain(ir: FirewallIR) -> None:
+    """Lazy-create ``sw_dynamic-blacklist-dst`` (mirror of
+    ``sw_dynamic-blacklist`` but for ``ip[6] daddr`` matches).
+
+    Used by ``dbl=dst`` / ``dbl=src-dst`` ifaces — the destination-side
+    blacklist check (Perl Misc.pm:968-973) that drops outgoing
+    forwarded packets whose destination is on the dynamic-blacklist
+    set.  Sister of the existing src-side chain populated by
+    ``shorewall_nft.compiler.actions.create_dynamic_blacklist``.
+    """
+    chain_name = "sw_dynamic-blacklist-dst"
+    if chain_name in ir.chains and ir.chains[chain_name].rules:
+        return
+    chain = ir.get_or_create_chain(chain_name)
+    chain.rules.append(Rule(
+        matches=[Match(field="ip daddr", value="@dynamic_blacklist")],
+        verdict=Verdict.DROP,
+        comment="dynamic blacklist:dst (v4)",
+    ))
+    chain.rules.append(Rule(
+        matches=[Match(field="ip6 daddr", value="@dynamic_blacklist_v6")],
+        verdict=Verdict.DROP,
+        comment="dynamic blacklist:dst (v6)",
+    ))
+
+
 def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
                                           include_established: bool = True,
                                           ) -> None:
@@ -158,6 +184,20 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
         and ir.chains["blacklist"].rules
     )
     fw_zone = ir.zones.firewall_zone
+
+    # Pre-create the dst-side dynamic-blacklist chain if any iface
+    # anywhere has ``dbl=dst`` / ``dbl=src-dst``.  Doing it before the
+    # main loop avoids ``dict changed size during iteration`` when the
+    # zone-pair-chain pass tries to lazy-create it.
+    if ("sw_dynamic-blacklist" in ir.chains
+            and ir.chains["sw_dynamic-blacklist"].rules):
+        any_dst_active = any(
+            i.dbl_dst_active
+            for z in ir.zones.zones.values()
+            for i in z.interfaces
+        )
+        if any_dst_active:
+            _ensure_dbl_dst_chain(ir)
 
     all_zones = set(ir.zones.all_zone_names())
     for name, chain in ir.chains.items():
@@ -279,6 +319,38 @@ def _prepend_ct_state_to_zone_pair_chains(ir: FirewallIR,
                     verdict=Verdict.JUMP,
                     verdict_args="sw_dynamic-blacklist",
                 ))
+
+            # ``dbl=dst`` / ``dbl=src-dst`` dst-direction emit (Perl
+            # Misc.pm:968-973): when the destination zone has any iface
+            # with dbl_dst_active, gate a jump-to-dst-chain by
+            # ``oifname { ... }`` (or unconditional if all dst ifaces
+            # are dbl_dst_active).  Lazy-create the dst chain on first
+            # need.
+            dst_zone_obj = ir.zones.zones.get(dst)
+            if (dst_zone_obj is not None and dst_zone_obj.interfaces
+                    and "sw_dynamic-blacklist" in ir.chains
+                    and ir.chains["sw_dynamic-blacklist"].rules):
+                dst_active = [
+                    i.emit_name for i in dst_zone_obj.interfaces
+                    if i.dbl_dst_active
+                ]
+                if dst_active:
+                    _ensure_dbl_dst_chain(ir)
+                    dbl_dst_matches: list[Match] = [Match(
+                        field="ct state", value="invalid,new,untracked")]
+                    if len(dst_active) < len(dst_zone_obj.interfaces):
+                        if len(dst_active) == 1:
+                            dbl_dst_matches.insert(0, Match(
+                                field="oifname", value=dst_active[0]))
+                        else:
+                            names = "{ " + ", ".join(dst_active) + " }"
+                            dbl_dst_matches.insert(0, Match(
+                                field="oifname", value=names))
+                    ct_rules.append(Rule(
+                        matches=dbl_dst_matches,
+                        verdict=Verdict.JUMP,
+                        verdict_args="sw_dynamic-blacklist-dst",
+                    ))
         # Static-blacklist jump on zone→fw paths, prepended BEFORE the
         # ct prefix block (upstream's ``-A <chain> counter jump blacklst``
         # is the chain's very first rule). Only emit when the blacklist
