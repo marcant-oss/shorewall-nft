@@ -57,7 +57,8 @@ case "$DISTRO" in
     fedora)
         BUILD_REQUIRES='BuildRequires:  python3 >= 3.11
 BuildRequires:  python3-setuptools >= 68.0
-BuildRequires:  python3-pip'
+BuildRequires:  python3-pip
+BuildRequires:  python3-wheel'
 
         DISTRO_REQUIRES='Requires:       python3 >= 3.11
 Requires:       python3-click >= 8.0
@@ -66,11 +67,24 @@ Requires:       nftables
 Requires:       iproute
 Requires:       python3-nftables
 Recommends:     ipset
-# shorewalld deps
+# shorewalld core deps
 Requires:       python3-aiohttp >= 3.9
 Requires:       python3-protobuf >= 4.25
 Requires:       python3-prometheus_client >= 0.20
 Requires:       python3-dns >= 2.4
+# netkit primitives — sister package; hard dep since shorewalld
+# imports shorewall_nft_netkit.netns_fork on startup (v1.11+).
+Requires:       python3-shorewall-nft-netkit
+# Optional Wave 9/10 capabilities — install if needed:
+# - jeepney: VRRP D-Bus collector (--enable-vrrp-collector)
+# - pysnmp: SNMP augmentation + KeepalivedCollector via UDP
+# - puresnmp: KeepalivedCollector via Unix socket (when net-snmp
+#   gains a working unix transport — currently UDP fallback used)
+# - dbus-next: keepalived control handlers (PrintStats / SendGarp)
+Recommends:     python3-jeepney
+Recommends:     python3-pysnmp
+Recommends:     python3-puresnmp
+Recommends:     python3-dbus-next
 # simlab optional
 Suggests:       python3-scapy'
 
@@ -82,9 +96,15 @@ Suggests:       python3-scapy'
         # - python3 3.12, python3-setuptools 69, python3-dns 2.6, python3-scapy 2.6 (AppStream/BaseOS)
         # - python3-protobuf 3.19.6 (AppStream — no newer version available)
         # - python3-click, python3-pyroute2, python3-prometheus_client, python3-pytest (EPEL 10 / CRB)
+        # - python3-jeepney (EPEL 10), python3-wheel (AppStream)
+        # - python3-pysnmp (EPEL 10, version 5.x — for SNMP augmentation)
+        # - python3-puresnmp / python3-dbus-next: NICHT paketiert in AL10
+        #   AppStream/EPEL/CRB. Bei Bedarf via `pip3 install` (siehe README,
+        #   netns-routing/deploy/deploy.sh).
         BUILD_REQUIRES='BuildRequires:  python3 >= 3.12
 BuildRequires:  python3-setuptools >= 69.0
-BuildRequires:  python3-pip'
+BuildRequires:  python3-pip
+BuildRequires:  python3-wheel'
 
         DISTRO_REQUIRES='Requires:       python3 >= 3.12
 Requires:       python3-click >= 8.1
@@ -93,11 +113,23 @@ Requires:       nftables
 Requires:       iproute
 Requires:       python3-nftables
 Recommends:     ipset
-# shorewalld deps — AL10 AppStream ships python3-protobuf 3.19.6 (no newer version).
+# shorewalld core deps — AL10 AppStream ships python3-protobuf 3.19.6 (no newer version).
 Requires:       python3-aiohttp >= 3.9
 Requires:       python3-protobuf >= 3.19
 Requires:       python3-prometheus_client >= 0.20
 Requires:       python3-dns >= 2.6
+# netkit primitives — sister package; hard dep since shorewalld
+# imports shorewall_nft_netkit.netns_fork on startup (v1.11+).
+# AL10: separates RPM aus marcant-oss/shorewall-nft-netkit-Tag bauen
+# oder per `pip3 install --break-system-packages shorewall-nft-netkit`.
+Requires:       python3-shorewall-nft-netkit
+# Wave 9/10 — Optional Capabilities (alle in EPEL 10 außer puresnmp+dbus-next):
+# - jeepney: VRRP D-Bus collector (--enable-vrrp-collector)
+# - pysnmp:  SNMP augmentation + KeepalivedCollector via UDP
+# - puresnmp: KeepalivedCollector via Unix-Socket (PyPI-only, kein RPM)
+# - dbus-next: keepalived control-handlers (PrintStats etc.; PyPI-only)
+Recommends:     python3-jeepney
+Recommends:     python3-pysnmp
 # simlab optional
 Suggests:       python3-scapy'
 

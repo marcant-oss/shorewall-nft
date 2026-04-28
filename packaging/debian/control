@@ -27,12 +27,17 @@ Depends:
  python3-protobuf (>= 4.25),
  python3-pyroute2 (>= 0.7),
  python3-nftables,
+ python3-shorewall-nft-netkit,
  nftables,
  iproute2
 Recommends:
- ipset
+ ipset,
+ python3-jeepney,
+ python3-pysnmp4,
+ python3-dbus-next
 Suggests:
- python3-scapy
+ python3-scapy,
+ python3-puresnmp
 Conflicts:
  shorewall,
  shorewall6,
