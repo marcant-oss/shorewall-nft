@@ -113,6 +113,13 @@ class DaemonConfig:
     log_dispatch_socket: str | None = None   # path; unix-socket JSON fan-out
     log_dispatch_journald: bool = False      # structured journal entries
     log_dispatch_syslog: str | None = None   # path to /dev/log (RFC 3164)
+    # ── Conntrack NAT-event listener (opt-in) ────────────────────────
+    # When True, each per-netns worker also subscribes to
+    # NFNLGRP_CONNTRACK_NEW and emits a synthetic LogEvent (chain=ct-nat)
+    # for every newly-tracked flow with IPS_SRC_NAT/IPS_DST_NAT. Off by
+    # default — costs one extra fd per worker plus a netlink subscription
+    # and only adds value on firewalls that actually NAT.
+    log_ct_nat_events: bool = False
 
     # ── keepalived SNMP / MIB integration ────────────────────────────
     # Unix-socket SNMP transport (python3-netsnmp) + trap listener.

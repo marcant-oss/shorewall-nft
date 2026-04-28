@@ -488,6 +488,7 @@ def worker_main_loop(
     set_name_lookup,
     *,
     nflog_group: int | None = None,
+    ct_nat_events: bool = False,
 ) -> int:
     """Serve batches, read-RPCs, and optionally NFLOG events.
 
@@ -535,7 +536,8 @@ def worker_main_loop(
                 return rc
 
     return _worker_main_loop_with_nflog(
-        transport, nft, set_name_lookup, reply_buf, nflog_group)
+        transport, nft, set_name_lookup, reply_buf, nflog_group,
+        ct_nat_events=ct_nat_events)
 
 
 def _worker_main_loop_with_nflog(
@@ -544,6 +546,8 @@ def _worker_main_loop_with_nflog(
     set_name_lookup,
     reply_buf: bytearray,
     nflog_group: int,
+    *,
+    ct_nat_events: bool = False,
 ) -> int:
     """Multiplex SEQPACKET + NFLOG netlink via :mod:`selectors`.
 
@@ -634,17 +638,27 @@ def _worker_main_loop_with_nflog(
     sel.register(transport.fileno, selectors.EVENT_READ, "transport")
     sel.register(nflog_sock.fileno(), selectors.EVENT_READ, "nflog")
 
-    # Conntrack NAT events — piggyback on the same worker, same SEQPACKET
-    # back-channel. Subscribes to NFNLGRP_CONNTRACK_NEW; degrades silently
-    # if pyroute2 is unavailable or the netns lacks the netlink capability.
-    ctnat_sock = _ctnat.open_socket()
-    if ctnat_sock is not None:
-        sel.register(ctnat_sock.fileno(), selectors.EVENT_READ, "ctnat")
-        log.info("nft-worker ready: pid=%d nflog=group %d ctnat=on",
-                 os.getpid(), nflog_group)
+    # Conntrack NAT events — opt-in via LOG_CT_NAT_EVENTS in shorewalld.conf
+    # (default off). Two NFCTSocket subscribers (NEW + DESTROY) so each
+    # event's lifecycle phase is unambiguous; the kernel re-uses the same
+    # netlink message type for both groups and there's no per-message
+    # marker. UPDATE is not subscribed: TCP state transitions blow up the
+    # volume without adding NAT-relevant info.
+    ctnat_pairs: list[tuple[object, str]] = (
+        _ctnat.open_sockets() if ct_nat_events else [])
+    ctnat_by_fd: dict[int, tuple[object, str]] = {}
+    for sock, chain_label in ctnat_pairs:
+        fd = sock.fileno()
+        ctnat_by_fd[fd] = (sock, chain_label)
+        sel.register(fd, selectors.EVENT_READ, ("ctnat", chain_label))
+    if ctnat_pairs:
+        labels = ",".join(label for _, label in ctnat_pairs)
+        log.info("nft-worker ready: pid=%d nflog=group %d ctnat=%s",
+                 os.getpid(), nflog_group, labels)
     else:
-        log.info("nft-worker ready: pid=%d nflog=group %d ctnat=off",
-                 os.getpid(), nflog_group)
+        ctnat_state = "off" if not ct_nat_events else "off (bind failed)"
+        log.info("nft-worker ready: pid=%d nflog=group %d ctnat=%s",
+                 os.getpid(), nflog_group, ctnat_state)
 
     try:
         while True:
@@ -741,14 +755,21 @@ def _worker_main_loop_with_nflog(
                             log.warning(
                                 "nflog: parent SEQPACKET full — %d events "
                                 "dropped since worker start", drop_local)
-                elif key.data == "ctnat":
+                elif isinstance(key.data, tuple) and key.data[0] == "ctnat":
                     # Conntrack NAT events: drain queued messages, encode
-                    # each as a synthetic LogEvent (chain=ct-nat), send via
-                    # the SAME SEQPACKET / MAGIC_NFLOG path that NFLOG uses.
-                    # The dispatcher renders them through the standard
-                    # plain/journal/syslog formatters — operators see them
-                    # alongside firewall-rule logs without separate sinks.
-                    for ev in _ctnat.drain_events(ctnat_sock, netns=""):
+                    # each as a synthetic LogEvent (chain=ct-nat-new or
+                    # ct-nat-end depending on which fd became readable),
+                    # send via the SAME SEQPACKET / MAGIC_NFLOG path that
+                    # NFLOG uses. The dispatcher renders them through the
+                    # standard plain/journal/syslog formatters — operators
+                    # see them alongside firewall-rule logs without
+                    # separate sinks.
+                    chain_label = key.data[1]
+                    pair = ctnat_by_fd.get(key.fd)
+                    if pair is None:
+                        continue
+                    sock, _ = pair
+                    for ev in _ctnat.drain_events(sock, netns="", chain_label=chain_label):
                         try:
                             encoded = encode_log_event_into(log_enc_buf, ev)
                         except LogWireError as e:
@@ -773,9 +794,9 @@ def _worker_main_loop_with_nflog(
             pass
         if nflog_sock is not None:
             nflog_sock.close()
-        if ctnat_sock is not None:
+        for sock, _ in ctnat_by_fd.values():
             try:
-                ctnat_sock.close()
+                sock.close()
             except Exception:  # noqa: BLE001
                 pass
 
@@ -786,6 +807,7 @@ def nft_worker_entrypoint(
     *,
     lookup=None,
     nflog_group: int | None = None,
+    ct_nat_events: bool = False,
 ) -> int:
     """Post-fork child body.
 
@@ -843,7 +865,9 @@ def nft_worker_entrypoint(
 
     try:
         return worker_main_loop(
-            transport, nft, lookup, nflog_group=nflog_group)
+            transport, nft, lookup,
+            nflog_group=nflog_group,
+            ct_nat_events=ct_nat_events)
     finally:
         transport.close()
 

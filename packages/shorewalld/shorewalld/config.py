@@ -105,6 +105,7 @@ _BOOL_KEYS = frozenset({
     "STATE_ENABLED",
     "VRRP_SNMP_ENABLED",
     "LOG_DISPATCH_JOURNALD",
+    "LOG_CT_NAT_EVENTS",
     "KEEPALIVED_WIDE_TABLES",
     "KEEPALIVED_SCRAPE_VIRTUAL_SERVERS",
     "KEEPALIVED_DBUS_CREATE_INSTANCE",
@@ -202,6 +203,7 @@ class ConfDefaults:
     log_dispatch_socket: str | None = None
     log_dispatch_journald: bool | None = None
     log_dispatch_syslog: str | None = None
+    log_ct_nat_events: bool | None = None
     # keepalived SNMP/MIB integration (Commit 4 — P8).
     keepalived_snmp_unix: str | None = None
     keepalived_trap_socket: str | None = None
@@ -253,6 +255,7 @@ _CONF_KEY_MAP: dict[str, str] = {
     "LOG_DISPATCH_SOCKET": "log_dispatch_socket",
     "LOG_DISPATCH_JOURNALD": "log_dispatch_journald",
     "LOG_DISPATCH_SYSLOG": "log_dispatch_syslog",
+    "LOG_CT_NAT_EVENTS": "log_ct_nat_events",
     # keepalived SNMP/MIB integration.
     "KEEPALIVED_SNMP_UNIX": "keepalived_snmp_unix",
     "KEEPALIVED_TRAP_SOCKET": "keepalived_trap_socket",

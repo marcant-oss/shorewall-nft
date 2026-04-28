@@ -315,7 +315,10 @@ class Daemon:
         self._nft = NftInterface()
         self._registry = ShorewalldRegistry()
         self._scraper = NftScraper(self._nft, ttl_s=self._config.scrape_interval)
-        self._router = WorkerRouter(loop=self._loop)
+        self._router = WorkerRouter(
+            loop=self._loop,
+            ct_nat_events=self._config.log_ct_nat_events,
+        )
         self._profile_builder = ProfileBuilder(
             self._nft, self._registry, self._scraper, self._router)
 

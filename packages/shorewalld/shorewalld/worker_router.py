@@ -173,10 +173,12 @@ class ParentWorker:
         loop: asyncio.AbstractEventLoop,
         log_dispatcher: LogDispatcher | None = None,
         nflog_group: int | None = None,
+        ct_nat_events: bool = False,
     ) -> None:
         self.netns = netns
         self._tracker = tracker
         self._loop = loop
+        self._ct_nat_events = ct_nat_events
         # NFLOG: optional worker-side subscription that pushes decoded
         # events back to the parent; ``log_dispatcher`` is the parent-
         # side sink that receives them via ``_drain_replies``. Either
@@ -289,6 +291,7 @@ class ParentWorker:
                 self.netns, worker_t.fileno,
                 lookup=_lookup,
                 nflog_group=self._nflog_group,
+                ct_nat_events=self._ct_nat_events,
             )
             os._exit(rc)
         worker_t.close()
@@ -929,6 +932,9 @@ class WorkerRouter:
     # MVP; per-netns overrides are a follow-up (see roadmap doc).
     # ``None`` = NFLOG subscription disabled in workers entirely.
     nflog_group: int | None = None
+    # Conntrack NAT-event listener (NFNLGRP_CONNTRACK_NEW). Off by default —
+    # only worth subscribing when the firewall actually NATs.
+    ct_nat_events: bool = False
     _workers: dict[str, ParentWorker] = field(default_factory=dict)
 
     def attach_tracker(self, tracker: DnsSetTracker) -> None:
@@ -982,6 +988,7 @@ class WorkerRouter:
             netns=netns, tracker=self.tracker, loop=self.loop,
             log_dispatcher=self.log_dispatcher,
             nflog_group=self.nflog_group,
+            ct_nat_events=self.ct_nat_events,
         )
         try:
             await worker.start()
@@ -1016,6 +1023,7 @@ class WorkerRouter:
             netns=netns, tracker=self.tracker, loop=self.loop,
             log_dispatcher=self.log_dispatcher,
             nflog_group=self.nflog_group,
+            ct_nat_events=self.ct_nat_events,
         )
         new_worker.metrics.spawned_total = worker.metrics.spawned_total
         new_worker.metrics.restarts_total = worker.metrics.restarts_total

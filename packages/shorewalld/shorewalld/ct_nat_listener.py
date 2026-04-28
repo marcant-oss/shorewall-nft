@@ -1,17 +1,22 @@
 """Conntrack-event NAT listener for shorewalld.
 
-Subscribes to ``NFNLGRP_CONNTRACK_NEW`` (multicast group 1) inside the
-worker's netns and synthesises a :class:`~shorewalld.log_prefix.LogEvent`
-for every newly-tracked flow that carries a SRC_NAT or DST_NAT bit.
+Subscribes to ``NFNLGRP_CONNTRACK_NEW`` (multicast group 1) **and**
+``NFNLGRP_CONNTRACK_DESTROY`` (group 3) inside the worker's netns and
+synthesises a :class:`~shorewalld.log_prefix.LogEvent` for every
+NAT-tracked flow at both lifecycle ends. UPDATE events (group 2) are
+deliberately not subscribed — for TCP they fire on every state
+transition and the volume is two orders of magnitude higher than
+new/destroy without adding NAT-relevant info.
 
 The listener is allocation-light: each event yields one ``LogEvent``
 that piggybacks on the existing NFLOG SEQPACKET wire (``MAGIC_NFLOG``
-in :mod:`~shorewalld.log_codec`). Disposition encodes the translation
-target so operators can grep for ``DNAT->`` / ``SNAT->`` in logs:
+in :mod:`~shorewalld.log_codec`). Chain encodes the lifecycle phase
+so operators can grep / filter by phase + by translation kind:
 
-    chain=ct-nat disposition=DNAT->10.0.0.5:80
-    chain=ct-nat disposition=SNAT->217.14.160.75:34521
-    chain=ct-nat disposition=DNAT->10.0.0.5:80,SNAT->217.14.160.75:34521
+    chain=ct-nat-new  disposition=DNAT->10.0.0.5:80
+    chain=ct-nat-end  disposition=DNAT->10.0.0.5:80
+    chain=ct-nat-new  disposition=SNAT->217.14.160.75:34521
+    chain=ct-nat-new  disposition=DNAT->10.0.0.5:80,SNAT->217.14.160.75:34521
 
 Pre/post addresses end up in the standard packet fields:
 
@@ -54,37 +59,72 @@ from .log_prefix import LogEvent
 
 log = logging.getLogger("shorewalld.ct_nat_listener")
 
-#: ``NFNLGRP_CONNTRACK_NEW`` multicast group bitmask.
+#: Conntrack multicast group bitmasks (NFNLGRP_CONNTRACK_*).
 _GROUP_NEW = 1 << 0
+_GROUP_DESTROY = 1 << 2
 
 #: Conntrack status flags from ``<linux/netfilter/nf_conntrack_common.h>``.
 IPS_SRC_NAT = 1 << 4   # 0x10 — src was translated by SNAT
 IPS_DST_NAT = 1 << 5   # 0x20 — dst was translated by DNAT
 
 
-def open_socket() -> "NFCTSocket | None":
-    """Bind a NFCTSocket to the NEW multicast group; returns None on error."""
+def open_sockets() -> list[tuple["NFCTSocket", str]]:
+    """Bind NFCTSocket per group; return list of ``(sock, chain_label)``.
+
+    One socket per multicast group so events are unambiguously categorised
+    (NEW vs DESTROY both arrive as ``IPCTNL_MSG_CT_NEW`` / ``CT_DELETE`` —
+    the kernel doesn't tag the originating group on the wire). Each socket
+    fd ends up registered separately in the worker's selector loop with
+    the chain-label as the user-data tag.
+
+    Empty list if pyroute2 is unavailable or every bind fails.
+    """
     if not _PYROUTE2_AVAILABLE:
-        return None
-    try:
-        s = NFCTSocket()
-        # pyroute2 0.9 moved bind() onto an inner asyncore attribute.
-        target = getattr(s, "asyncore", s)
-        target.bind(groups=_GROUP_NEW)
-        return s
-    except OSError as exc:
-        log.warning("ct-nat: bind(NFNLGRP_CONNTRACK_NEW) failed: %s — disabled", exc)
-        return None
+        return []
+    out: list[tuple[NFCTSocket, str]] = []
+    for group_mask, chain_label in (
+        (_GROUP_NEW, "ct-nat-new"),
+        (_GROUP_DESTROY, "ct-nat-end"),
+    ):
+        try:
+            s = NFCTSocket()
+            target = getattr(s, "asyncore", s)
+            target.bind(groups=group_mask)
+        except OSError as exc:
+            log.warning("ct-nat: bind(group=%d) failed: %s — skipping",
+                        group_mask, exc)
+            try:
+                s.close()
+            except Exception:  # noqa: BLE001
+                pass
+            continue
+        out.append((s, chain_label))
+    return out
 
 
-def drain_events(sock: "NFCTSocket", netns: str) -> list[LogEvent]:
+# ── Backward-compat shim ────────────────────────────────────────────────
+# Older code paths called ``open_socket()`` (singular) and got just the
+# NEW-group subscriber. Keep the name working in case test fixtures hit
+# the older API.
+def open_socket() -> "NFCTSocket | None":
+    pairs = open_sockets()
+    return pairs[0][0] if pairs else None
+
+
+def drain_events(
+    sock: "NFCTSocket",
+    netns: str,
+    chain_label: str = "ct-nat-new",
+) -> list[LogEvent]:
     """Pull all queued events from *sock*, decode NAT entries to LogEvents.
 
-    Non-NAT events (i.e. flows whose ``CTA_STATUS`` lacks IPS_SRC_NAT and
-    IPS_DST_NAT) are silently dropped. Decoder errors are logged at DEBUG
-    and the event is skipped — never raised, since the listener runs
-    inside the worker's main selector loop and an exception would
-    propagate into the IPC reply pump.
+    *chain_label* tags the lifecycle phase on the resulting LogEvent
+    (``ct-nat-new`` / ``ct-nat-end``). Non-NAT events (i.e. flows whose
+    ``CTA_STATUS`` lacks IPS_SRC_NAT and IPS_DST_NAT) are silently
+    dropped. Decoder errors are logged at DEBUG and the event is skipped
+    — never raised, since the listener runs inside the worker's main
+    selector loop and an exception would propagate into the IPC reply
+    pump.
     """
     out: list[LogEvent] = []
     try:
@@ -94,7 +134,7 @@ def drain_events(sock: "NFCTSocket", netns: str) -> list[LogEvent]:
         return out
     for m in msgs:
         try:
-            ev = _decode_nat_event(m, netns)
+            ev = _decode_nat_event(m, netns, chain_label)
         except Exception as exc:  # noqa: BLE001
             log.debug("ct-nat: decode failed: %s", exc)
             continue
@@ -103,8 +143,10 @@ def drain_events(sock: "NFCTSocket", netns: str) -> list[LogEvent]:
     return out
 
 
-def _decode_nat_event(msg, netns: str) -> "LogEvent | None":
-    """Decode one CTA_NEW message into a LogEvent if it carries NAT bits."""
+def _decode_nat_event(
+    msg, netns: str, chain_label: str = "ct-nat-new",
+) -> "LogEvent | None":
+    """Decode one ctnetlink message into a LogEvent if it carries NAT bits."""
     attrs = dict(msg.get("attrs", []))
     status = attrs.get("CTA_STATUS")
     if status is None or not (status & (IPS_SRC_NAT | IPS_DST_NAT)):
@@ -157,7 +199,7 @@ def _decode_nat_event(msg, netns: str) -> "LogEvent | None":
         disposition = disposition[:237] + "..."
 
     return LogEvent(
-        chain="ct-nat",
+        chain=chain_label,
         disposition=disposition,
         rule_num=None,
         timestamp_ns=time.time_ns(),
