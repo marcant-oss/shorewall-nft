@@ -226,31 +226,50 @@ bug.
   coverage). Neither rossini nor portalfw snapshots have SECMARK
   rules today.
 
-* **Flowtable / fastpath: pipeline complete, kernel-side flow
-  population still open on TAP topology**. Three pieces landed:
-  the static check (``simlab-raw-check.py --table flowtable``)
-  diffs IR-emitted flowtable declarations against the snapshot's
-  ``nft-ruleset.txt`` (collector still TODO in
-  ``simlab-collect.sh``); the dynamic check
-  (``smoketest._flowtable_state``) reads per-flowtable flow counts
-  via libnftables and warns when zero; and the warmup driver
-  (``smoketest --flowtable-warmup N``) follows the bidi SYN+ACK
-  return with a 3rd-handshake ACK injection so conntrack reaches
-  ESTABLISHED.  Empirical observation on the rossini-patched
-  snapshot (``FLOWTABLE=bond0,br1,bond1``, no offload flag): ct
-  events confirm 371 NEW + 253 UPDATE TCP transitions but the
-  flowtable stays at 0 flows.  The kernel's
-  ``nft_flow_offload_eval`` doesn't seem to register sw-fastpath
-  entries on TAP-only netdevs even when ESTABLISHED is reached.
-  Likely-needed follow-ups for a green flow count:
-    - real veth peers in the warmup topology (the simlab's
-      ``iface_needs_tap`` matrix would need an opt-out for the
-      flowtable-test interfaces), AND/OR
-    - inject a follow-up data packet after the 3rd-handshake ACK
-      so the kernel sees forward+reverse data and marks the ct
-      assured beyond the bare handshake.
-  The static + dynamic infrastructure is all in place; what
-  remains is a kernel-cooperative test topology.
+* **Flowtable / fastpath: end-to-end validated (RESOLVED 2026-04-28)**.
+  Four pieces close the loop:
+    - static check: ``simlab-raw-check.py --table flowtable``
+      diffs the IR's emitted flowtable declaration against the
+      snapshot's ``nft-ruleset.txt`` (collector still TODO in
+      ``simlab-collect.sh``);
+    - dynamic check: ``smoketest._flowtable_state`` reports the
+      per-flowtable definition count, the libnftables ``flow``
+      array length, AND the count of conntrack entries with
+      ``IPS_OFFLOAD`` set — the latter is the *authoritative*
+      signal;
+    - warmup driver: ``smoketest --flowtable-warmup N`` tags the
+      first N TCP positive probes; the controller follows the
+      bidi SYN+ACK return with a 3rd-handshake ACK injection on
+      inject_iface so conntrack reaches ESTABLISHED;
+    - the inactive-warning gate now requires *both* counts to be
+      zero — non-zero ct[OFFLOAD] alone is sufficient evidence.
+
+  Key empirical finding: ``nft list flowtable inet shorewall ft``
+  returns an empty ``flow`` array even when offload IS active.
+  Verified against a real veth-router-veth setup
+  (root@192.168.203.79, kernel 6.11): 64 KiB of bidirectional
+  TCP between two endpoint netnses drove the kernel to flag the
+  ct entry with ``[OFFLOAD]`` (visible in ``conntrack -L``)
+  while ``nft list flowtable | jq '.. | .flow?'`` still showed
+  ``null``.  The IPS_OFFLOAD bit on ``CTA_STATUS`` is the only
+  Python-readable signal — exposed via the new
+  ``shorewall_nft_netkit.validators.count_offloaded_ct`` helper.
+
+  Re-run on rossini-patched (``FLOWTABLE=bond0,br1,bond1``, no
+  offload flag, ``--flowtable-warmup 30``) reports
+  ``inet/shorewall/ft (3 devs, 0 flows, 192 ct[OFFLOAD])`` —
+  the simlab's TAP topology IS in fact populating the kernel's
+  fastpath; the original "0 flows" reading was misleading
+  output, not a missing offload.
+
+  Open follow-ups (low priority):
+    - ``simlab-collect.sh`` to capture ``nft-ruleset.txt`` so the
+      static diff has snapshot ground-truth on the flowtable side
+      instead of being IR-only;
+    - investigate why the ct[OFFLOAD] count (192) exceeds the
+      tagged warmup count (30) — the simlab's bidi mode alone
+      seems to drive enough non-tagged TCP probes to offload on
+      this kernel.
 
 * **CT-helper: per-snapshot capabilities override**. The snapshot
   loader parses ``__*_HELPER=1`` defaults globally across all
