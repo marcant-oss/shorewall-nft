@@ -252,6 +252,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-dispatch-syslog", default=None, metavar="PATH",
         help="Forward NFLOG events to a syslog daemon as RFC 3164 "
              "datagrams. Typical value: /dev/log.")
+    p.add_argument(
+        "--log-ct-nat-events", action="store_true", default=False,
+        help="In addition to NFLOG, subscribe to NFNLGRP_CONNTRACK_NEW in "
+             "every managed netns and emit a synthetic LogEvent for each "
+             "newly-tracked flow that carries IPS_SRC_NAT or IPS_DST_NAT. "
+             "Disposition encodes the translation target (DNAT->host:port, "
+             "SNAT->host:port). Off by default; the listener costs one extra "
+             "fd + selector slot per worker plus a netlink subscription. "
+             "Requires pyroute2.")
     # ── keepalived SNMP/MIB integration ──────────────────────────────
     p.add_argument(
         "--keepalived-snmp-unix", default=None, metavar="PATH",
@@ -399,6 +408,9 @@ def _merge_conf_defaults(
             and defaults.log_dispatch_journald is True):
         args.log_dispatch_journald = True
     take("log_dispatch_syslog", defaults.log_dispatch_syslog)
+    if ("log_ct_nat_events" not in explicit
+            and defaults.log_ct_nat_events is True):
+        args.log_ct_nat_events = True
 
     # keepalived SNMP/MIB integration.
     take("keepalived_snmp_unix", defaults.keepalived_snmp_unix)
@@ -564,6 +576,7 @@ def main(argv: list[str] | None = None) -> int:
         log_dispatch_socket=args.log_dispatch_socket,
         log_dispatch_journald=args.log_dispatch_journald,
         log_dispatch_syslog=args.log_dispatch_syslog,
+        log_ct_nat_events=args.log_ct_nat_events,
         keepalived_snmp_unix=args.keepalived_snmp_unix,
         keepalived_trap_socket=args.keepalived_trap_socket,
         keepalived_wide_tables=(

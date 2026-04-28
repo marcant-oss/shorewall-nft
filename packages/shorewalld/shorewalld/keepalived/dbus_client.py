@@ -228,7 +228,11 @@ class KeepalivedDbusClient:
         await bus.connect()
 
         # Register match rule so the bus routes signals to us.
-        await bus._add_match_rule(_MATCH_RULE)  # noqa: SLF001
+        # dbus-next ≥0.2.3 exposes _add_match_rule as a sync method —
+        # it just appends to an internal list. Earlier versions were
+        # async; the await silently passed when None was awaited
+        # (Python 3.10) but raises TypeError on 3.12+.
+        bus._add_match_rule(_MATCH_RULE)  # noqa: SLF001
 
         # Low-level message handler: avoids introspection + proxy setup,
         # which would require keepalived to be running at daemon start.

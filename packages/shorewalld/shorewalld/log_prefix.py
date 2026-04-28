@@ -39,12 +39,37 @@ class LogEvent:
     memoryviews would be the wrong shape here. The zero-copy budget is
     spent upstream (nfnetlink_log parse); the one decode of the prefix
     bytes happens here, exactly once per surviving event.
+
+    The ``packet_*`` and ``indev``/``outdev`` fields are populated when
+    the worker calls :func:`shorewalld.nflog_netlink.parse_packet_5tuple`
+    on the NFULA_PAYLOAD slice and forwards the resolved ifindex names
+    over the wire. ``packet_family == 0`` means "no L3 parse" — sinks
+    should fall back to the chain/disp-only line. Defaults keep the
+    older test fixtures (which build LogEvent directly without packet
+    info) working.
     """
     chain: str
     disposition: str
     rule_num: int | None
     timestamp_ns: int
     netns: str
+    # Packet metadata (NFULA_PAYLOAD parse) — 0/"" when absent.
+    packet_family: int = 0   # 4, 6, or 0
+    packet_proto: int = 0    # IANA proto number, 0 if unknown
+    packet_saddr: str = ""
+    packet_daddr: str = ""
+    packet_sport: int = 0    # ICMP type when proto in (1, 58)
+    packet_dport: int = 0    # ICMP code when proto in (1, 58)
+    packet_len: int = 0
+    packet_ttl: int = 0      # IPv4 TTL / IPv6 Hop Limit, 0 if absent
+    packet_tcp_flags: int = 0  # raw TCP flags byte (FIN/SYN/RST/PSH/ACK/URG/ECE/CWR)
+    indev: str = ""          # interface name (resolved from ifindex)
+    outdev: str = ""
+    # NFLOG metadata fields — netfilter context, not packet content.
+    nf_hook: int = 0         # 0=PREROUTING 1=INPUT 2=FORWARD 3=OUTPUT 4=POSTROUTING
+    nf_mark: int = 0         # ct/fwmark on the packet (32-bit)
+    nf_uid: int = 0xFFFFFFFF  # only set on output hook for locally-generated traffic; sentinel = unset
+    nf_gid: int = 0xFFFFFFFF
 
 
 def parse_log_prefix(

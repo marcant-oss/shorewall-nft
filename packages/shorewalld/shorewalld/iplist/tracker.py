@@ -394,6 +394,37 @@ class IpListTracker:
             return_exceptions=True,
         )
 
+    def add_configs(self, new_configs: list[IpListConfig]) -> int:
+        """Append new configs to a running tracker, spawn refresh tasks.
+
+        Returns the number of configs actually added (duplicates by
+        ``cfg.name`` are silently skipped — they're already running).
+
+        Used when nfsets-file ip-list rows are discovered after the
+        tracker has already started (typical: ``nfsets_payload`` from
+        ``register-instance``). Without this, configs from the nfsets
+        file would be logged but never activated until daemon restart.
+        """
+        added = 0
+        for cfg in new_configs:
+            if cfg.name in self._states:
+                continue
+            self._states[cfg.name] = _ListState(cfg=cfg)
+            self._list_locks[cfg.name] = asyncio.Lock()
+            self._configs.append(cfg)
+            task = asyncio.create_task(
+                self._list_loop(self._states[cfg.name]),
+                name=f"shorewalld.iplist.{cfg.name}",
+            )
+            self._refresh_tasks[cfg.name] = task
+            added += 1
+        if added:
+            log.info(
+                "iplist tracker: added %d new list(s) — total %d",
+                added, len(self._configs),
+            )
+        return added
+
     async def refresh_one(self, name: str) -> None:
         """Force an immediate refresh of the named list."""
         state = self._states.get(name)

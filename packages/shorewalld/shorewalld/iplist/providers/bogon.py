@@ -48,7 +48,10 @@ _V4_BOGONS: frozenset[str] = frozenset({
     "203.0.113.0/24",
     "224.0.0.0/4",
     "240.0.0.0/4",
-    "255.255.255.255/32",
+    # Hinweis: 255.255.255.255/32 entfernt — wird von 240.0.0.0/4 abgedeckt
+    # (16/4 = 0xF0..0xFF), und nft `flags interval`-Sets erlauben keine
+    # überlappenden Ranges (Error: conflicting intervals specified). Mit
+    # dem Subset-Eintrag wird die ganze Set-Insertion atomar abgebrochen.
 })
 
 _V6_BOGONS: frozenset[str] = frozenset({

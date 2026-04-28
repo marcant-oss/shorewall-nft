@@ -1311,6 +1311,15 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                     rule.matches.append(Match(
                         field="ip saddr", value=clean_addr, negate=negate))
                     has_v4_addr = True
+                elif clean_addr.startswith("+nfset_") and clean_addr.endswith("_v6"):
+                    # nfset sentinel — same family-tag convention as +dns_*.
+                    rule.matches.append(Match(
+                        field="ip6 saddr", value=clean_addr, negate=negate))
+                    has_v6_addr = True
+                elif clean_addr.startswith("+nfset_") and clean_addr.endswith("_v4"):
+                    rule.matches.append(Match(
+                        field="ip saddr", value=clean_addr, negate=negate))
+                    has_v4_addr = True
                 elif is_ipv6_spec(clean_addr):
                     rule.matches.append(Match(field="ip6 saddr", value=clean_addr, negate=negate))
                     has_v6_addr = True
@@ -1341,6 +1350,14 @@ def _add_rule(ir: FirewallIR, zones: ZoneModel,
                         field="ip6 daddr", value=clean_addr, negate=negate))
                     has_v6_addr = True
                 elif clean_addr.startswith("+dns_") and clean_addr.endswith("_v4"):
+                    rule.matches.append(Match(
+                        field="ip daddr", value=clean_addr, negate=negate))
+                    has_v4_addr = True
+                elif clean_addr.startswith("+nfset_") and clean_addr.endswith("_v6"):
+                    rule.matches.append(Match(
+                        field="ip6 daddr", value=clean_addr, negate=negate))
+                    has_v6_addr = True
+                elif clean_addr.startswith("+nfset_") and clean_addr.endswith("_v4"):
                     rule.matches.append(Match(
                         field="ip daddr", value=clean_addr, negate=negate))
                     has_v4_addr = True

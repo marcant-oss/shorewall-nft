@@ -627,26 +627,35 @@ class VrrpCollector(CollectorBase):
         return []
 
     def _list_instance_paths(self, conn: object, bus_name: str) -> list[str]:
-        """Introspect _KA_INSTANCE_ROOT to discover child object paths.
+        """Recursively introspect _KA_INSTANCE_ROOT to discover leaf paths.
 
-        keepalived registers each instance as a child of
-        /org/keepalived/Vrrp1/Instance.  We parse the XML returned by
-        Introspect to find <node name="..."/> children.
+        keepalived registers each instance at three levels deep:
+            /org/keepalived/Vrrp1/Instance/<nic>/<vrid>/<family>
+        We descend depth-first up to ``leaf_depth=3`` levels below the
+        root.  Non-leaf paths have no Name/State properties and would
+        silently no-op in GetAll, so we only add paths at exactly the
+        leaf depth.
         """
-        msg = new_method_call(
-            DBusAddress(
-                _KA_INSTANCE_ROOT,
-                bus_name=bus_name,
-                interface=_INTROSPECT_IFACE,
-            ),
-            "Introspect",
-        )
-        try:
-            reply = conn.send_and_get_reply(msg, timeout=_DBUS_TIMEOUT)
-        except Exception:
-            raise
-        xml_body = reply.body[0] if reply.body else ""
-        return _parse_introspect_children(xml_body, _KA_INSTANCE_ROOT)
+        leaves: list[str] = []
+        leaf_depth = 3
+        stack: list[tuple[str, int]] = [(_KA_INSTANCE_ROOT, 0)]
+        while stack:
+            path, depth = stack.pop()
+            if depth == leaf_depth:
+                leaves.append(path)
+                continue
+            msg = new_method_call(
+                DBusAddress(path, bus_name=bus_name, interface=_INTROSPECT_IFACE),
+                "Introspect",
+            )
+            try:
+                reply = conn.send_and_get_reply(msg, timeout=_DBUS_TIMEOUT)
+            except Exception:
+                continue
+            xml_body = reply.body[0] if reply.body else ""
+            for child in _parse_introspect_children(xml_body, path):
+                stack.append((child, depth + 1))
+        return leaves
 
     def _read_instance(
         self, conn: object, bus_name: str, obj_path: str,
@@ -998,18 +1007,26 @@ def _parse_instance_reply(
         return None
     nic, vr_id, family = path_info
 
-    # Name property: type (s) → delivered as the string itself or a
-    # 1-tuple depending on jeepney version.
-    raw_name = props.get("Name")
+    # jeepney delivers a variant as a 2-tuple ``(signature_str, value)`` —
+    # unwrap so we get the inner value regardless of nesting depth.
+    def _unvariant(v):
+        # Variant: ('(s)', ('VI_fw',))  →  ('VI_fw',)
+        if isinstance(v, tuple) and len(v) == 2 and isinstance(v[0], str) \
+                and v[0].startswith("(") and v[0].endswith(")"):
+            return v[1]
+        return v
+
+    # Name property: keepalived signature is (s) → inner is (str,)
+    raw_name = _unvariant(props.get("Name"))
     if raw_name is None:
         return None
-    if isinstance(raw_name, (list, tuple)):
-        vrrp_name = str(raw_name[0]) if raw_name else ""
+    if isinstance(raw_name, (list, tuple)) and raw_name:
+        vrrp_name = str(raw_name[0])
     else:
         vrrp_name = str(raw_name)
 
-    # State property: type (us) → (uint, string)
-    raw_state = props.get("State")
+    # State property: keepalived signature is (us) → inner is (uint, str)
+    raw_state = _unvariant(props.get("State"))
     if raw_state is None:
         return None
     if isinstance(raw_state, (list, tuple)) and len(raw_state) >= 1:

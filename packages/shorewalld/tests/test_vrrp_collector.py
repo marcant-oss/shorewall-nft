@@ -228,13 +228,30 @@ def _make_fake_connection(bus_names: list[str], instances: list[VrrpInstance]):
         r.body = body
         return r
 
-    # Build leaf-path XML from instances: one <node> per nic, then the
-    # collector only calls Introspect once (at root) so we return all
-    # unique nic children.  Leaf-level GetAll is triggered by the path.
-    def make_introspect_xml(inst_list: list[VrrpInstance]) -> str:
-        nics = sorted({i.nic for i in inst_list})
-        nodes = "\n".join(f'<node name="{nic}"/>' for nic in nics)
-        return f'<?xml version="1.0"?><node>{nodes}</node>'
+    # Multi-level introspection support: collector descends three levels
+    # (/Instance → <nic> → <vrid> → <family>) so the fake must answer
+    # path-specific. Build the level dispatch from the instance list.
+    _root = "/org/keepalived/Vrrp1/Instance"
+
+    def _children_for_path(path: str) -> list[str]:
+        if path == _root:
+            return sorted({i.nic for i in instances})
+        parts = path[len(_root) + 1:].split("/") if path.startswith(_root + "/") else []
+        if len(parts) == 1:
+            nic = parts[0]
+            return sorted({str(i.vr_id) for i in instances if i.nic == nic})
+        if len(parts) == 2:
+            nic, vrid_s = parts
+            try:
+                vr_id = int(vrid_s)
+            except ValueError:
+                return []
+            return sorted({
+                "IPv4" if i.family == "ipv4" else "IPv6"
+                for i in instances if i.nic == nic and i.vr_id == vr_id
+            })
+        # Leaf or beyond — no children.
+        return []
 
     def send_and_get_reply(msg, timeout=1.0):
         fields = msg.header.fields
@@ -245,16 +262,9 @@ def _make_fake_connection(bus_names: list[str], instances: list[VrrpInstance]):
             return _make_reply((bus_names,))
 
         if member == "Introspect":
-            # Return XML that lists matching instance paths as direct children.
-            # We return leaf-path style nodes (nic/vrid/family) assembled
-            # from the instances list so _list_instance_paths yields paths
-            # that GetAll can match.
-            leaf_nodes = []
-            for inst in instances:
-                fam_str = "IPv4" if inst.family == "ipv4" else "IPv6"
-                leaf_path = f"{inst.nic}/{inst.vr_id}/{fam_str}"
-                leaf_nodes.append(f'<node name="{leaf_path}"/>')
-            xml = f'<?xml version="1.0"?><node>{"".join(leaf_nodes)}</node>'
+            children = _children_for_path(path)
+            nodes = "".join(f'<node name="{c}"/>' for c in children)
+            xml = f'<?xml version="1.0"?><node>{nodes}</node>'
             return _make_reply((xml,))
 
         if member == "GetAll":

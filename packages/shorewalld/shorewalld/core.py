@@ -315,7 +315,10 @@ class Daemon:
         self._nft = NftInterface()
         self._registry = ShorewalldRegistry()
         self._scraper = NftScraper(self._nft, ttl_s=self._config.scrape_interval)
-        self._router = WorkerRouter(loop=self._loop)
+        self._router = WorkerRouter(
+            loop=self._loop,
+            ct_nat_events=self._config.log_ct_nat_events,
+        )
         self._profile_builder = ProfileBuilder(
             self._nft, self._registry, self._scraper, self._router)
 
@@ -807,14 +810,22 @@ class Daemon:
                 len(nfsets_dns.specs),
             )
 
-        # Append nfsets ip-list configs to the daemon's iplist_configs and
-        # (re-)start the IpListTracker if needed.
+        # Append nfsets ip-list configs and activate them. Two paths:
+        # (a) tracker not yet started — happens when the daemon was started
+        #     without IPLIST_*-keys in shorewalld.conf but the operator
+        #     declared ip-list backends in the nfsets-file. Bootstrap the
+        #     tracker now.
+        # (b) tracker already running — append via add_configs, which
+        #     spawns refresh tasks for the new lists.
         if extra_iplist_cfgs:
             log.info(
                 "nfsets: %d ip-list config(s) from nfsets", len(extra_iplist_cfgs))
-            # IpListTracker is already running; dynamic config append is a
-            # future enhancement. For now, log the configs as discovered.
-            # Operators restart shorewalld to activate new ip-list entries.
+            if self._iplist_tracker is None:
+                self._config.iplist_configs = tuple(extra_iplist_cfgs)
+                netns_list = list(self._profile_builder.profiles.keys())
+                await self._start_iplist_tracker(netns_list)
+            else:
+                self._iplist_tracker.add_configs(extra_iplist_cfgs)
 
         # Start or restart the PlainListTracker for ip-list-plain sources.
         if plain_cfgs:
@@ -870,7 +881,7 @@ class Daemon:
 
         Called from :meth:`run` when ``KEEPALIVED_SNMP_UNIX`` is set.
         Every sub-component has an *Unavailable* soft-degrade path so a
-        missing python3-netsnmp, pysnmp, or dbus-next never aborts startup
+        missing puresnmp, pysnmp, or dbus-next never aborts startup
         — it just drops that capability with a warning log.
         """
         assert self._config.keepalived_snmp_unix is not None
@@ -890,7 +901,7 @@ class Daemon:
             )
         except KeepalivedSnmpClientUnavailable as e:
             log.warning(
-                "keepalived SNMP disabled (python3-netsnmp not installed): %s", e)
+                "keepalived SNMP disabled (puresnmp not installed): %s", e)
             return
 
         self._keepalived_dispatcher = KeepalivedDispatcher(
