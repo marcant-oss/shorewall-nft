@@ -807,14 +807,22 @@ class Daemon:
                 len(nfsets_dns.specs),
             )
 
-        # Append nfsets ip-list configs to the daemon's iplist_configs and
-        # (re-)start the IpListTracker if needed.
+        # Append nfsets ip-list configs and activate them. Two paths:
+        # (a) tracker not yet started — happens when the daemon was started
+        #     without IPLIST_*-keys in shorewalld.conf but the operator
+        #     declared ip-list backends in the nfsets-file. Bootstrap the
+        #     tracker now.
+        # (b) tracker already running — append via add_configs, which
+        #     spawns refresh tasks for the new lists.
         if extra_iplist_cfgs:
             log.info(
                 "nfsets: %d ip-list config(s) from nfsets", len(extra_iplist_cfgs))
-            # IpListTracker is already running; dynamic config append is a
-            # future enhancement. For now, log the configs as discovered.
-            # Operators restart shorewalld to activate new ip-list entries.
+            if self._iplist_tracker is None:
+                self._config.iplist_configs = tuple(extra_iplist_cfgs)
+                netns_list = list(self._profile_builder.profiles.keys())
+                await self._start_iplist_tracker(netns_list)
+            else:
+                self._iplist_tracker.add_configs(extra_iplist_cfgs)
 
         # Start or restart the PlainListTracker for ip-list-plain sources.
         if plain_cfgs:
