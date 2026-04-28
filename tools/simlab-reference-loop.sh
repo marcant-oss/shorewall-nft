@@ -157,6 +157,7 @@ echo "[loop] simlab run on $HOST (unit=$UNIT)"
 ssh -n "root@$HOST" \
     "systemd-run --unit=$UNIT --collect --wait \
         --working-directory=/root/shorewall-nft \
+        --property=PrivateMounts=false \
         --property=StandardOutput=file:/tmp/$UNIT.log \
         --property=StandardError=file:/tmp/$UNIT.log \
         /root/shorewall-nft/.venv/bin/python \
