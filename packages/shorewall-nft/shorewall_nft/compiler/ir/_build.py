@@ -434,6 +434,31 @@ def _process_policies(ir: FirewallIR, policy_lines: list[ConfigLine],
                     chain.policy_log_level = log_level
 
 
+def _promote_bare_addr(zone: str, addr: str | None,
+                       zones: ZoneModel) -> tuple[str, str | None]:
+    """Promote a bare host/CIDR from the zone slot to the addr slot.
+
+    The notrack/conntrack file accepts a bare IPv4 address or CIDR in
+    the SOURCE / DESTINATION column without a ``zone:`` prefix —
+    e.g. ``net  217.14.160.130  udp  53`` (column 2 is a bare host).
+    ``_parse_zone_spec`` doesn't recognize bare IPs and returns them
+    in the zone slot with ``addr=None``, which would otherwise drop
+    the address predicate entirely and notrack every flow on the
+    given proto/port instead of the configured host.
+
+    Detection key: ``addr is None`` and ``zone`` is not in the zone
+    model and not one of the special pseudo-zone tokens.  Anything
+    else stays untouched.
+    """
+    if addr is not None:
+        return zone, addr
+    if not zone or zone in zones.zones:
+        return zone, None
+    if zone in ("all", "any", "$FW", "fw", "-"):
+        return zone, None
+    return zone, zone
+
+
 def _process_notrack(ir: FirewallIR, notrack_lines: list[ConfigLine],
                      zones: ZoneModel) -> None:
     """Process notrack rules into raw-priority chains.
@@ -482,6 +507,7 @@ def _process_notrack(ir: FirewallIR, notrack_lines: list[ConfigLine],
 
         src_zone, src_addr = _parse_zone_spec(source_spec, zones)
         src_addr = _sentinel_to_addr(src_zone, src_addr)
+        src_zone, src_addr = _promote_bare_addr(src_zone, src_addr, zones)
 
         # Determine chain: $FW source -> output, else -> prerouting
         fw = zones.firewall_zone
@@ -498,11 +524,38 @@ def _process_notrack(ir: FirewallIR, notrack_lines: list[ConfigLine],
         source_raw=line.raw,
         )
 
+        # Translate the source zone to an ``iifname`` filter so the
+        # NOTRACK only fires for traffic that classic shorewall
+        # would route into the zone's per-zone ``<zone>_ctrk`` chain
+        # via ``-A PREROUTING -i <iface> -j <zone>_ctrk``.  Without
+        # this, a NOTRACK declared for ``net 217.14.160.130 udp 53``
+        # also notrack's identical UDP/53 traffic to the same DNS
+        # host arriving on any other zone's interface.  Skip when
+        # the source zone is unknown (bare-IP-only form already
+        # promoted to src_addr) or when no interfaces are bound to
+        # the zone (a hosts-only zone — caller's intent matches the
+        # rule with no iif gate).
+        if (src_zone and src_zone in zones.zones
+                and src_zone != fw):
+            iface_names = [i.emit_name for i in
+                           zones.zones[src_zone].interfaces]
+            if iface_names:
+                if len(iface_names) == 1:
+                    rule.matches.append(Match(
+                        field="iifname", value=iface_names[0]))
+                else:
+                    rule.matches.append(Match(
+                        field="iifname",
+                        value="{ " + ", ".join(
+                            f'"{i}"' for i in sorted(iface_names))
+                        + " }"))
+
         if src_addr:
             rule.matches.append(Match(field="ip saddr", value=src_addr))
 
         _dst_zone, dst_addr = _parse_zone_spec(dest_spec, zones)
         dst_addr = _sentinel_to_addr(_dst_zone, dst_addr)
+        _dst_zone, dst_addr = _promote_bare_addr(_dst_zone, dst_addr, zones)
         if dst_addr and dst_addr != "0.0.0.0/0":
             rule.matches.append(Match(field="ip daddr", value=dst_addr))
 
