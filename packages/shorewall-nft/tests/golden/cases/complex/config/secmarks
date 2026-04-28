@@ -1,0 +1,3 @@
+#SECMARK				CHAIN	SOURCE	DEST	PROTO	DPORT
+"system_u:object_r:web_t:s0"	P	net	fw	tcp	80
+"system_u:object_r:ssh_t:s0"	P	net	fw	tcp	22

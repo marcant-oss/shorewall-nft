@@ -1,0 +1,6 @@
+# Mangle rules — exercises MARK, TPROXY, DUP across QoS/redirect/mirror patterns
+# Addresses: RFC 5737 (192.0.2/198.51.100/203.0.113), RFC 3849 (2001:db8::)
+#ACTION		SOURCE		DEST		PROTO	DPORT
+MARK(0x10)	all		all		tcp	22
+TPROXY(3128)	all		all		tcp	80
+DUP(198.51.100.7,eth0)	all		all		tcp	443

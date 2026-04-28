@@ -168,6 +168,10 @@ table inet shorewall {
 	}
 
 
+	# Named secmark objects (from secmarks file)
+	secmark _sm_0 { "system_u:object_r:web_t:s0" }
+	secmark _sm_1 { "system_u:object_r:ssh_t:s0" }
+
 	ct helper ftp {
 		type "ftp" protocol tcp;
 		l3proto inet;
@@ -185,6 +189,17 @@ table inet shorewall {
 		meta l4proto tcp tcp dport 80 redirect to :3128
 		ip daddr 203.0.113.1 meta l4proto tcp tcp dport { 80, 443 } dnat to 192.0.2.51:443
 		ip daddr 203.0.113.1 meta l4proto tcp tcp dport 25 dnat to 192.0.2.51:25
+
+	}
+
+	chain mangle-prerouting {
+		type filter hook prerouting priority -150;
+
+		meta l4proto tcp tcp dport 80 meta secmark set "_sm_0"
+		meta l4proto tcp tcp dport 22 meta secmark set "_sm_1"
+		meta l4proto tcp tcp dport 22 meta mark set 0x00000010
+		meta l4proto tcp tcp dport 80 tproxy to :3128
+		meta l4proto tcp tcp dport 443 dup to 198.51.100.7 device "eth0"
 
 	}
 

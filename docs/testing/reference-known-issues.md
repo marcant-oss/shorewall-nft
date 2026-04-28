@@ -212,3 +212,30 @@ bug.
   ``addr("add", ...)`` is called with ``local=X address=peer
   prefixlen=32`` for PtP forms.
 
+## Static-check TODO (mangle / security / flowtable)
+
+* **Mangle: missing chains**. shorewall-nft compiler currently
+  emits mangle rules only to ``mangle-prerouting``, missing
+  ``mangle-forward``, ``mangle-input``, ``mangle-output``,
+  ``mangle-postrouting``. The portalfw snapshot has 6 mangle
+  rules across all 5 base chains, all reading 0 in the IR.
+
+* **Security: richer test coverage**. SECMARK rules need a
+  snapshot with real usage beyond the newly-added
+  ``complex/secmarks`` fixture (which is the first end-to-end
+  coverage). Neither rossini nor portalfw snapshots have SECMARK
+  rules today.
+
+* **Flowtable / fastpath: validation gap**. ``FLOWTABLE_FLAGS=offload``
+  setting in ``shorewall.conf`` is live (since 1.1) but neither
+  static nor dynamic simlab validation exists. Needs either an
+  offload-capable test NIC or a software-fastpath check via
+  conntrack counters.
+
+* **CT-helper: per-snapshot capabilities override**. The snapshot
+  loader parses ``__*_HELPER=1`` defaults globally across all
+  snapshots. A ``--capabilities`` flag pointing at an
+  iptables-capabilities dump would let the diff filter
+  known-loaded helpers without printing 12 spurious "extra in IR"
+  rows on every rossini run.
+
