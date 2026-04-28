@@ -9,6 +9,10 @@ Implements Shorewall-style OPTIMIZE levels:
            a single rule with an anonymous set
 - Level 8: Merge chains with identical content, redirecting jumps to the
            canonical copy (cross-chain dedup)
+- Level 9: Chain-global single-field combine — same as level 4 but lifts
+           the strict-adjacency requirement, picking up rule clusters
+           that are interleaved with unrelated rules (LOG+DROP pairs,
+           per-host port lists scattered by source order, etc.)
 
 Higher levels imply all lower levels. Dispatch jumps are regenerated on
 every emit pass by the emitter iterating over ir.chains, so removing a
@@ -493,6 +497,99 @@ def optimize_chain_merge(ir: FirewallIR) -> int:
     return merged
 
 
+# ── Level 9: Chain-global single-field combine ─────────────────────────
+
+
+def _signature_except(rule: Rule, exclude_field: str) -> tuple:
+    """Group key: meta + sorted non-excluded matches.
+
+    Two rules share this signature when they differ ONLY in *exclude_field*
+    — anything else (verdict, comment-bearing meta, other matches) must
+    match exactly. Used by :func:`optimize_combine_matches_global` to
+    cluster rules that level 4 would have skipped because they aren't
+    strictly adjacent in the source order.
+    """
+    return (
+        _rule_meta_key(rule),
+        tuple(sorted(
+            (m.field, m.value, m.negate)
+            for m in rule.matches
+            if m.field != exclude_field
+        )),
+    )
+
+
+def optimize_combine_matches_global(ir: FirewallIR) -> int:
+    """Combine non-adjacent rules that differ in exactly one combinable field.
+
+    Lifts the strict-adjacency requirement of :func:`optimize_combine_matches`
+    (level 4). For each chain and each combinable field *f*, groups rules
+    by their non-*f* signature and merges each group of ≥2 rules into one
+    rule with an anonymous-set match on *f*. The combined rule lands at
+    the **position of the first member**; later members are removed.
+
+    Catches patterns like::
+
+        ip saddr 10.0.0.0/8 log prefix "X"
+        ip saddr 10.0.0.0/8 drop
+        ip saddr 172.16.0.0/12 log prefix "X"
+        ip saddr 172.16.0.0/12 drop
+
+    where level 4 stops at the first verdict-change. Per-field grouping
+    instead picks up the LOG group {10/8, 172.16/12} and the DROP group
+    {10/8, 172.16/12} independently, yielding two combined rules.
+
+    **Semantic caveat**: combined rules match a SUPERSET of the originals
+    at the first member's position. If an intervening rule was relying on
+    a packet escaping past the (now-merged) earlier rule's match, the
+    merge changes behavior. Operators using OPTIMIZE>=9 should run the
+    triangle verifier (`shorewall-nft verify`) against their corpus.
+    The DROP/REJECT/ACCEPT verdict-blocks common in dispatch chains are
+    safe by construction.
+    """
+    removed = 0
+    for chain in ir.chains.values():
+        if chain.is_base_chain:
+            continue
+        if len(chain.rules) < 2:
+            continue
+
+        for f in _COMBINABLE_FIELDS:
+            groups: dict[tuple, list[int]] = {}
+            for idx, rule in enumerate(chain.rules):
+                f_val: str | None = None
+                for m in rule.matches:
+                    if m.field == f:
+                        f_val = m.value
+                        break
+                if f_val is None or _is_set_reference(f_val):
+                    continue
+                sig = _signature_except(rule, f)
+                groups.setdefault(sig, []).append(idx)
+
+            to_remove: set[int] = set()
+            replacements: dict[int, Rule] = {}
+            for indices in groups.values():
+                if len(indices) < 2:
+                    continue
+                first = indices[0]
+                rules = [chain.rules[i] for i in indices]
+                replacements[first] = _make_combined_rule(rules, f)
+                to_remove.update(indices[1:])
+                removed += len(indices) - 1
+
+            if not to_remove:
+                continue
+            new_rules: list[Rule] = []
+            for i, rule in enumerate(chain.rules):
+                if i in to_remove:
+                    continue
+                new_rules.append(replacements.get(i, rule))
+            chain.rules = new_rules
+
+    return removed
+
+
 # ── Orchestration ──────────────────────────────────────────────────────
 
 def run_optimizations(ir: FirewallIR, level: int) -> dict[str, int]:
@@ -516,5 +613,10 @@ def run_optimizations(ir: FirewallIR, level: int) -> dict[str, int]:
 
     if level >= 8:
         results["chain_merge"] = optimize_chain_merge(ir)
+
+    if level >= 9:
+        # Re-run global combine after chain-merge so identical-content
+        # chains that level 8 dedups don't get re-expanded by combines.
+        results["combine_matches_global"] = optimize_combine_matches_global(ir)
 
     return results
