@@ -857,6 +857,91 @@ def _process_host_options(ir: FirewallIR, zones: ZoneModel) -> None:
                     input_chain.rules.append(r)
 
 
+def _process_rpfilter_interfaces(ir: FirewallIR, zones: ZoneModel) -> None:
+    """Reverse-path-filter mangle rules for ``rpfilter`` interfaces.
+
+    Mirrors Perl ``Misc.pm:992-1052``: per-iface mangle-prerouting drop
+    for packets whose source address would not route back through the
+    same iface (≈ nft ``fib saddr . iif oif 0``).  Verdict from
+    ``RPFILTER_DISPOSITION`` (DROP / REJECT / A_DROP / A_REJECT).
+
+    DHCP exception (IPv4-only): when *any* iface combines ``rpfilter``
+    with ``dhcp``, an ingress UDP-67/68 RETURN rule from saddr 0.0.0.0
+    sits before the per-iface RPF check — DHCP DISCOVER has no source
+    route and would otherwise fail RPF.
+
+    IPv4/v6 parity: the ``fib saddr . iif oif`` lookup is family-aware
+    in the kernel, but the rule needs an explicit ``meta nfproto``
+    qualifier so the v4-only DHCP exception can sit cleanly above the
+    main check without affecting IPv6.  Emitted twice per iface (once
+    per family).  ``ct state`` gates skip ESTABLISHED packets — those
+    passed RPF when they were NEW; a reload mid-flow doesn't re-test.
+    """
+    from shorewall_nft.compiler.actions import _disposition_to_verdict
+    from shorewall_nft.compiler.ir._data import Chain, ChainType, Hook
+
+    rpfilter_ifaces: list = []
+    for zone in zones.zones.values():
+        for iface in zone.interfaces:
+            if "rpfilter" in iface.options:
+                rpfilter_ifaces.append(iface)
+    if not rpfilter_ifaces:
+        return
+
+    resolved = _disposition_to_verdict(
+        ir.settings.get("RPFILTER_DISPOSITION", "DROP"))
+    if resolved is None:
+        return  # CONTINUE / NONE → suppressed
+    verdict, audit = resolved
+
+    chain_name = "mangle-prerouting"
+    if chain_name not in ir.chains:
+        ir.add_chain(Chain(
+            name=chain_name,
+            chain_type=ChainType.FILTER,
+            hook=Hook.PREROUTING,
+            priority=-150,
+        ))
+    chain = ir.chains[chain_name]
+
+    has_rpfilter_dhcp = any(
+        "dhcp" in iface.options for iface in rpfilter_ifaces
+    )
+    if has_rpfilter_dhcp:
+        chain.rules.append(Rule(
+            matches=[
+                Match(field="meta nfproto", value="ipv4"),
+                Match(field="ip saddr", value="0.0.0.0"),
+                Match(field="meta l4proto", value="udp"),
+                Match(field="udp sport", value="67-68"),
+                Match(field="udp dport", value="67-68"),
+            ],
+            verdict=Verdict.RETURN,
+            comment="rpfilter:dhcp-exception",
+        ))
+
+    for iface in rpfilter_ifaces:
+        for nfproto in ("ipv4", "ipv6"):
+            base_matches = [
+                Match(field="iifname", value=iface.emit_name),
+                Match(field="meta nfproto", value=nfproto),
+                Match(field="ct state", value="new,related,invalid"),
+                Match(field="inline", value="fib saddr . iif oif 0"),
+            ]
+            if audit is not None:
+                chain.rules.append(Rule(
+                    matches=list(base_matches),
+                    verdict=Verdict.ACCEPT,
+                    verdict_args=audit,
+                    comment=f"rpfilter:audit:{iface.name}",
+                ))
+            chain.rules.append(Rule(
+                matches=list(base_matches),
+                verdict=verdict,
+                comment=f"rpfilter:{iface.name}",
+            ))
+
+
 def _process_dhcp_interfaces(ir: FirewallIR, zones: ZoneModel) -> None:
     """Generate DHCP allow rules for interfaces with 'dhcp' option.
 

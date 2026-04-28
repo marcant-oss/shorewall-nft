@@ -94,6 +94,7 @@ from shorewall_nft.compiler.ir._build import (
     _process_policies,
     _process_rawnat,
     _process_routestopped,
+    _process_rpfilter_interfaces,
     _process_scfilter,
     _process_secmarks,
     _process_stoppedrules,
@@ -346,6 +347,9 @@ def build_ir(config: ShorewalConfig) -> FirewallIR:
 
     # DHCP: interfaces with 'dhcp' option get automatic UDP 67,68 ACCEPT
     _process_dhcp_interfaces(ir, zones)
+
+    # rpfilter: per-iface RPF mangle drop, with IPv4-only DHCP exception
+    _process_rpfilter_interfaces(ir, zones)
 
     # Process legacy blacklist file (simple address/proto/port drop list)
     if getattr(config, "blacklist", None):

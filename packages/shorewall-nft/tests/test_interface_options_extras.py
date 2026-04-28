@@ -326,6 +326,90 @@ def test_required_flag_emits_no_rules():
     assert "table inet shorewall" in nft
 
 
+# ── rpfilter (mangle-prerouting RPF drop) ───────────────────────────────────
+
+def test_rpfilter_emits_mangle_prerouting_rule():
+    """``rpfilter`` adds a per-iface fib-saddr drop in mangle-prerouting."""
+    config = _make_config("rpfilter")
+    config.settings["RPFILTER_DISPOSITION"] = "DROP"
+    ir = build_ir(config)
+    assert "mangle-prerouting" in ir.chains
+    chain = ir.chains["mangle-prerouting"]
+    fib_rules = [
+        r for r in chain.rules
+        if any("fib saddr" in (m.value or "") for m in r.matches)
+    ]
+    assert fib_rules, "Expected fib-saddr rule for rpfilter iface"
+
+
+def test_rpfilter_emits_both_families():
+    """``rpfilter`` emits one rule per family (IPv4 + IPv6)."""
+    config = _make_config("rpfilter")
+    config.settings["RPFILTER_DISPOSITION"] = "DROP"
+    ir = build_ir(config)
+    chain = ir.chains["mangle-prerouting"]
+    nfprotos = {
+        m.value for r in chain.rules for m in r.matches
+        if m.field == "meta nfproto"
+    }
+    assert "ipv4" in nfprotos and "ipv6" in nfprotos
+
+
+def test_rpfilter_dhcp_exception_emitted_when_combined():
+    """rpfilter+dhcp on the same iface inserts a v4 DHCP-bypass RETURN."""
+    config = _make_config("rpfilter,dhcp")
+    config.settings["RPFILTER_DISPOSITION"] = "DROP"
+    ir = build_ir(config)
+    chain = ir.chains["mangle-prerouting"]
+    has_dhcp_exception = any(
+        r.comment == "rpfilter:dhcp-exception"
+        and any(m.value == "0.0.0.0" for m in r.matches)
+        for r in chain.rules
+    )
+    assert has_dhcp_exception
+
+
+def test_rpfilter_no_dhcp_exception_when_dhcp_absent():
+    """Without dhcp on any rpfilter iface, no DHCP-bypass rule is emitted."""
+    config = _make_config("rpfilter")
+    config.settings["RPFILTER_DISPOSITION"] = "DROP"
+    ir = build_ir(config)
+    chain = ir.chains["mangle-prerouting"]
+    has_dhcp_exception = any(
+        r.comment == "rpfilter:dhcp-exception" for r in chain.rules
+    )
+    assert not has_dhcp_exception
+
+
+def test_rpfilter_skipped_when_disposition_is_continue():
+    """RPFILTER_DISPOSITION=CONTINUE suppresses the emit (Perl: no chain)."""
+    config = _make_config("rpfilter")
+    config.settings["RPFILTER_DISPOSITION"] = "CONTINUE"
+    ir = build_ir(config)
+    # Either no chain or the chain has no rpfilter rules.
+    chain = ir.chains.get("mangle-prerouting")
+    if chain is not None:
+        rpfilter_rules = [
+            r for r in chain.rules
+            if (r.comment or "").startswith("rpfilter")
+        ]
+        assert rpfilter_rules == []
+
+
+def test_rpfilter_uses_emit_name_with_physical_alias():
+    """rpfilter rule uses physical override when ``physical=`` is set."""
+    config = _make_config("rpfilter,physical=eth0.42")
+    config.settings["RPFILTER_DISPOSITION"] = "DROP"
+    ir = build_ir(config)
+    chain = ir.chains["mangle-prerouting"]
+    iifname_values = {
+        m.value for r in chain.rules for m in r.matches
+        if m.field == "iifname"
+    }
+    assert "eth0.42" in iifname_values
+    assert "eth0" not in iifname_values
+
+
 # ── WP-D1: sysctl uses /proc/sys writes, not 'sysctl' binary ────────────────
 
 def test_sysctl_output_uses_proc_writes():

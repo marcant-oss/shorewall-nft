@@ -45,6 +45,7 @@ hits for `wait`, `subnets`/`interfaces` for `nets`.
 | `proxyndp` | substantial | **F** | `zones.py` | proxyarp.py | IPv6 sibling |
 | `required` | none | **F (NEW)** | `zones.py` | n/a | parsed + stored; runtime fail-fast hook is a future TODO |
 | `routeback` | substantial | **F** | `zones.py` | dispatch | |
+| `rpfilter` | none | **F (NEW)** | `zones.py` | `_build.py:_process_rpfilter_interfaces` | mangle-prerouting `fib saddr . iif oif 0` per family + IPv4-only DHCP-RETURN exception; verdict from `RPFILTER_DISPOSITION` |
 | `routefilter` | substantial | **F** | `option_values["routefilter"]` | `sysctl.py:84-91` | rp_filter sysctl, value 0/1/2 |
 | `sourceroute` | thin (3) | **F** | `option_values["sourceroute"]` | `sysctl.py:110-113` | accept_source_route sysctl |
 | `tcpflags` | thin (3) | **F** | `zones.py` | `_build.py:636-676` | SYN+FIN, SYN+RST drop in input |
@@ -54,7 +55,6 @@ hits for `wait`, `subnets`/`interfaces` for `nets`.
 
 | Flag | State | Effort | Why deferred |
 |------|-------|--------|--------------|
-| `rpfilter` | **N** | Medium (filter-novel) | Perl emits a mangle-prerouting rule with `-m rpfilter --validmark --invert` (≈ nft `fib saddr . iif oif != 0`) — **not** the IPv4 sysctl `rp_filter` (that's `routefilter`). Needs disposition (RPFILTER_DISPOSITION), DHCP-broadcast exception, family-agnostic emit. |
 | `sfilter=CIDR` | **N** | Medium (filter-novel) | Per-iface anti-spoof CIDR list. Misc.pm `sfilter` chain. nft equivalent: per-iface `ip saddr != @sfilter_<iface> drop`. Needs new IR set. |
 | `nets=SUBNET` | **N** | Large (zone-dispatch redesign) | Inline subnet list per iface; affects `imatch_source_net()` and zone dispatch. Touches rule-dispatch architecture. |
 | `dbl` / `nodbl` | **N** | Large (architectural) | Per-iface dynamic-blacklist switch. Needs blacklist plumbing extension. |
@@ -101,7 +101,8 @@ All three NEW additions are family-agnostic:
   rule expansion.
 - `required` is parser/storage only — no emit dependency.
 
-`rpfilter` (deferred) would require explicit per-family handling: the
-`fib saddr . iif oif != 0` matcher itself is family-agnostic, but the
-DHCP exception is IPv4-only (UDP 67/68 from 0.0.0.0) and the Perl
-`rpfilter` chain conditionally adds it depending on the active family.
+`rpfilter` (now implemented): the `fib saddr . iif oif 0` matcher
+itself is family-aware (kernel resolves per-family); two rules emitted
+per iface (one per family) with explicit `meta nfproto` qualifier so
+the IPv4-only DHCP-RETURN exception (UDP 67/68 from 0.0.0.0) sits
+above without affecting IPv6.

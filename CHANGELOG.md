@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-28 — rpfilter interface-flag emit)
+
+* ``rpfilter`` interface option now emits real RPF mangle rules instead
+  of being silently dropped at parse.  Mirrors Perl ``Misc.pm:992-1052``:
+  per-iface ``mangle-prerouting`` drop where the source address would
+  not route back through the same iface (``fib saddr . iif oif 0`` in
+  nft, ≈ iptables ``-m rpfilter --invert``).  Verdict honours
+  ``RPFILTER_DISPOSITION`` (DROP / REJECT / A_DROP / A_REJECT;
+  CONTINUE / NONE suppresses the emit).  ``ct state new,related,invalid``
+  gate skips ESTABLISHED (don't break in-flight flows on reload).
+* IPv4-only DHCP exception: when *any* iface combines ``rpfilter`` with
+  ``dhcp``, an ingress UDP-67/68 RETURN from saddr 0.0.0.0 sits above
+  the per-iface RPF check — DHCP DISCOVER has no source route and
+  would otherwise fail RPF.  IPv6 unaffected (no equivalent boot-time
+  saddr-zero protocol).
+* Per-family parity: each rpfilter iface emits one rule per family
+  with explicit ``meta nfproto ipv4`` / ``ipv6`` qualifier.  Honours
+  ``physical=`` (uses ``Interface.emit_name`` for ``iifname``).
+* Tests: ``tests/test_interface_options_extras.py`` (+6 functions —
+  emit shape, both-families, DHCP exception present/absent,
+  CONTINUE-disposition skip, physical-alias interaction).
+* Validated end-to-end on Linux 6.11.7 / nft 1.1.1: ``nft -c -f``
+  parse OK and ``nft -f`` apply in a fresh netns OK.
+
 ### Added (2026-04-28 — interface-flag quick wins)
 
 * ``physical=NAME`` interface option now accepted and consumed.  When a
