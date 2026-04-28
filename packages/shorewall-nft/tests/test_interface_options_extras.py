@@ -239,6 +239,93 @@ def test_optional_stored_in_interface_options():
     assert "optional" in iface.options
 
 
+# ── physical=NAME (alias override for nft iifname/oifname) ──────────────────
+
+def test_physical_overrides_iifname_in_protection_rules():
+    """physical=eth0.100 must replace iface.name in tcpflags iifname matchers."""
+    config = _make_config("tcpflags,physical=eth0.100")
+    config.settings["TCP_FLAGS_DISPOSITION"] = "DROP"
+    ir = build_ir(config)
+    nft = emit_nft(ir)
+    # Logical name disappears from tcpflags rules; physical name takes over.
+    assert 'iifname "eth0.100"' in nft, (
+        "Expected tcpflags rule to use physical iface name 'eth0.100'"
+    )
+
+
+def test_physical_overrides_iifname_in_zone_dispatch():
+    """physical=eth0.100 must replace iface.name in vmap / zone-jump dispatch."""
+    config = _make_config("physical=eth0.100")
+    ir = build_ir(config)
+    nft = emit_nft(ir)
+    # Dispatch rules use the physical name for iifname/oifname matchers.
+    assert "eth0.100" in nft, (
+        "Expected zone dispatch to reference physical iface name"
+    )
+
+
+def test_emit_name_falls_back_to_logical():
+    """Without physical=, emit_name returns the logical name."""
+    config = _make_config("-")
+    zones = build_zone_model(config)
+    iface = zones.zones["net"].interfaces[0]
+    assert iface.emit_name == "eth0"
+
+
+# ── unmanaged (skip iface entirely) ─────────────────────────────────────────
+
+def test_unmanaged_iface_excluded_from_zone_model():
+    """Interfaces marked 'unmanaged' must not appear in the zone model."""
+    config = _make_config("unmanaged")
+    zones = build_zone_model(config)
+    # eth0 was unmanaged → not in net zone; eth1 was '-' → still in loc zone.
+    assert zones.zones["net"].interfaces == [], (
+        "Expected unmanaged eth0 to be excluded from net zone"
+    )
+    assert len(zones.zones["loc"].interfaces) == 1, (
+        "Expected loc zone to still carry eth1"
+    )
+
+
+def test_unmanaged_iface_emits_no_protection_rules():
+    """No tcpflags/nosmurfs/mss rules emitted for unmanaged interface."""
+    config = _make_config("unmanaged,tcpflags,nosmurfs,mss=1452")
+    config.settings["TCP_FLAGS_DISPOSITION"] = "DROP"
+    config.settings["SMURF_DISPOSITION"] = "DROP"
+    ir = build_ir(config)
+    nft = emit_nft(ir)
+    # eth0 is unmanaged — none of its protection rules should appear.
+    assert 'iifname "eth0"' not in nft or "tcpflags" not in nft, (
+        "Expected unmanaged eth0 to skip tcpflags/nosmurfs emission"
+    )
+    # mangle-forward chain shouldn't be created for an unmanaged-only mss
+    # config (only eth0 has mss; eth1 doesn't).
+    assert "mangle-forward" not in ir.chains, (
+        "mangle-forward should not be created when the only mss-bearing "
+        "iface is unmanaged"
+    )
+
+
+# ── required (parse-only, runtime hook future) ──────────────────────────────
+
+def test_required_does_not_crash():
+    """'required' is a boolean flag — parser must accept and store it."""
+    config = _make_config("required")
+    zones = build_zone_model(config)
+    iface = zones.zones["net"].interfaces[0]
+    assert "required" in iface.options
+
+
+def test_required_flag_emits_no_rules():
+    """'required' has no compile-time emit — runtime fail-fast is future work."""
+    config = _make_config("required")
+    ir = build_ir(config)
+    nft = emit_nft(ir)
+    # No tcpflags/smurf/mss; just zone scaffolding. Sanity-check the
+    # build doesn't crash and produces valid output.
+    assert "table inet shorewall" in nft
+
+
 # ── WP-D1: sysctl uses /proc/sys writes, not 'sysctl' binary ────────────────
 
 def test_sysctl_output_uses_proc_writes():

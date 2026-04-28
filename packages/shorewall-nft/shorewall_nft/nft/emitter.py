@@ -931,8 +931,9 @@ def _compute_zone_marks(ir: FirewallIR) -> dict[str, int]:
         per_zone[zone_name] = next_mark
         zone = ir.zones.zones[zone_name]
         for iface in zone.interfaces:
-            if iface.name and iface.name not in marks:
-                marks[iface.name] = next_mark
+            kname = iface.emit_name
+            if kname and kname not in marks:
+                marks[kname] = next_mark
         next_mark += 1
     return marks
 
@@ -954,8 +955,8 @@ def _parse_flowtable_devices(ir: FirewallIR) -> list[str]:
         ifaces: set[str] = set()
         for zone in ir.zones.zones.values():
             for iface in zone.interfaces:
-                if iface.name:
-                    ifaces.add(iface.name)
+                if iface.emit_name:
+                    ifaces.add(iface.emit_name)
         return sorted(ifaces)
     # Split on whitespace or commas
     parts: list[str] = []
@@ -1061,7 +1062,7 @@ def _emit_vmap_dispatch(lines: list[str], base_chain: Chain,
             if zone_name == fw_zone or zone_name not in ir.zones.zones:
                 return []
             zone = ir.zones.zones[zone_name]
-            names = [i.name for i in zone.interfaces if i.name]
+            names = [i.emit_name for i in zone.interfaces if i.emit_name]
             if not names and zone.hosts:
                 has_hosts_only = True
             return names
@@ -1161,18 +1162,18 @@ def _emit_zone_jump(lines: list[str], chain_name: str,
         zone = ir.zones.zones[src_zone]
         if zone.interfaces:
             if len(zone.interfaces) == 1:
-                matches.append(f'iifname "{zone.interfaces[0].name}"')
+                matches.append(f'iifname "{zone.interfaces[0].emit_name}"')
             else:
-                names = ", ".join(f'"{i.name}"' for i in zone.interfaces)
+                names = ", ".join(f'"{i.emit_name}"' for i in zone.interfaces)
                 matches.append(f"iifname {{ {names} }}")
 
     if dst_zone and dst_zone in ir.zones.zones:
         zone = ir.zones.zones[dst_zone]
         if zone.interfaces:
             if len(zone.interfaces) == 1:
-                matches.append(f'oifname "{zone.interfaces[0].name}"')
+                matches.append(f'oifname "{zone.interfaces[0].emit_name}"')
             else:
-                names = ", ".join(f'"{i.name}"' for i in zone.interfaces)
+                names = ", ".join(f'"{i.emit_name}"' for i in zone.interfaces)
                 matches.append(f"oifname {{ {names} }}")
 
     match_str = " ".join(matches)

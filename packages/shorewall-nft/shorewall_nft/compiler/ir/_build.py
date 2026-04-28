@@ -430,7 +430,7 @@ def _process_conntrack(ir: FirewallIR, conntrack_lines: list[ConfigLine]) -> Non
       raw-table NOTRACK, lands in ``raw-prerouting`` (priority -300).
       Critical on BGP-transit configs to keep the conntrack table
       from filling under transit load.  Earlier revisions silently
-      skipped these rows; portalfw-n1 surfaced 43 IPv4 NOTRACK rules
+      skipped these rows; the reference HA primary surfaced 43 IPv4 NOTRACK rules
       missing from the IR until this branch landed.
 
     SOURCE column accepts ``iface[:host]`` syntax (interface name as
@@ -638,7 +638,7 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
                 if tcpflags_audit is not None:
                     protection_rules.append(Rule(
                         matches=[
-                            Match(field="iifname", value=iface.name),
+                            Match(field="iifname", value=iface.emit_name),
                             Match(field="tcp flags & (syn|fin)",
                                   value="syn|fin"),
                         ],
@@ -648,7 +648,7 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
                     ))
                 protection_rules.append(Rule(
                     matches=[
-                        Match(field="iifname", value=iface.name),
+                        Match(field="iifname", value=iface.emit_name),
                         Match(field="tcp flags & (syn|fin)", value="syn|fin"),
                     ],
                     verdict=tcpflags_verdict,
@@ -658,7 +658,7 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
                 if tcpflags_audit is not None:
                     protection_rules.append(Rule(
                         matches=[
-                            Match(field="iifname", value=iface.name),
+                            Match(field="iifname", value=iface.emit_name),
                             Match(field="tcp flags & (syn|rst)",
                                   value="syn|rst"),
                         ],
@@ -668,7 +668,7 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
                     ))
                 protection_rules.append(Rule(
                     matches=[
-                        Match(field="iifname", value=iface.name),
+                        Match(field="iifname", value=iface.emit_name),
                         Match(field="tcp flags & (syn|rst)", value="syn|rst"),
                     ],
                     verdict=tcpflags_verdict,
@@ -679,7 +679,7 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
                 if smurf_audit is not None:
                     protection_rules.append(Rule(
                         matches=[
-                            Match(field="iifname", value=iface.name),
+                            Match(field="iifname", value=iface.emit_name),
                             Match(field="fib saddr type", value="broadcast"),
                         ],
                         verdict=Verdict.ACCEPT,
@@ -688,7 +688,7 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
                     ))
                 protection_rules.append(Rule(
                     matches=[
-                        Match(field="iifname", value=iface.name),
+                        Match(field="iifname", value=iface.emit_name),
                         Match(field="fib saddr type", value="broadcast"),
                     ],
                     verdict=smurf_verdict,
@@ -705,7 +705,7 @@ def _process_interface_options(ir: FirewallIR, zones: ZoneModel) -> None:
                 except ValueError:
                     mss_val = None
                 if mss_val is not None and mss_val >= 500:
-                    _emit_mss_clamp_rule(ir, iface.name, mss_val)
+                    _emit_mss_clamp_rule(ir, iface.emit_name, mss_val)
 
     # Insert after ct state rules (positions 0-1) but before dispatch
     insert_pos = 2
@@ -876,7 +876,7 @@ def _process_dhcp_interfaces(ir: FirewallIR, zones: ZoneModel) -> None:
 
     Without this gate every cust→tpoff / voic2→mgmt etc. probe with
     ``udp dport 67/68`` was silently ACCEPTed because the DHCP rule
-    sat above the chain's REJECT/DROP fall-through.  The rossini
+    sat above the chain's REJECT/DROP fall-through.  The reference fixture
     reference replay surfaced this as 6 fail_accepts on probe
     classes that classic shorewall correctly REJECTs.
     """
@@ -1993,7 +1993,7 @@ def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
             # interfaces. Skip the firewall zone (no iface match).
             if src_zone and src_zone != fw and src_zone in zones.zones:
                 z = zones.zones[src_zone]
-                iface_names = [i.name for i in z.interfaces]
+                iface_names = [i.emit_name for i in z.interfaces]
                 if iface_names:
                     if len(iface_names) == 1:
                         r.matches.append(Match(
@@ -2006,7 +2006,7 @@ def _process_stoppedrules(ir: FirewallIR, stoppedrules: list[ConfigLine],
                             + " }"))
             if dst_zone and dst_zone != fw and dst_zone in zones.zones:
                 z = zones.zones[dst_zone]
-                iface_names = [i.name for i in z.interfaces]
+                iface_names = [i.emit_name for i in z.interfaces]
                 if iface_names:
                     if len(iface_names) == 1:
                         r.matches.append(Match(

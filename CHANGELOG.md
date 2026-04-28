@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-28 — interface-flag quick wins)
+
+* ``physical=NAME`` interface option now accepted and consumed.  When a
+  zone references an iface by a logical name that differs from the
+  kernel-visible name (VLAN trunks, dummy interfaces, alias pairs), the
+  ``physical=`` value is used for every nft ``iifname``/``oifname``
+  matcher, ct-mark allocation key, vmap dispatch, and zone-jump rule.
+  New ``Interface.emit_name`` property (``zones.py``) is the single
+  resolution point — call sites read it instead of ``iface.name``
+  whenever a kernel-visible name is required.  Logical name remains
+  authoritative for chain naming and zone lookup.
+* ``unmanaged`` interface option now accepted and honoured.  Mirrors
+  Perl ``find_interfaces_by_option`` exclusion: an iface tagged
+  ``unmanaged`` is filtered out at ``build_zone_model`` time, before
+  any rule emission.  Typical use: bond slaves where the bond itself
+  is the managed iface.
+* ``required`` interface option now accepted (parser-only).  Stored in
+  ``Interface.options`` so a future runtime fail-fast hook (load-time
+  iface-presence check) can read it; no compile-time emit.
+* Tests: ``tests/test_interface_options_extras.py`` (+7 functions —
+  physical override in protection rules + zone dispatch, emit_name
+  fallback, unmanaged exclusion + protection-rule skip, required
+  storage + no-emit).
+
+### Documented (2026-04-28 — flag-coverage audit refresh)
+
+* ``docs/testing/perl-vs-nft-flag-coverage.md`` rewritten with verified
+  parse-/emit-site references and a four-state taxonomy
+  (None/Parse-only/Storage+partial/Full) replacing the first-pass
+  pure-grep counts.  Six flags previously bucketed as 0-hit or thin
+  (``mss=``, ``nosmurfs``, ``tcpflags``, ``arp_ignore``,
+  ``logmartians``, ``sourceroute``) re-classified as **F**; ``bridge``
+  promoted from P to F (the DHCP forward-allow gate covers all three
+  Misc.pm cases).  Three new entries (``physical=``, ``unmanaged``,
+  ``required``) added with **F (NEW)**.  Eleven flags remain in state
+  N — effort matrix groups them as Medium (``rpfilter``, ``sfilter=``,
+  ``upnp``/``upnpclient``, ``nomark``), Large (``nets=``, ``dbl``/
+  ``nodbl``, ``dynamic_shared``, ``destonly``/``sourceonly``), Small
+  runtime (``wait``), and OBSOLETE (``detectnets``, ``norfc1918``).
+
 ### Added (2026-04-27 — alt-table route loader for simlab)
 
 * `shorewall_nft_simlab.dumps.load_fw_state` accepts new optional
@@ -17,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table number — needed for any reference whose ``ip4rules`` carries
   ``from all lookup 220``-style policy-routing selectors that point
   at static-table next-hops the live FW uses for internal subnets.
-  Without this, simlab silently lost the rossini snapshot's 8
+  Without this, simlab silently lost the reference snapshot's 8
   table-220 routes (``100.68.0.0/16``, ``172.27.0.0/16`` etc.) and
   fell through to the upstream default — wrong path for any internal
   destination behind those routes.  Tests:
@@ -50,7 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shorewall6 idiom in the marcant-fw reference) used to be
   mis-classified as IPv4 — combined with the chain-complete
   short-circuit, that silently dropped 24 legitimate IPv6 rules
-  from the ``int-voice`` chain in the rossini snapshot.  Surfaced
+  from the ``int-voice`` chain in the reference snapshot.  Surfaced
   by `tools/simlab-reference-loop.sh` (24 fail_drop in iter 0,
   0 after the fix).
 * New ``FirewallIR.params`` field exposes the parsed ``params``
@@ -87,7 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compiles into a merged ``inet`` chain — classic's single flag is
   implicitly per-family via independent iptables / ip6tables
   chains).  Surfaced as 51 fail_accept on the reference fixture
-  (agfeo→siem leak); cleared after this fix in combination with
+  (voip→mon leak); cleared after this fix in combination with
   the simlab-side improvements landed in shorewall-nft-simlab.
 
 ## [1.11.0] - 2026-04-25

@@ -22,6 +22,17 @@ class Interface:
     # Keys match the option name without the "=" suffix.
     option_values: dict[str, str] = field(default_factory=dict)
 
+    @property
+    def emit_name(self) -> str:
+        """Kernel-visible name for nft ``iifname``/``oifname`` matchers.
+
+        When the interface declares ``physical=NAME`` (Shorewall alias
+        used for VLAN trunks, dummy interfaces, or any case where the
+        logical zone-config name differs from the kernel name) the
+        physical override wins. Otherwise the logical name is used.
+        """
+        return self.option_values.get("physical") or self.name
+
 
 @dataclass
 class Host:
@@ -176,6 +187,12 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
 
         if broadcast == "-" or broadcast == "detect":
             broadcast = None
+
+        # ``unmanaged`` excludes the iface from rule generation entirely
+        # (mirrors Perl ``find_interfaces_by_option`` skip).  Typical
+        # use: bond slaves where the bond itself is the managed iface.
+        if "unmanaged" in options:
+            continue
 
         iface = Interface(
             name=iface_name,
