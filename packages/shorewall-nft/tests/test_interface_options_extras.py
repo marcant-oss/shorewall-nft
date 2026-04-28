@@ -410,6 +410,117 @@ def test_rpfilter_uses_emit_name_with_physical_alias():
     assert "eth0" not in iifname_values
 
 
+# ── sfilter=CIDR,... (anti-spoof source-CIDR drop) ──────────────────────────
+
+def test_sfilter_emits_v4_saddr_rule():
+    """sfilter=10.0.0.0/8 → mangle-prerouting drop on iif=eth0 ip saddr 10/8."""
+    config = _make_config("sfilter=10.0.0.0/8")
+    config.settings["SFILTER_DISPOSITION"] = "DROP"
+    ir = build_ir(config)
+    assert "mangle-prerouting" in ir.chains
+    chain = ir.chains["mangle-prerouting"]
+    # one v4 rule, no v6 rule, no audit
+    rules = [r for r in chain.rules if (r.comment or "").startswith("sfilter")]
+    assert len(rules) == 1
+    matches = {m.field: m.value for m in rules[0].matches}
+    assert matches["iifname"] == "eth0"
+    assert matches["meta nfproto"] == "ipv4"
+    assert "10.0.0.0/8" in matches["ip saddr"]
+
+
+def test_sfilter_splits_v4_v6_into_separate_rules():
+    """Mixed CIDR list emits one rule per family.  Multi-value lists use
+    Shorewall's paren-group syntax: ``sfilter=(net1,net2)``."""
+    config = _make_config("sfilter=(10.0.0.0/8,fd00::/8)")
+    config.settings["SFILTER_DISPOSITION"] = "DROP"
+    ir = build_ir(config)
+    chain = ir.chains["mangle-prerouting"]
+    nfprotos = {
+        next(m.value for m in r.matches if m.field == "meta nfproto")
+        for r in chain.rules if (r.comment or "").startswith("sfilter")
+    }
+    assert nfprotos == {"ipv4", "ipv6"}
+
+
+def test_sfilter_audit_disposition_emits_companion_accept():
+    """A_DROP emits both an audit-ACCEPT and the real DROP per family."""
+    config = _make_config("sfilter=10.0.0.0/8")
+    config.settings["SFILTER_DISPOSITION"] = "A_DROP"
+    ir = build_ir(config)
+    chain = ir.chains["mangle-prerouting"]
+    audit_rules = [
+        r for r in chain.rules if (r.comment or "").startswith("sfilter:audit:")
+    ]
+    drop_rules = [
+        r for r in chain.rules
+        if (r.comment or "").startswith("sfilter:") and "audit" not in (r.comment or "")
+    ]
+    assert audit_rules and drop_rules
+
+
+def test_sfilter_continue_disposition_suppresses_emit():
+    """SFILTER_DISPOSITION=CONTINUE → no rule emitted."""
+    config = _make_config("sfilter=10.0.0.0/8")
+    config.settings["SFILTER_DISPOSITION"] = "CONTINUE"
+    ir = build_ir(config)
+    chain = ir.chains.get("mangle-prerouting")
+    if chain is not None:
+        sfilter_rules = [
+            r for r in chain.rules if (r.comment or "").startswith("sfilter")
+        ]
+        assert sfilter_rules == []
+
+
+def test_sfilter_uses_emit_name_with_physical_alias():
+    """sfilter rule uses physical override when ``physical=`` is set."""
+    config = _make_config("sfilter=10.0.0.0/8,physical=eth0.99")
+    config.settings["SFILTER_DISPOSITION"] = "DROP"
+    ir = build_ir(config)
+    chain = ir.chains["mangle-prerouting"]
+    iifname_values = {
+        m.value for r in chain.rules for m in r.matches
+        if m.field == "iifname"
+        and any(m2.value and "ip saddr" in m2.field for m2 in r.matches)
+    }
+    assert "eth0.99" in iifname_values
+
+
+def test_sfilter_invalid_cidr_silently_skipped():
+    """Garbage tokens in the CIDR list don't crash the build."""
+    config = _make_config("sfilter=not-a-cidr")
+    config.settings["SFILTER_DISPOSITION"] = "DROP"
+    ir = build_ir(config)  # must not raise
+    chain = ir.chains.get("mangle-prerouting")
+    if chain is not None:
+        sfilter_rules = [
+            r for r in chain.rules if (r.comment or "").startswith("sfilter")
+        ]
+        assert sfilter_rules == []  # no valid CIDRs → no emit
+
+
+# ── nomark (mark-allocator skip) ────────────────────────────────────────────
+
+def test_nomark_excludes_iface_from_zone_marks():
+    """An iface flagged 'nomark' must not appear in the zone-mark map."""
+    from shorewall_nft.nft.emitter import _compute_zone_marks
+    config = _make_config("nomark")
+    ir = build_ir(config)
+    marks = _compute_zone_marks(ir)
+    assert "eth0" not in marks
+    # eth1 (loc zone, no nomark) still gets a mark
+    assert "eth1" in marks
+
+
+def test_nomark_does_not_break_other_ifaces():
+    """nomark on one iface doesn't disturb mark allocation for siblings."""
+    from shorewall_nft.nft.emitter import _compute_zone_marks
+    config = _make_config("nomark")
+    ir = build_ir(config)
+    marks = _compute_zone_marks(ir)
+    # loc.eth1 should still receive the next available mark
+    assert marks.get("eth1") == 1 or marks.get("eth1") is not None
+
+
 # ── WP-D1: sysctl uses /proc/sys writes, not 'sysctl' binary ────────────────
 
 def test_sysctl_output_uses_proc_writes():

@@ -46,6 +46,8 @@ hits for `wait`, `subnets`/`interfaces` for `nets`.
 | `required` | none | **F (NEW)** | `zones.py` | n/a | parsed + stored; runtime fail-fast hook is a future TODO |
 | `routeback` | substantial | **F** | `zones.py` | dispatch | |
 | `rpfilter` | none | **F (NEW)** | `zones.py` | `_build.py:_process_rpfilter_interfaces` | mangle-prerouting `fib saddr . iif oif 0` per family + IPv4-only DHCP-RETURN exception; verdict from `RPFILTER_DISPOSITION` |
+| `sfilter=` | none | **F (NEW)** | `option_values["sfilter"]` (paren-grouped CIDR list) | `_build.py:_process_sfilter_interfaces` | mangle-prerouting `iifname X meta nfproto v4/v6 ip[6] saddr { CIDR,... } <verdict>`; verdict from `SFILTER_DISPOSITION`; v4/v6 CIDRs split into separate rules |
+| `nomark` | none | **F (NEW)** | `zones.py` | `emitter.py:_compute_zone_marks` | iface excluded from zone-mark allocation map; ct-mark-set rules don't emit for it (mirrors Perl `find_interfaces_by_option('nomark')` skip) |
 | `routefilter` | substantial | **F** | `option_values["routefilter"]` | `sysctl.py:84-91` | rp_filter sysctl, value 0/1/2 |
 | `sourceroute` | thin (3) | **F** | `option_values["sourceroute"]` | `sysctl.py:110-113` | accept_source_route sysctl |
 | `tcpflags` | thin (3) | **F** | `zones.py` | `_build.py:636-676` | SYN+FIN, SYN+RST drop in input |
@@ -55,12 +57,10 @@ hits for `wait`, `subnets`/`interfaces` for `nets`.
 
 | Flag | State | Effort | Why deferred |
 |------|-------|--------|--------------|
-| `sfilter=CIDR` | **N** | Medium (filter-novel) | Per-iface anti-spoof CIDR list. Misc.pm `sfilter` chain. nft equivalent: per-iface `ip saddr != @sfilter_<iface> drop`. Needs new IR set. |
 | `nets=SUBNET` | **N** | Large (zone-dispatch redesign) | Inline subnet list per iface; affects `imatch_source_net()` and zone dispatch. Touches rule-dispatch architecture. |
 | `dbl` / `nodbl` | **N** | Large (architectural) | Per-iface dynamic-blacklist switch. Needs blacklist plumbing extension. |
 | `dynamic_shared` | **N** | Large (architectural) | Shared dynamic-blacklist set across zones. |
 | `destonly` / `sourceonly` | **N** | Large (host-direction redesign) | Excludes rules in one direction. Touches every zone-pair dispatch. |
-| `nomark` | **N** | Medium (mark allocator) | Skip mark for iface; multi-ISP/QoS interaction. |
 | `upnp` / `upnpclient` | **N** | Medium (NAT-chain plumbing) | UPnP forwarding helper / client accept. |
 | `wait` | **N** | Small (runtime) | Init-time wait for iface availability. Runtime concern, not compiler. |
 | `detectnets` | **N** | n/a (OBSOLETE) | Deprecated in Perl. Don't implement. |

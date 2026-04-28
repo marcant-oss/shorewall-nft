@@ -931,6 +931,13 @@ def _compute_zone_marks(ir: FirewallIR) -> dict[str, int]:
         per_zone[zone_name] = next_mark
         zone = ir.zones.zones[zone_name]
         for iface in zone.interfaces:
+            # ``nomark``: skip per-iface zone-mark assignment (mirrors
+            # Perl ``find_interfaces_by_option('nomark')`` exclusion).
+            # Used on multi-ISP / QoS configs where the operator
+            # manages marks via tcrules and doesn't want zone-tagging
+            # to overwrite them.
+            if "nomark" in iface.options:
+                continue
             kname = iface.emit_name
             if kname and kname not in marks:
                 marks[kname] = next_mark

@@ -857,6 +857,98 @@ def _process_host_options(ir: FirewallIR, zones: ZoneModel) -> None:
                     input_chain.rules.append(r)
 
 
+def _process_sfilter_interfaces(ir: FirewallIR, zones: ZoneModel) -> None:
+    """Per-iface anti-spoof CIDR-list drop rules for ``sfilter=`` ifaces.
+
+    Mirrors Perl ``Misc.pm:855-945``: networks listed in ``sfilter=``
+    on a given iface should never be the saddr of traffic ingressing
+    that iface (they're routed elsewhere; if seen here they're spoofed).
+    Emits ``iifname X ip saddr { CIDR1, CIDR2, ... } <verdict>`` in
+    ``mangle-prerouting`` (priority -150, same chain as rpfilter).
+
+    Verdict from ``SFILTER_DISPOSITION`` (DROP / REJECT / A_DROP /
+    A_REJECT; CONTINUE / NONE suppresses the emit).
+
+    Family parity: CIDRs are split into v4 / v6 buckets by parsing
+    each entry; one rule per family is emitted with explicit
+    ``meta nfproto`` qualifier and the appropriate ``ip saddr`` /
+    ``ip6 saddr`` matcher.
+
+    Honours ``physical=`` via ``Interface.emit_name``.
+    """
+    import ipaddress
+
+    from shorewall_nft.compiler.actions import _disposition_to_verdict
+    from shorewall_nft.compiler.ir._data import Chain, ChainType, Hook
+
+    sfilter_ifaces: list[tuple] = []
+    for zone in zones.zones.values():
+        for iface in zone.interfaces:
+            raw = iface.option_values.get("sfilter")
+            if not raw:
+                continue
+            v4_cidrs: list[str] = []
+            v6_cidrs: list[str] = []
+            for tok in raw.split(","):
+                tok = tok.strip()
+                if not tok:
+                    continue
+                try:
+                    net = ipaddress.ip_network(tok, strict=False)
+                except ValueError:
+                    continue
+                if isinstance(net, ipaddress.IPv4Network):
+                    v4_cidrs.append(str(net))
+                else:
+                    v6_cidrs.append(str(net))
+            if v4_cidrs or v6_cidrs:
+                sfilter_ifaces.append((iface, v4_cidrs, v6_cidrs))
+    if not sfilter_ifaces:
+        return
+
+    resolved = _disposition_to_verdict(
+        ir.settings.get("SFILTER_DISPOSITION", "DROP"))
+    if resolved is None:
+        return  # CONTINUE / NONE → suppressed
+    verdict, audit = resolved
+
+    chain_name = "mangle-prerouting"
+    if chain_name not in ir.chains:
+        ir.add_chain(Chain(
+            name=chain_name,
+            chain_type=ChainType.FILTER,
+            hook=Hook.PREROUTING,
+            priority=-150,
+        ))
+    chain = ir.chains[chain_name]
+
+    for iface, v4_cidrs, v6_cidrs in sfilter_ifaces:
+        for nfproto, cidrs, saddr_field in (
+            ("ipv4", v4_cidrs, "ip saddr"),
+            ("ipv6", v6_cidrs, "ip6 saddr"),
+        ):
+            if not cidrs:
+                continue
+            saddr_set = "{ " + ", ".join(cidrs) + " }"
+            base_matches = [
+                Match(field="iifname", value=iface.emit_name),
+                Match(field="meta nfproto", value=nfproto),
+                Match(field=saddr_field, value=saddr_set),
+            ]
+            if audit is not None:
+                chain.rules.append(Rule(
+                    matches=list(base_matches),
+                    verdict=Verdict.ACCEPT,
+                    verdict_args=audit,
+                    comment=f"sfilter:audit:{iface.name}",
+                ))
+            chain.rules.append(Rule(
+                matches=list(base_matches),
+                verdict=verdict,
+                comment=f"sfilter:{iface.name}",
+            ))
+
+
 def _process_rpfilter_interfaces(ir: FirewallIR, zones: ZoneModel) -> None:
     """Reverse-path-filter mangle rules for ``rpfilter`` interfaces.
 

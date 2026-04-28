@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-04-28 — sfilter= + nomark interface flags)
+
+* ``sfilter=(CIDR1,CIDR2,...)`` interface option now emits per-iface
+  anti-spoof drop rules in ``mangle-prerouting``.  Mirrors Perl
+  ``Misc.pm:855-945``: networks listed are routed elsewhere; if seen
+  as saddr on this iface they're spoofed.  Emit:
+  ``iifname X meta nfproto ipv4 ip saddr { CIDR... } <verdict>`` and
+  the matching IPv6 sibling.  Verdict from ``SFILTER_DISPOSITION``
+  (DROP / REJECT / A_DROP / A_REJECT; CONTINUE / NONE suppresses the
+  emit).  CIDR list is paren-grouped per ``shorewall-interfaces(5)``
+  syntax; the parser now respects parens-depth so the inner commas
+  don't break option splitting (``_split_options_respecting_parens``
+  in ``config/zones.py``).  Single CIDR without parens (``sfilter=
+  10.0.0.0/8``) also accepted.  Family parity: each CIDR classified
+  v4 / v6 by ``ipaddress.ip_network``; one rule per non-empty family.
+* ``nomark`` interface option now honoured.  Mirrors Perl
+  ``find_interfaces_by_option('nomark')`` exclusion: an iface tagged
+  ``nomark`` is skipped in ``_compute_zone_marks`` so no
+  ``ct mark set`` rule fires for it on entry.  Common in multi-ISP /
+  QoS configs where the operator manages marks via tcrules and
+  doesn't want zone-tagging to overwrite them.
+* Tests: ``tests/test_interface_options_extras.py`` (+8 functions —
+  sfilter v4-emit, v4/v6 split, audit disposition, CONTINUE skip,
+  physical-alias, garbage-CIDR safe-drop; nomark skip + sibling-iface
+  preservation).
+* Validated end-to-end on Linux 6.11.7 / nft 1.1.1: a config with
+  ``sfilter=(10.0.0.0/8,192.168.0.0/16)`` plus ``physical=eth0.100``
+  compiles to ``iifname eth0.100 meta nfproto ipv4 ip saddr { ... }
+  drop``; ``nft -c -f`` parse + ``nft -f`` apply both OK.
+
 ### Added (2026-04-28 — rpfilter interface-flag emit)
 
 * ``rpfilter`` interface option now emits real RPF mangle rules instead

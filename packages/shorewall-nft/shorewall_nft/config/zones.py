@@ -240,11 +240,42 @@ def build_zone_model(config: ShorewalConfig) -> ZoneModel:
     return model
 
 
+def _split_options_respecting_parens(text: str) -> list[str]:
+    """Split a comma-separated options string, respecting paren grouping.
+
+    Shorewall list-valued options use ``key=(v1,v2,...)`` syntax (see
+    ``shorewall-interfaces(5)`` ``sfilter=(net[,...])``).  Naive
+    ``str.split(",")`` would break the inner list — this helper splits
+    only on commas at depth 0.
+    """
+    out: list[str] = []
+    depth = 0
+    cur: list[str] = []
+    for c in text:
+        if c == "(":
+            depth += 1
+            cur.append(c)
+        elif c == ")":
+            depth = max(0, depth - 1)
+            cur.append(c)
+        elif c == "," and depth == 0:
+            tok = "".join(cur).strip()
+            if tok:
+                out.append(tok)
+            cur = []
+        else:
+            cur.append(c)
+    tail = "".join(cur).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
 def _parse_options(text: str) -> list[str]:
     """Parse a comma-separated options string."""
     if not text or text == "-":
         return []
-    return [o.strip() for o in text.split(",") if o.strip()]
+    return _split_options_respecting_parens(text)
 
 
 def _parse_option_values(text: str) -> dict[str, str]:
@@ -253,15 +284,20 @@ def _parse_option_values(text: str) -> dict[str, str]:
     Returns a dict of ``{key: value}`` for options that use ``key=value``
     syntax (e.g. ``mss=1452``, ``sourceroute=0``). Simple flag options
     without ``=`` are not included.
+
+    List-valued options written as ``key=(v1,v2)`` have the surrounding
+    parens stripped — the dict value is the inner ``v1,v2`` string.
     """
     if not text or text == "-":
         return {}
     result: dict[str, str] = {}
-    for tok in text.split(","):
-        tok = tok.strip()
+    for tok in _split_options_respecting_parens(text):
         if "=" in tok:
             key, _, val = tok.partition("=")
-            result[key.strip()] = val.strip()
+            val = val.strip()
+            if val.startswith("(") and val.endswith(")"):
+                val = val[1:-1].strip()
+            result[key.strip()] = val
     return result
 
 
