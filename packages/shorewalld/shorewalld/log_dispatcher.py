@@ -158,6 +158,28 @@ def _format_tcp_flags(flags: int) -> str:
     return ",".join(names)
 
 
+def _decode_country_from_mark(mark: int) -> str:
+    """Decode the low 16 bits of *mark* as a 2-letter country code.
+
+    The marcant-geoipsets nft loader stamps ``meta mark`` with
+    ``(cc[0]<<8) | cc[1]`` on every packet whose source IP matched a
+    country prefix map (see usr/sbin/marcant-geoipsets in
+    netns-routing). We auto-detect that pattern: if both low bytes are
+    printable A–Z, emit the country code; otherwise return "" so the
+    sink falls back to rendering the raw mark.
+
+    No explicit feature flag — auto-detection means the same shorewalld
+    image works whether or not the operator has the marcant-geoip table
+    deployed.
+    """
+    if mark == 0:
+        return ""
+    a, b = (mark >> 8) & 0xFF, mark & 0xFF
+    if 0x41 <= a <= 0x5A and 0x41 <= b <= 0x5A:
+        return chr(a) + chr(b)
+    return ""
+
+
 def _format_packet_suffix(ev: LogEvent) -> str:
     """Render the optional 5-tuple + iface + meta suffix for plain-text sinks."""
     if not ev.packet_family and not (ev.indev or ev.outdev or ev.nf_mark):
@@ -195,7 +217,17 @@ def _format_packet_suffix(ev: LogEvent) -> str:
         if ev.packet_len:
             parts.append(f"len={ev.packet_len}")
     if ev.nf_mark:
-        parts.append(f"mark=0x{ev.nf_mark:08x}")
+        country = _decode_country_from_mark(ev.nf_mark)
+        if country:
+            parts.append(f"country={country}")
+            # Also emit the upper bits if any operator-owned mark is set;
+            # otherwise the mark is fully consumed by the country tag and
+            # the explicit country= line is enough.
+            upper = ev.nf_mark & 0xFFFF0000
+            if upper:
+                parts.append(f"mark=0x{upper:08x}")
+        else:
+            parts.append(f"mark=0x{ev.nf_mark:08x}")
     # uid/gid only meaningful on OUTPUT hook (locally-generated traffic);
     # NFLOG omits NFULA_UID elsewhere → fields stay 0 / sentinel.
     if ev.nf_hook == 3 and ev.nf_uid not in (0, 0xFFFFFFFF):
@@ -295,6 +327,9 @@ def _format_journal_datagram(ev: LogEvent) -> bytes:
     if hook_name:
         lines.append(f"SHOREWALL_HOOK={hook_name}")
     if ev.nf_mark:
+        country = _decode_country_from_mark(ev.nf_mark)
+        if country:
+            lines.append(f"SHOREWALL_COUNTRY={country}")
         lines.append(f"SHOREWALL_MARK=0x{ev.nf_mark:08x}")
     if ev.nf_hook == 3 and ev.nf_uid not in (0, 0xFFFFFFFF):
         lines.append(f"SHOREWALL_UID={ev.nf_uid}")
